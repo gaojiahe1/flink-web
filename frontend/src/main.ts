@@ -1,0 +1,15 @@
+import './shared/styles/tokens.css'
+import './shared/styles/base.css'
+import './shared/styles/components.css'
+import './app/styles/layout.css'
+import './modules/job-management/styles/jobs.css'
+import './modules/job-creation/styles/editor.css'
+import './modules/sql/styles/studio.css'
+import './modules/flink-catalog/styles/catalogs.css'
+import './modules/permission/styles/login.css'
+import './modules/datasource/styles/datasources.css'
+import { createApp } from 'vue'
+import App from './App.vue'
+import router from './app/router/index'
+
+createApp(App).use(router).mount('#app')

@@ -1,0 +1,131 @@
+/* creation：统一设计系统中的职责样式。 */
+.yaml-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.job-editor-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.job-editor-form.jar-split {
+  grid-template-columns: minmax(430px, 1fr) minmax(380px, 1fr);
+  align-items: start;
+}
+.editor-form-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.section-number {
+  font-size: 12px;
+  font-weight: 500;
+  background: #f0f4fb;
+  color: #7791b5;
+  border-radius: 5px;
+  padding: 2px 5px;
+}
+.jar-split > .yaml-panel {
+  position: sticky;
+  top: 16px;
+}
+.jar-split .yaml-panel > .code-editor {
+  height: calc(100vh - 300px);
+  min-height: 500px;
+}
+.preview-actions {
+  display: flex;
+  padding: 14px 18px;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+}
+.rendered-preview {
+  grid-column: 1/-1;
+}
+.rendered-preview .code-editor {
+  margin-top: 14px;
+}
+.editor-actionbar {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 13px 18px;
+  align-items: center;
+  grid-column: 1/-1;
+  position: sticky;
+  bottom: 8px;
+  z-index: 10;
+}
+.editor-actionbar > .muted {
+  margin-right: auto;
+  font-size: 12px;
+}
+@media (min-width: 1700px) {
+  .job-editor-form.jar-split {
+    grid-template-columns: minmax(580px, 0.95fr) minmax(550px, 1.15fr);
+  }
+}
+@media (max-width: 1250px) {
+  .job-editor-form.jar-split {
+    grid-template-columns: minmax(360px, 1fr) minmax(340px, 1fr);
+  }
+}
+@media (max-width: 1000px) {
+  .job-editor-form.jar-split {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 1000px) {
+  .jar-split > .yaml-panel {
+    position: static;
+  }
+}
+@media (max-width: 760px) {
+  .editor-actionbar {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 760px) {
+  .editor-actionbar > .muted {
+    display: none;
+  }
+}
+@media (min-width: 1001px) {
+  .jar-split .editor-form-column {
+    height: calc(100vh - 340px);
+    min-height: 560px;
+    overflow: auto;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+}
+@media (min-width: 1001px) {
+  .jar-split > .yaml-panel {
+    position: static;
+    height: calc(100vh - 340px);
+    min-height: 560px;
+  }
+}
+@media (min-width: 1001px) {
+  .jar-split .yaml-panel > .code-editor {
+    height: auto;
+    min-height: 0;
+    flex: 1;
+  }
+}
+.editor-form-column > .panel {
+  flex: none;
+}
+
+.resource-pair {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.resource-pair > label {
+  min-width: 0;
+}

@@ -1,0 +1,43 @@
+# Namespace and Flink workload ServiceAccount are owned by operations.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flink-web
+  namespace: flink-jobs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flink-web
+  namespace: flink-jobs
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "deployments", "statefulsets"]
+    verbs: ["get"]
+  - apiGroups: ["flink.apache.org"]
+    resources: ["flinkdeployments"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["flink.apache.org"]
+    resources: ["flinkstatesnapshots"]
+    verbs: ["get", "list"]
+  # Only needed when encrypted platform configurations are materialized as Secrets.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flink-web
+  namespace: flink-jobs
+subjects:
+  - kind: ServiceAccount
+    name: flink-web
+    namespace: flink-jobs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flink-web

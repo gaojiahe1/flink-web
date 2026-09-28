@@ -1,0 +1,21 @@
+# Build and dependencies
+backend/target/
+frontend/node_modules/
+frontend/dist/
+*.log
+data/
+backend/data/
+.tools/
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+.idea/
+.vscode/
+.DS_Store
+frontend/test-results/
+frontend/playwright-report/
+__pycache__/
+*.pyc
+
+sql-runner/target/

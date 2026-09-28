@@ -1,0 +1,29 @@
+# 可选：Operator 位于独立 namespace 时应用。先替换 flink-operator 为实际 namespace。
+# 平台 Deployment 同时设置 FLINK_WEB_OPERATOR_NAMESPACE=flink-operator。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flink-web-operator-reader
+  namespace: flink-operator
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["flink-kubernetes-operator"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flink-web-operator-reader
+  namespace: flink-operator
+subjects:
+  - kind: ServiceAccount
+    name: flink-web
+    namespace: flink-jobs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flink-web-operator-reader

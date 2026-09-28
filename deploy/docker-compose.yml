@@ -1,0 +1,28 @@
+services:
+  flink-web-backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      FLINK_WEB_STORAGE_TYPE: local
+      FLINK_WEB_STORAGE_INITIALIZE: "true"
+      FLINK_WEB_LOCAL_PATH: /app/data/flink-web.db
+      FLINK_WEB_ADMIN_PASSWORD: ${FLINK_WEB_ADMIN_PASSWORD:?Set a bootstrap password}
+      FLINK_WEB_MASTER_KEY: ${FLINK_WEB_MASTER_KEY:?Set a 32-byte Base64 key}
+      FLINK_WEB_NAMESPACE: ${FLINK_WEB_NAMESPACE:-flink-jobs}
+      FLINK_WEB_S3_BUCKET: ${FLINK_WEB_S3_BUCKET:-}
+      FLINK_WEB_S3_ENDPOINT: ${FLINK_WEB_S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - platform-data:/app/data
+    restart: unless-stopped
+  frontend:
+    build: ../frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - flink-web-backend
+    restart: unless-stopped
+volumes:
+  platform-data:

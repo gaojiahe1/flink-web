@@ -1,0 +1,54 @@
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${FLINK_WEB_SECURE_COOKIE:false}
+spring:
+  servlet:
+    multipart:
+      max-file-size: 256MB
+      max-request-size: 260MB
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+platform:
+  sql-validation:
+    directory: ${FLINK_WEB_SQL_VALIDATOR_DIR:./sql-validators}
+  namespace: ${FLINK_WEB_NAMESPACE:flink-jobs}
+  storage:
+    type: ${FLINK_WEB_STORAGE_TYPE:local}
+    local-path: ${FLINK_WEB_LOCAL_PATH:./data/flink-web.db}
+    initialize: ${FLINK_WEB_STORAGE_INITIALIZE:true}
+    mysql-url: ${FLINK_WEB_MYSQL_URL:jdbc:mysql://localhost:3306/flink_web?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    mysql-username: ${FLINK_WEB_MYSQL_USERNAME:flink_web}
+    mysql-password: ${FLINK_WEB_MYSQL_PASSWORD:}
+  security:
+    username: ${FLINK_WEB_ADMIN_USERNAME:admin}
+    password: ${FLINK_WEB_ADMIN_PASSWORD:}
+    master-key: ${FLINK_WEB_MASTER_KEY:}
+  kubernetes:
+    url: ${FLINK_WEB_K8S_URL:https://kubernetes.default.svc}
+    token-file: ${FLINK_WEB_K8S_TOKEN_FILE:/var/run/secrets/kubernetes.io/serviceaccount/token}
+    ca-file: ${FLINK_WEB_K8S_CA_FILE:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
+  operator:
+    namespace: ${FLINK_WEB_OPERATOR_NAMESPACE:${FLINK_WEB_NAMESPACE:flink-jobs}}
+    deployment: ${FLINK_WEB_OPERATOR_DEPLOYMENT:flink-kubernetes-operator}
+    container: ${FLINK_WEB_OPERATOR_CONTAINER:flink-kubernetes-operator}
+  workload:
+    service-account: ${FLINK_WEB_WORKLOAD_SA:flink}
+    state-root: ${FLINK_WEB_STATE_ROOT:s3://flink-state}
+  artifacts:
+    downloader-image: ${FLINK_WEB_DOWNLOADER_IMAGE:flink-web-downloader:0.1.0}
+    allowed-hosts: ${FLINK_WEB_ARTIFACT_HOSTS:}
+    credentials-secret: ${FLINK_WEB_ARTIFACT_CREDENTIALS_SECRET:}
+  s3:
+    endpoint: ${FLINK_WEB_S3_ENDPOINT:}
+    bucket: ${FLINK_WEB_S3_BUCKET:}
+    prefix: ${FLINK_WEB_S3_PREFIX:artifacts/}
+    region: ${AWS_REGION:us-east-1}

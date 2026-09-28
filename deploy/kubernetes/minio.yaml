@@ -1,0 +1,176 @@
+# ============================================================
+# MinIO 管理员账号
+#
+# 注意：
+# 正式环境请修改密码
+# MINIO_ROOT_USER     = S3 Access Key
+# MINIO_ROOT_PASSWORD = S3 Secret Key
+# ============================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+  namespace: flink-kubernetes-operator
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: "Minio@12345678"
+
+---
+# ============================================================
+# PVC
+#
+# 使用你之前创建的：
+# StorageClass: local-storage
+# PV容量:       2Gi
+#
+# PVC 创建后，因为 StorageClass 使用 WaitForFirstConsumer，
+# 一开始可能显示 Pending，Pod 创建后才会绑定 PV。
+# ============================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: flink-kubernetes-operator
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+# ============================================================
+# MinIO Deployment
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: flink-kubernetes-operator
+spec:
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: minio
+
+  template:
+    metadata:
+      labels:
+        app: minio
+
+    spec:
+      containers:
+        - name: minio
+
+          # 建议正式环境固定版本，不要使用 latest
+          image: cgr.dev/chainguard/minio:latest
+
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_USER
+
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_PASSWORD
+
+          ports:
+            # S3 API
+            - name: api
+              containerPort: 9000
+              protocol: TCP
+
+            # MinIO Web Console
+            - name: console
+              containerPort: 9001
+              protocol: TCP
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+          # 存活检查
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          # 就绪检查
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+
+---
+# ============================================================
+# MinIO Service
+#
+# 9000 = S3 API
+# 9001 = Web 管理页面
+#
+# NodePort:
+# 30900 = S3 API
+# 30901 = Web Console
+# ============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: flink-kubernetes-operator
+spec:
+  type: NodePort
+
+  selector:
+    app: minio
+
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+      nodePort: 30900
+      protocol: TCP
+
+    - name: console
+      port: 9001
+      targetPort: 9001
+      nodePort: 30901
+      protocol: TCP

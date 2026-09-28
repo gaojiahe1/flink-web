@@ -1,0 +1,31 @@
+/* data：统一设计系统中的职责样式。 */
+.column-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(160px, 1fr) 65px 65px 55px;
+  gap: 12px;
+  max-width: 750px;
+  margin: 12px 0;
+}
+.plain-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.plain-fieldset > .field-grid {
+  margin-bottom: 24px;
+}
+
+.column-row .column-flag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.column-row .column-flag input {
+  width: auto;
+  margin: 0;
+}
+.watermark-fields {
+  margin-top: 24px;
+}

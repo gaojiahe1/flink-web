@@ -1,0 +1,360 @@
+/* layout：统一设计系统中的职责样式。 */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+}
+.sidebar {
+  width: var(--sidebar);
+  color: #b9c0cc;
+  position: fixed;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transition: width 0.15s;
+  background: var(--color-sidebar);
+  padding: 20px 14px;
+  overflow-y: auto;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  padding: 0 8px 12px;
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: white;
+  font-weight: 800;
+  font-size: 25px;
+  flex: none;
+  background: var(--color-primary);
+  border-radius: 6px;
+}
+.brand small {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 1.9px;
+  color: #68788e;
+  margin-top: 1px;
+}
+.brand-light {
+  font-weight: 400;
+  color: #c4cddd;
+}
+.nav-label {
+  margin-top: 34px;
+  margin: 8px 10px 6px;
+  color: #8294af;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  white-space: nowrap;
+  position: relative;
+  font-size: 12px;
+  min-height: 38px;
+  border-radius: 5px;
+  padding: 8px 11px;
+  margin-bottom: 3px;
+  color: #b7c6dd;
+}
+.nav-item:hover {
+  background: #20334f;
+  color: #fff;
+}
+.nav-item.router-link-active {
+  background: var(--color-sidebar-active);
+  color: #fff;
+  box-shadow: inset 3px 0 var(--color-primary);
+}
+.nav-icon {
+  font-size: 19px;
+  width: 18px;
+  text-align: center;
+  line-height: 1;
+  height: 18px;
+  flex: none;
+}
+.sidebar-bottom {
+  margin-top: auto;
+}
+.workspace {
+  margin-top: 22px;
+  border-top: 1px solid #315052;
+  padding: 20px 0 0;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  border-color: #233044;
+  margin: 20px 9px 0;
+  color: #8090a9;
+}
+.workspace small {
+  display: block;
+  color: #c5d0e1;
+  font-family: monospace;
+  margin-top: 5px;
+  font-size: 12px;
+}
+.main-shell {
+  margin-left: var(--sidebar);
+  min-width: 0;
+  width: calc(100% - var(--sidebar));
+  display: flex;
+  flex-direction: column;
+  transition:
+    margin-left 0.15s,
+    width 0.15s;
+}
+.topbar {
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  font-size: 12px;
+  border-color: var(--line);
+  height: 58px;
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: none;
+}
+.breadcrumb {
+  color: #8691a0;
+  font-size: 12px;
+}
+.breadcrumb span {
+  margin: 0 12px;
+  color: #c6d1d3;
+}
+.topbar-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.avatar {
+  display: grid;
+  place-items: center;
+  background: #eaf0ff;
+  color: #4270c0;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 28px;
+}
+footer {
+  color: #a0aaba;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 28px;
+  font-size: 11px;
+}
+.panel-footer {
+  border-top: 1px solid #edf0f1;
+  padding: 12px 20px;
+  font-size: 12px;
+  color: #93a0b1;
+}
+@media (max-width: 1050px) {
+  .sidebar {
+    width: 190px;
+  }
+}
+@media (max-width: 1050px) {
+  .main-shell {
+    margin-left: 190px;
+    width: calc(100% - 190px);
+  }
+}
+@media (max-width: 1050px) {
+  .content {
+    padding: 26px 22px;
+  }
+}
+@media (max-width: 1050px) {
+  .topbar {
+    padding: 0 22px;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar {
+    width: 68px;
+    padding: 20px 10px;
+  }
+}
+@media (max-width: 760px) {
+  .brand > span:last-child,
+  .nav-label,
+  .workspace,
+  .sidebar .nav-item {
+    font-size: 0;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar .brand {
+    justify-content: center;
+  }
+}
+@media (max-width: 760px) {
+  .nav-icon {
+    font-size: 23px;
+  }
+}
+@media (max-width: 760px) {
+  .nav-item {
+    padding: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar nav {
+    margin-top: 30px;
+  }
+}
+@media (max-width: 760px) {
+  .main-shell {
+    margin-left: 68px;
+    width: calc(100% - 68px);
+  }
+}
+@media (max-width: 760px) {
+  .topbar {
+    height: 60px;
+    padding: 0 14px;
+  }
+}
+@media (max-width: 760px) {
+  .breadcrumb,
+  .version-tag {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .topbar-right {
+    margin-left: auto;
+  }
+}
+@media (max-width: 760px) {
+  footer span {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .content {
+    padding: 20px 14px;
+  }
+}
+.nav-item.router-link-active:before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  background: #5594ff;
+  border-radius: 0 3px 3px 0;
+  display: none;
+}
+.sidebar-collapsed {
+  --sidebar: 68px;
+}
+.sidebar-collapsed .sidebar {
+  padding: 25px 10px 18px;
+}
+.sidebar-collapsed .brand {
+  padding: 0;
+  justify-content: center;
+}
+.sidebar-collapsed .brand-copy,
+.sidebar-collapsed .nav-label,
+.sidebar-collapsed .nav-text,
+.sidebar-collapsed .workspace {
+  display: none;
+}
+.sidebar-collapsed nav {
+  margin-top: 32px;
+}
+.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+.header-location {
+  display: flex;
+  align-items: center;
+  gap: 19px;
+}
+.breadcrumb strong {
+  font-weight: 500;
+  color: #384558;
+}
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 15px 24px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 1000px) {
+  .topbar-right .version-tag {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .app-shell {
+    --sidebar: 68px;
+  }
+}
+@media (max-width: 760px) {
+  .brand-copy,
+  .nav-label,
+  .nav-text,
+  .workspace {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .brand {
+    padding: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 760px) {
+  .topbar-right .namespace-tag {
+    display: none;
+  }
+}
+.sidebar nav {
+  margin-top: 4px;
+}
+.navigation-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.navigation-group {
+  min-width: 0;
+}
+.sidebar-collapsed .nav-label {
+  display: none;
+}
+.sidebar-collapsed .navigation-group + .navigation-group {
+  border-top: 1px solid #ffffff12;
+  padding-top: 12px;
+}

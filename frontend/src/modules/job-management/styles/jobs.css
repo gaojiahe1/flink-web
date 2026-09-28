@@ -1,0 +1,340 @@
+/* jobs：统一设计系统中的职责样式。 */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.stat-card {
+  padding: 16px 20px;
+  border: 1px solid #e4e9eb;
+  background: #fff;
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2px 4px #10262e02;
+  position: relative;
+}
+.stat-card > span {
+  font-size: 12px;
+  color: #728096;
+}
+.stat-card strong {
+  font-size: 27px;
+  color: #202c40;
+  font-weight: 600;
+  line-height: 1.55;
+  margin-top: 4px;
+  margin: 5px 0 2px;
+}
+.stat-card small {
+  font-size: 12px;
+  color: #9aa4b3;
+}
+.stat-card strong em {
+  font-size: 12px;
+  font-weight: 400;
+  font-style: normal;
+}
+.stat-card.accent {
+  background: #fff;
+  border-color: var(--line);
+}
+.stat-card .muted-number {
+  color: #b1c1c4;
+}
+.job-name {
+  font-size: 13px;
+  color: #2a528c;
+  font-weight: 600;
+  padding-left: 0;
+}
+@media (max-width: 1050px) {
+  .stats-grid {
+    gap: 10px;
+  }
+}
+@media (max-width: 1050px) {
+  .stat-card {
+    padding: 16px;
+  }
+}
+@media (max-width: 760px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.detail-panel {
+  margin-top: 20px;
+}
+.detail-panel .form-panel {
+  padding: 24px;
+}
+.text-button,
+.job-name {
+  color: var(--color-primary);
+}
+.panel,
+.stat-card {
+  border-radius: 10px;
+  box-shadow: 0 1px 2px #11182702;
+  border: 1px solid var(--line);
+}
+.stat-card:nth-child(2) strong {
+  color: #21966a;
+}
+.stat-card.accent strong {
+  color: #5477ad;
+}
+.selection-summary {
+  font-weight: 400;
+  color: #6383b9;
+  font-size: 12px;
+  margin-left: 13px;
+}
+.check-column {
+  width: 44px;
+  padding-left: 20px;
+  padding-right: 8px;
+}
+.operation-dialog {
+  border: 1px solid var(--line);
+  padding: 0;
+  border-radius: 12px;
+  width: 760px;
+  max-width: 90vw;
+  max-height: 85vh;
+  color: var(--text);
+  box-shadow: 0 24px 60px #17203330;
+}
+.operation-dialog::backdrop {
+  background: #101b324d;
+  backdrop-filter: blur(2px);
+}
+.dialog-body {
+  padding: 20px 24px;
+  overflow: auto;
+  max-height: 65vh;
+}
+.choice-group {
+  border: 0;
+  padding: 16px 0;
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.choice-group legend {
+  font-size: 12px;
+  color: #576a86;
+}
+.choice-group label {
+  font-size: 12px;
+  font-weight: 400;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.restore-choice {
+  margin: 15px 0;
+  font-weight: 500;
+}
+.restore-choice small {
+  font-weight: 400;
+}
+.dialog-note {
+  font-size: 12px;
+  margin-top: 24px;
+}
+.operation-dialog td {
+  height: auto;
+}
+.workbench-tabs {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 0 20px;
+  background: #fafbfd;
+  overflow-x: auto;
+}
+.workbench-tabs > button {
+  border: 0;
+  background: none;
+  white-space: nowrap;
+  padding: 14px 17px;
+  border-bottom: 2px solid transparent;
+  color: #66768b;
+  font-size: 13px;
+}
+.workbench-tabs > button.active {
+  border-bottom-color: var(--blue);
+  color: var(--blue);
+  background: #fff;
+  font-weight: 600;
+}
+.workbench-tabs > .text-button {
+  margin-left: auto;
+}
+.workbench-body {
+  padding: 20px 24px;
+  min-width: 0;
+}
+.workbench-body > .toolbar-actions {
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.workbench-body > .toolbar-actions label {
+  font-size: 12px;
+  min-width: 180px;
+}
+.workbench-body .table-wrap td {
+  max-width: 480px;
+  overflow-wrap: anywhere;
+}
+.release-summary {
+  display: flex;
+  gap: 18px;
+  padding: 12px;
+  background: #f5f8fd;
+  flex-wrap: wrap;
+}
+.release-summary + .muted {
+  overflow-wrap: anywhere;
+}
+.diff-table {
+  border: 1px solid var(--line);
+  overflow: auto;
+  max-height: 550px;
+  margin: 16px 0;
+}
+.diff-header,
+.diff-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 600px;
+}
+.diff-header strong {
+  padding: 10px 15px;
+  background: #f5f7fa;
+}
+.diff-line pre {
+  margin: 0;
+  padding: 1px 8px;
+  font:
+    11px/1.7 Consolas,
+    monospace;
+  border: 0;
+  border-radius: 0;
+  background: white;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 22px;
+}
+.diff-line pre:first-child {
+  border-right: 1px solid var(--line);
+}
+.diff-line pre span {
+  display: inline-block;
+  width: 35px;
+  color: #a2adbc;
+  user-select: none;
+}
+.diff-line.changed pre:first-child {
+  background: #fff1f0;
+}
+.diff-line.changed pre:last-child {
+  background: #f0fff4;
+}
+.log-controls {
+  margin: 16px 0 !important;
+}
+.log-controls select {
+  max-width: 350px;
+}
+.log-output {
+  background: #142033;
+  color: #d3e0ed;
+  max-height: 450px;
+  overflow: auto;
+  font:
+    12px/1.8 Consolas,
+    monospace;
+  white-space: pre-wrap;
+}
+.external-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.workbench-body .field-grid {
+  margin-bottom: 18px;
+}
+@media (max-width: 760px) {
+  .workbench-body {
+    padding: 16px;
+  }
+}
+@media (max-width: 760px) {
+  .workbench-tabs {
+    padding: 0 8px;
+  }
+}
+@media (max-width: 760px) {
+  .workbench-tabs > button {
+    padding: 12px 10px;
+  }
+}
+@media (max-width: 760px) {
+  .log-controls select {
+    max-width: 100%;
+  }
+}
+
+.job-workbench .workbench-tabs {
+  gap: 4px;
+  padding: 8px 16px 0;
+  overflow-x: auto;
+}
+.job-workbench .workbench-tabs > button {
+  white-space: nowrap;
+  padding: 9px 12px;
+}
+.job-workbench .workbench-body {
+  padding: 16px;
+}
+.release-controls {
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.release-controls > label {
+  flex: 0 1 280px;
+  margin: 0;
+}
+.release-empty {
+  padding: 28px 16px;
+  text-align: center;
+  background: #f8fafc;
+  border: 1px dashed #dce2eb;
+  border-radius: 6px;
+}
+.release-empty p {
+  margin-bottom: 0;
+  color: var(--color-muted);
+}
+.yaml-snapshot-dialog {
+  width: min(1000px, 92vw);
+  border: 1px solid #dce2eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+.yaml-snapshot-content {
+  max-height: 65vh;
+  overflow: auto;
+  padding: 16px;
+  background: #f8fafc;
+  text-align: left;
+  white-space: pre;
+}

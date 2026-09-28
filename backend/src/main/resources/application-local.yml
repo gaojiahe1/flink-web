@@ -1,0 +1,5 @@
+# Explicit development profile. Production defaults to MySQL.
+platform:
+  storage:
+    type: local
+    initialize: true
