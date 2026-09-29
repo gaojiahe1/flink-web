@@ -27,7 +27,7 @@ public class StorageConfiguration {
     if (!Files.exists(database) && !properties.storage().initialize()) {
       throw new StartupConfigurationException(
           "本地数据库不存在：" + database + "；FLINK_WEB_STORAGE_INITIALIZE=false，已拒绝自动创建空库。",
-          "首次空 PVC 部署：设置 FLINK_WEB_STORAGE_INITIALIZE=true，启动成功后恢复 false。"
+          "如需自动创建缺失的数据库，设置 FLINK_WEB_STORAGE_INITIALIZE=true；已有文件不会被重建。"
               + "已有环境：检查 FLINK_WEB_LOCAL_PATH、PVC/PV 及 /app/data 挂载，恢复原数据库；"
               + "不要开启初始化来掩盖数据卷丢失。S3 只保存制品和作业状态，不替代本地元数据库。");
     }

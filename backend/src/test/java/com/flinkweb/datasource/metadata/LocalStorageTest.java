@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.*;
 import com.flinkweb.config.platform.PlatformProperties;
 import java.nio.file.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /** 验证本地元数据持久化、文件锁和数据库版本升级。 */
@@ -60,9 +62,10 @@ class LocalStorageTest {
     }
   }
 
-  /** 验证数据重启后保留、第二实例不能占用文件且禁用初始化时拒绝丢失的数据库。 */
-  @Test
-  void persistsAcrossReopenAndRejectsSecondInstance() throws Exception {
+  /** 验证自动建库开关两种取值下重启均保留数据，同时保留文件锁和显式禁止建库的行为。 */
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void persistsAcrossReopenAndRejectsSecondInstance(boolean autoCreate) throws Exception {
     Path directory = Files.createTempDirectory("flink-web-local-"),
         path = directory.resolve("platform.db");
     var storage = new StorageConfiguration();
@@ -84,7 +87,7 @@ class LocalStorageTest {
     var reopen =
         new PlatformProperties(
             "test",
-            new PlatformProperties.Storage("local", path.toString(), false, null, null, null),
+            new PlatformProperties.Storage("local", path.toString(), autoCreate, null, null, null),
             null);
     try (var lock = storage.localStoreLock(reopen);
         var dataSource = storage.dataSource(reopen, lock)) {

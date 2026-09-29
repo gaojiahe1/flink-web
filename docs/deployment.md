@@ -15,7 +15,7 @@
 部署前准备：
 
 - 运维已安装 Operator/CRD；平台不负责安装、升级 Operator 或调整 Webhook。
-- 一个作业 namespace、Flink 工作负载 ServiceAccount 及其 RBAC。平台使用独立的 flink-web ServiceAccount。
+- 一个作业 namespace、Flink 工作负载 ServiceAccount 及其 RBAC。平台通过 ServiceAccount 获取权限；可用 rbac.yaml 创建独立 flink-web 身份，或使用已授权的运维身份。
 - Flink 运行镜像及匹配 JDK、Connector、Planner、S3/文件系统插件。
 - 制品桶、状态存储目录及相应访问身份。
 - SQLite 所需可写 PVC，或 MySQL 8+ 数据库及专用账号。
@@ -75,7 +75,7 @@ npm run format:check
 | FLINK_WEB_SECURE_COOKIE | HTTPS 入口设为 true；默认 false |
 | FLINK_WEB_STORAGE_TYPE | local（SQLite，默认）或 mysql |
 | FLINK_WEB_LOCAL_PATH | SQLite 路径，./data/flink-web.db |
-| FLINK_WEB_STORAGE_INITIALIZE | 本地库不存在时是否允许新建；应用默认 true，Kubernetes 示例为 false |
+| FLINK_WEB_STORAGE_INITIALIZE | 本地库不存在时是否允许新建；应用与 Kubernetes 清单均为 true；不存在时建库，已有库不重建；可显式设 false 禁止创建缺失文件 |
 | FLINK_WEB_MYSQL_URL / FLINK_WEB_MYSQL_USERNAME / FLINK_WEB_MYSQL_PASSWORD | MySQL JDBC 连接与专用账号 |
 | FLINK_WEB_K8S_URL | Kubernetes API，默认 https://kubernetes.default.svc |
 | FLINK_WEB_K8S_TOKEN_FILE / FLINK_WEB_K8S_CA_FILE | 默认 ServiceAccount token 与 ca.crt 挂载路径 |
@@ -108,8 +108,8 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 部署步骤：
 
 1. 修改 [application.yaml](../deploy/kubernetes/application.yaml) 中的 namespace、后端/前端镜像、PVC 存储类及容量、状态目录、Operator 查询目标；将 FLINK_WEB_DOWNLOADER_IMAGE 指向已推送的下载器镜像。
-2. 按下面步骤填写并单独创建 [平台 Secret](../deploy/kubernetes/secrets.example.yaml)。已有 Secret 不覆盖，已有数据库恢复原主密钥；MinIO 凭据复用同 namespace 的 minio-secret。
-3. 应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)，再应用 application.yaml；平台使用独立 flink-web ServiceAccount。首次空 PVC 再应用下面的初始化补丁，初始化成功后恢复 false；已有库恢复保持 false。
+2. 填写 application.yaml 中已合并的 flink-web-secrets（管理员密码与主密钥）。已有环境必须填回原主密钥；MinIO 凭据复用同 namespace 的 minio-secret。
+3. 核对 application.yaml 所选 ServiceAccount 的 RBAC 后直接应用该文件；数据库不存在时自动创建，已有文件保留，无需额外初始化补丁或部署后的开关切换。当前文件使用已有 flink-operator 身份；若改用平台独立 flink-web 身份，先应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)。
 4. Operator 在其他 namespace 时，修改并应用 [operator-rbac.yaml](../deploy/kubernetes/operator-rbac.yaml)；设置对应 FLINK_WEB_OPERATOR_NAMESPACE。Deployment 名变更时同步修改 Role 的 resourceNames。
 5. 访问 http://NODE_IP:30080，在系统设置手动核对 Operator 版本、就绪副本和 Pod，再登记镜像、模板、配置及制品。
 
@@ -124,21 +124,17 @@ envFrom.secretRef 只把**已经存在**的 Secret 的键值注入容器环境�
 | flink-web-secrets / FLINK_WEB_ADMIN_PASSWORD | 首次创建平台管理员的密码，至少 12 字符、UTF-8 最多 72 字节；库已有用户时不覆盖账号 |
 | flink-web-secrets / FLINK_WEB_MASTER_KEY | 加密数据库中的配置密钥；32 字节随机数的 Base64。它不是登录密码、S3 密码或临时传输公钥，必须长期保存，恢复数据库时使用原值 |
 | minio-secret / MINIO_ROOT_USER、MINIO_ROOT_PASSWORD | 现有 MinIO 凭据，通过 secretKeyRef 映射为 AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY；生产可替换为仅允许所需桶的专用账号 |
-| flink-web ServiceAccount + rbac.yaml | 后端读取和修改 Kubernetes 资源所用的身份，与上述密码 Secret 无关 |
+| Deployment 的 ServiceAccount | 后端读取和修改 Kubernetes 资源所用的身份，与密码 Secret 无关；当前使用已有 flink-operator，rbac.yaml 提供可选的独立 flink-web 身份 |
 
-**1. 创建平台 Secret（已有则保留原值）。** 在受控终端编辑实际文件，不把密码放进 shell 历史；示例中的空值必须填写，不能直接 apply 示例：
+**1. 填写同一清单中的平台 Secret。** application.yaml 已包含 flink-web-secrets，部署前填写 FLINK_WEB_ADMIN_PASSWORD 和 FLINK_WEB_MASTER_KEY。初始密码至少 12 字符、UTF-8 最多 72 字节，填写原始密码而非 Base64 或 fwenc1: 信封。新平台的主密钥可生成：
 
 ~~~bash
-cp deploy/kubernetes/secrets.example.yaml deploy/kubernetes/secrets.local.yaml
-chmod 600 deploy/kubernetes/secrets.local.yaml
-# 仅全新平台生成主密钥，将输出粘贴到 FLINK_WEB_MASTER_KEY：
 openssl rand -base64 32
-# 编辑 FLINK_WEB_ADMIN_PASSWORD 和 FLINK_WEB_MASTER_KEY：
-vi deploy/kubernetes/secrets.local.yaml
-kubectl apply -f deploy/kubernetes/secrets.local.yaml
 ~~~
 
-secrets.local.yaml 已加入 Git 忽略。填写原始管理员密码，不要写 Base64 密码或 fwenc1: 信封；stringData 由 Kubernetes 处理编码。主密钥独立备份，不随每次发布生成。只新增这个平台 Secret，**不删除或重建既有 minio-secret**。若 Secret 已存在但缺键，应在保留原数据的基础上补键；不要用空示例覆盖。
+把完整输出填入 FLINK_WEB_MASTER_KEY，主密钥独立备份；已有数据库必须填回原值，不能每次发布重新生成。保管含凭据的部署文件，不将实际值提交到版本库。主清单会同时创建或更新这个 Secret，不再需要单独创建步骤；已有 minio-secret 继续引用。
+
+[secrets.example.yaml](../deploy/kubernetes/secrets.example.yaml) 仅供需要独立管理 Secret 时参考；使用独立方式时应从 application.yaml 移除同名 Secret 资源段，避免两处重复管理或空值覆盖。
 
 **2. 核对已部署的 MinIO。** 同目录 [minio.yaml](../deploy/kubernetes/minio.yaml) 的 Service 位于 flink-kubernetes-operator，其 S3 API 为：
 
@@ -153,25 +149,25 @@ secrets.local.yaml 已加入 Git 忽略。填写原始管理员密码，不要�
 
 这些配置只接通平台后端的 S3。Flink JM/TM 的 checkpoint、savepoint 还需要运行镜像中的 S3 插件及自身的 endpoint/凭据；下载 initContainer 也需独立配置，详见第 7 节。**SQLite 元数据存 PVC，S3 存 JAR、依赖和作业状态；S3 不能替代 /app/data/flink-web.db。**
 
-**3. 首次空 PVC 初始化。** 截图的 Local database missing 表示 /app/data/flink-web.db 不存在，同时 FLINK_WEB_STORAGE_INITIALIZE=false。确认这是新平台，而不是原 PVC 丢失/挂错后执行：
+**3. 一次应用，自动判断数据库文件。** application.yaml 中统一配置：
+
+~~~yaml
+- {name: FLINK_WEB_STORAGE_INITIALIZE, value: "true"}
+~~~
+
+/app/data/flink-web.db 不存在时，自动建库建表并按配置创建初始管理员；文件已存在时直接使用，保留账号、作业和配置数据，仅检查完整性并执行缺失的版本迁移。重启不重复创建管理员，也不重置密码。库文件损坏时仍报错，不删除文件重建。
 
 ~~~bash
-kubectl -n flink-kubernetes-operator get pvc flink-web-data
-kubectl -n flink-kubernetes-operator get secret flink-web-secrets minio-secret
+kubectl -n flink-kubernetes-operator get secret minio-secret
 kubectl -n flink-kubernetes-operator get svc minio
-kubectl apply -f deploy/kubernetes/rbac.yaml
-kubectl apply -f deploy/kubernetes/application.yaml
-kubectl -n flink-kubernetes-operator patch deployment flink-web-backend \
-  --type=strategic --patch-file deploy/kubernetes/first-install.patch.yaml
-kubectl -n flink-kubernetes-operator rollout status deployment/flink-web-backend --timeout=180s
-# 启动成功后恢复清单中的 INITIALIZE=false，保留新建数据库：
+# 使用已有且具备平台所需权限的 ServiceAccount；当前清单为 flink-operator。
 kubectl apply -f deploy/kubernetes/application.yaml
 kubectl -n flink-kubernetes-operator rollout status deployment/flink-web-backend --timeout=180s
 ~~~
 
-[first-install.patch.yaml](../deploy/kubernetes/first-install.patch.yaml) 是战略合并补丁，不能单独 kubectl apply；不需要删除 PVC、数据库或 MinIO。不要对整个目录递归 apply，目录还包含 Secret 空示例和可选跨 namespace 授权文件。若库已经有数据而仍报 missing，应检查 PVC/PV 绑定、/app/data 挂载和文件路径，恢复原数据库及原主密钥，不使用首次初始化流程。
+无需额外 patch，不需要启动后改回 false，也不删除 PVC 或重建 MinIO。原报错 Local database missing 对应旧清单的 INITIALIZE=false，应用更新后的主清单即可允许缺失库自动创建。该开关也可由运维显式设置 false，此时缺失文件仍会被拒绝。
 
-本地 PV 需要为 UID/GID 10001 提供读写和可靠文件锁；PVC 未 Bound 或目录不可写需由运维修复。FLINK_WEB_STORAGE_INITIALIZE=true 只是允许创建缺失文件，不是恢复数据。平台和 Operator 同 namespace 时不需要 operator-rbac.yaml；Operator 换 namespace 才应用修改后的该文件。
+本地 PV 需要为 UID/GID 10001 提供读写和可靠文件锁；PVC 未 Bound 或目录不可写需修复存储配置。自动建库不能恢复丢失的数据，已有环境仍应使用原 PVC、原库文件和原主密钥。平台和 Operator 同 namespace 时无需 operator-rbac.yaml；Operator 换 namespace 才按实际 ServiceAccount 应用跨 namespace 授权。
 
 平台 RBAC 的主要范围：
 
