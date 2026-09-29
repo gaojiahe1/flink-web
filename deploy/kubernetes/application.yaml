@@ -10,6 +10,19 @@ spec:
     requests:
       storage: 2Gi
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flink-web-secrets
+  namespace: flink-kubernetes-operator
+type: Opaque
+stringData:
+  FLINK_WEB_ADMIN_USERNAME: "admin"
+  # 首次创建管理员：至少 12 个字符，UTF-8 最多 72 字节；不是 fwenc1: 密文。
+  FLINK_WEB_ADMIN_PASSWORD: "123456789abcd"
+  # 仅首次新装用 openssl rand -base64 32 生成，粘贴完整输出；与数据备份分开保管。
+  FLINK_WEB_MASTER_KEY: ""
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -45,7 +58,6 @@ spec:
             - {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-state"}
             - {name: FLINK_WEB_S3_BUCKET, value: "flink-web"}
             - {name: FLINK_WEB_S3_ENDPOINT, value: "http://minio.flink-kubernetes-operator.svc.cluster.local:9000"}
-            - {name: AWS_REGION, value: "us-east-1"}
             # 复用同 namespace 的 MinIO Secret；生产可改为仅允许所需桶的专用凭据。
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
