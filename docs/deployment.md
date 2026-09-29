@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-09-28。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-09-29。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -29,7 +29,7 @@ Flink UI 上游固定为 {作业名}-rest.{作业namespace}.svc:8081。代理只
 ~~~powershell
 $env:JAVA_HOME = '你的 JDK17 目录'
 $env:Path = "$env:JAVA_HOME/bin;$env:Path"
-$env:FLINK_WEB_ADMIN_PASSWORD = Read-Host '首次管理员密码（12–72位）'
+$env:FLINK_WEB_ADMIN_PASSWORD = Read-Host '首次管理员密码（至少12字符，UTF-8最多72字节）'
 # 仅新环境生成；已有加密数据时，注入之前保存的同一主密钥。
 $keyBytes = New-Object byte[] 32
 $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -70,7 +70,7 @@ npm run format:check
 | --- | --- |
 | SERVER_PORT | 后端端口，8080 |
 | FLINK_WEB_NAMESPACE | 固定作业 namespace，flink-jobs |
-| FLINK_WEB_ADMIN_USERNAME / FLINK_WEB_ADMIN_PASSWORD | 初始管理员账号/密码；用户名默认 admin |
+| FLINK_WEB_ADMIN_USERNAME / FLINK_WEB_ADMIN_PASSWORD | 初始管理员账号/密码；用户名默认 admin，密码至少 12 字符且 UTF-8 最多 72 字节，仅用户库为空时使用 |
 | FLINK_WEB_MASTER_KEY | 必填，32 字节随机密钥的 Base64，独立备份 |
 | FLINK_WEB_SECURE_COOKIE | HTTPS 入口设为 true；默认 false |
 | FLINK_WEB_STORAGE_TYPE | local（SQLite，默认）或 mysql |
@@ -108,16 +108,70 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 部署步骤：
 
 1. 修改 [application.yaml](../deploy/kubernetes/application.yaml) 中的 namespace、后端/前端镜像、PVC 存储类及容量、状态目录、Operator 查询目标；将 FLINK_WEB_DOWNLOADER_IMAGE 指向已推送的下载器镜像。
-2. 通过运维凭据管理方式创建 flink-web-secrets，至少注入初始管理员密码、主密钥，以及所选 MySQL/S3 配置。清单通过 envFrom 引用它，不将真实值写入仓库。
-3. 应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)，再应用 application.yaml。首次使用新 PVC 时设置 FLINK_WEB_STORAGE_INITIALIZE=true，初始化成功后改回 false；已有库恢复保持 false。
+2. 按下面步骤填写并单独创建 [平台 Secret](../deploy/kubernetes/secrets.example.yaml)。已有 Secret 不覆盖，已有数据库恢复原主密钥；MinIO 凭据复用同 namespace 的 minio-secret。
+3. 应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)，再应用 application.yaml；平台使用独立 flink-web ServiceAccount。首次空 PVC 再应用下面的初始化补丁，初始化成功后恢复 false；已有库恢复保持 false。
 4. Operator 在其他 namespace 时，修改并应用 [operator-rbac.yaml](../deploy/kubernetes/operator-rbac.yaml)；设置对应 FLINK_WEB_OPERATOR_NAMESPACE。Deployment 名变更时同步修改 Role 的 resourceNames。
 5. 访问 http://NODE_IP:30080，在系统设置手动核对 Operator 版本、就绪副本和 Pod，再登记镜像、模板、配置及制品。
 
-~~~sh
-kubectl apply -f deploy/kubernetes/rbac.yaml
-# 仅 Operator 位于其他 namespace 时应用已修改的 operator-rbac.yaml
-kubectl apply -f deploy/kubernetes/application.yaml
+### 当前环境：Secret、MinIO 与首次启动
+
+当前仓库清单使用 namespace **flink-kubernetes-operator**，平台、MinIO Service 与 minio-secret 在同一 namespace；镜像仓库、local-storage、PVC 2Gi 和 NodePort 30080 保持环境原配置。部署前仍需核对实际集群；本地 YAML 存在不代表资源已创建。
+
+envFrom.secretRef 只把**已经存在**的 Secret 的键值注入容器环境变量，不会创建 Secret，也不提供 Kubernetes API 权限。被引用的 Secret 必须与 Pod 同 namespace；修改环境变量 Secret 后需重新创建 Pod。[Kubernetes Secret 文档](https://kubernetes.io/docs/concepts/configuration/secret/)
+
+| 配置或身份 | 用途 |
+| --- | --- |
+| flink-web-secrets / FLINK_WEB_ADMIN_PASSWORD | 首次创建平台管理员的密码，至少 12 字符、UTF-8 最多 72 字节；库已有用户时不覆盖账号 |
+| flink-web-secrets / FLINK_WEB_MASTER_KEY | 加密数据库中的配置密钥；32 字节随机数的 Base64。它不是登录密码、S3 密码或临时传输公钥，必须长期保存，恢复数据库时使用原值 |
+| minio-secret / MINIO_ROOT_USER、MINIO_ROOT_PASSWORD | 现有 MinIO 凭据，通过 secretKeyRef 映射为 AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY；生产可替换为仅允许所需桶的专用账号 |
+| flink-web ServiceAccount + rbac.yaml | 后端读取和修改 Kubernetes 资源所用的身份，与上述密码 Secret 无关 |
+
+**1. 创建平台 Secret（已有则保留原值）。** 在受控终端编辑实际文件，不把密码放进 shell 历史；示例中的空值必须填写，不能直接 apply 示例：
+
+~~~bash
+cp deploy/kubernetes/secrets.example.yaml deploy/kubernetes/secrets.local.yaml
+chmod 600 deploy/kubernetes/secrets.local.yaml
+# 仅全新平台生成主密钥，将输出粘贴到 FLINK_WEB_MASTER_KEY：
+openssl rand -base64 32
+# 编辑 FLINK_WEB_ADMIN_PASSWORD 和 FLINK_WEB_MASTER_KEY：
+vi deploy/kubernetes/secrets.local.yaml
+kubectl apply -f deploy/kubernetes/secrets.local.yaml
 ~~~
+
+secrets.local.yaml 已加入 Git 忽略。填写原始管理员密码，不要写 Base64 密码或 fwenc1: 信封；stringData 由 Kubernetes 处理编码。主密钥独立备份，不随每次发布生成。只新增这个平台 Secret，**不删除或重建既有 minio-secret**。若 Secret 已存在但缺键，应在保留原数据的基础上补键；不要用空示例覆盖。
+
+**2. 核对已部署的 MinIO。** 同目录 [minio.yaml](../deploy/kubernetes/minio.yaml) 的 Service 位于 flink-kubernetes-operator，其 S3 API 为：
+
+~~~yaml
+- {name: FLINK_WEB_S3_ENDPOINT, value: "http://minio.flink-kubernetes-operator.svc.cluster.local:9000"}
+- {name: FLINK_WEB_S3_BUCKET, value: "flink-web"}
+- {name: AWS_REGION, value: "us-east-1"}
+- {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-state"}
+~~~
+
+变量名称必须为 ENDPOINT，不能少末尾 T；API 使用 9000，9001 是管理控制台。MinIO 已部署就无需重复部署；使用其控制台（当前清单 NodePort 30901）确认创建 **flink-web** 制品桶和 **flink-state** 状态桶，平台不会自动建桶。目录前缀 artifacts/ 按对象路径使用，无需预建文件夹。
+
+这些配置只接通平台后端的 S3。Flink JM/TM 的 checkpoint、savepoint 还需要运行镜像中的 S3 插件及自身的 endpoint/凭据；下载 initContainer 也需独立配置，详见第 7 节。**SQLite 元数据存 PVC，S3 存 JAR、依赖和作业状态；S3 不能替代 /app/data/flink-web.db。**
+
+**3. 首次空 PVC 初始化。** 截图的 Local database missing 表示 /app/data/flink-web.db 不存在，同时 FLINK_WEB_STORAGE_INITIALIZE=false。确认这是新平台，而不是原 PVC 丢失/挂错后执行：
+
+~~~bash
+kubectl -n flink-kubernetes-operator get pvc flink-web-data
+kubectl -n flink-kubernetes-operator get secret flink-web-secrets minio-secret
+kubectl -n flink-kubernetes-operator get svc minio
+kubectl apply -f deploy/kubernetes/rbac.yaml
+kubectl apply -f deploy/kubernetes/application.yaml
+kubectl -n flink-kubernetes-operator patch deployment flink-web-backend \
+  --type=strategic --patch-file deploy/kubernetes/first-install.patch.yaml
+kubectl -n flink-kubernetes-operator rollout status deployment/flink-web-backend --timeout=180s
+# 启动成功后恢复清单中的 INITIALIZE=false，保留新建数据库：
+kubectl apply -f deploy/kubernetes/application.yaml
+kubectl -n flink-kubernetes-operator rollout status deployment/flink-web-backend --timeout=180s
+~~~
+
+[first-install.patch.yaml](../deploy/kubernetes/first-install.patch.yaml) 是战略合并补丁，不能单独 kubectl apply；不需要删除 PVC、数据库或 MinIO。不要对整个目录递归 apply，目录还包含 Secret 空示例和可选跨 namespace 授权文件。若库已经有数据而仍报 missing，应检查 PVC/PV 绑定、/app/data 挂载和文件路径，恢复原数据库及原主密钥，不使用首次初始化流程。
+
+本地 PV 需要为 UID/GID 10001 提供读写和可靠文件锁；PVC 未 Bound 或目录不可写需由运维修复。FLINK_WEB_STORAGE_INITIALIZE=true 只是允许创建缺失文件，不是恢复数据。平台和 Operator 同 namespace 时不需要 operator-rbac.yaml；Operator 换 namespace 才应用修改后的该文件。
 
 平台 RBAC 的主要范围：
 
@@ -234,7 +288,9 @@ initContainer 在 JM/TM 分别下载 HTTP(S)/S3 文件并校验 SHA-256；超时
 
 | 现象 | 优先检查 |
 | --- | --- |
-| INVALID_CREDENTIAL_ENVELOPE | 前后端是否同步升级、Cookie 会话是否一致、挑战是否过期或已消费；重新获取挑战，不改为明文重试 |\n| 本地数据库启动被拒绝 | 路径、PVC 权限、实例锁、INITIALIZE 开关；不要通过开启初始化掩盖挂错卷 |
+| 初始管理员密码校验失败 | 修改 flink-web-secrets 的 FLINK_WEB_ADMIN_PASSWORD，至少 12 字符且 UTF-8 不超过 72 字节，再重启后端；如已有用户却进入初始化，先核对 PVC/库路径 |
+| INVALID_CREDENTIAL_ENVELOPE | 前后端是否同步升级、Cookie 会话是否一致、挑战是否过期或已消费；重新获取挑战，不改为明文重试 |
+| 本地数据库启动被拒绝 | 路径、PVC 权限、实例锁、INITIALIZE 开关；不要通过开启初始化掩盖挂错卷 |
 | JOB_NAME_EXISTS / DATA_CONFLICT | 作业重名或数据约束；修改名称或编辑已有记录 |
 | STORAGE_BUSY / STORAGE_ERROR | 写入竞争、文件系统与数据库配置；查看安全日志中的 SQLState/vendorCode，不输出 YAML 或密钥 |
 | REVISION_CONFLICT / 身份冲突 | 重新读取草稿及运行资源；核对 resourceVersion、绑定 UID 和同名资源是否被重建 |

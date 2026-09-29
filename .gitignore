@@ -19,3 +19,6 @@ __pycache__/
 *.pyc
 
 sql-runner/target/
+
+# Local deployment credentials
+deploy/kubernetes/secrets.local.yaml

@@ -1,6 +1,7 @@
 package com.flinkweb.datasource.metadata;
 
 import com.flinkweb.config.platform.PlatformProperties;
+import com.flinkweb.exception.platform.StartupConfigurationException;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.io.IOException;
@@ -24,8 +25,11 @@ public class StorageConfiguration {
     if (!"local".equals(properties.storage().type())) return new LocalStoreLock(null, null);
     Path database = Path.of(properties.storage().localPath()).toAbsolutePath().normalize();
     if (!Files.exists(database) && !properties.storage().initialize()) {
-      throw new IllegalStateException(
-          "Local database missing. Initialize explicitly or restore the PVC.");
+      throw new StartupConfigurationException(
+          "本地数据库不存在：" + database + "；FLINK_WEB_STORAGE_INITIALIZE=false，已拒绝自动创建空库。",
+          "首次空 PVC 部署：设置 FLINK_WEB_STORAGE_INITIALIZE=true，启动成功后恢复 false。"
+              + "已有环境：检查 FLINK_WEB_LOCAL_PATH、PVC/PV 及 /app/data 挂载，恢复原数据库；"
+              + "不要开启初始化来掩盖数据卷丢失。S3 只保存制品和作业状态，不替代本地元数据库。");
     }
     Files.createDirectories(database.getParent());
     var channel =

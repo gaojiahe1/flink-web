@@ -25,7 +25,7 @@ spec:
     metadata:
       labels: {app: flink-web-backend}
     spec:
-      serviceAccountName: flink-operator
+      serviceAccountName: flink-web
       securityContext:
         fsGroup: 10001
       containers:
@@ -40,12 +40,13 @@ spec:
             - {name: FLINK_WEB_OPERATOR_CONTAINER, value: flink-kubernetes-operator}
             - {name: FLINK_WEB_STORAGE_TYPE, value: local}
             - {name: FLINK_WEB_LOCAL_PATH, value: /app/data/flink-web.db}
-            # Set true only for first initialization; then change to false.
+            # 首次空 PVC：应用 first-install.patch.yaml；启动成功后恢复 false，防止挂错卷时误建空库。
             - {name: FLINK_WEB_STORAGE_INITIALIZE, value: "false"}
-            - {name: FLINK_WEB_ADMIN_PASSWORD, value: "123456789abcd"}
             - {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-state"}
             - {name: FLINK_WEB_S3_BUCKET, value: "flink-web"}
-            - {name: FLINK_WEB_S3_ENDPOIN, value: "http://minio.minio.svc.cluster.local:9000"}
+            - {name: FLINK_WEB_S3_ENDPOINT, value: "http://minio.flink-kubernetes-operator.svc.cluster.local:9000"}
+            - {name: AWS_REGION, value: "us-east-1"}
+            # 复用同 namespace 的 MinIO Secret；生产可改为仅允许所需桶的专用凭据。
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -56,6 +57,7 @@ spec:
                 secretKeyRef:
                   name: minio-secret
                   key: MINIO_ROOT_PASSWORD
+          # 先创建 secrets.example.yaml 对应的实际 Secret，注入管理员密码及配置加密主密钥。
           envFrom:
             - secretRef: {name: flink-web-secrets}
           volumeMounts:

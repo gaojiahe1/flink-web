@@ -81,10 +81,15 @@ class LocalStorageTest {
       assertThatThrownBy(() -> storage.localStoreLock(properties))
           .isInstanceOf(java.nio.channels.OverlappingFileLockException.class);
     }
-    try (var lock = storage.localStoreLock(properties);
-        var dataSource = storage.dataSource(properties, lock)) {
+    var reopen =
+        new PlatformProperties(
+            "test",
+            new PlatformProperties.Storage("local", path.toString(), false, null, null, null),
+            null);
+    try (var lock = storage.localStoreLock(reopen);
+        var dataSource = storage.dataSource(reopen, lock)) {
       var jdbc = new JdbcTemplate(dataSource);
-      new SchemaInitializer(jdbc, properties);
+      new SchemaInitializer(jdbc, reopen);
       assertThat(
               jdbc.queryForObject(
                   "SELECT revision FROM platform_records WHERE collection='test'"
@@ -101,6 +106,8 @@ class LocalStorageTest {
                 "local", directory.resolve("missing.db").toString(), false, null, null, null),
             null);
     assertThatThrownBy(() -> storage.localStoreLock(missing))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(com.flinkweb.exception.platform.StartupConfigurationException.class)
+        .hasMessageContaining("FLINK_WEB_STORAGE_INITIALIZE=false");
+    assertThat(Files.exists(directory.resolve("missing.db"))).isFalse();
   }
 }

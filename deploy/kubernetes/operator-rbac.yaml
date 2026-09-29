@@ -22,7 +22,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: flink-web
-    namespace: flink-jobs
+    namespace: flink-kubernetes-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

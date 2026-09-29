@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.flinkweb.config.platform.PlatformProperties;
 import com.flinkweb.exception.common.BusinessException;
+import com.flinkweb.exception.platform.StartupConfigurationException;
 import com.flinkweb.repository.metadata.RecordRepository;
 import com.flinkweb.service.audit.AuditService;
 import com.flinkweb.service.permission.UserService;
@@ -32,7 +33,15 @@ public class UserServiceImpl implements UserService {
     this.audit = audit;
     if (store.list("users").isEmpty()) {
       String password = properties.security().password();
-      checkPassword(password);
+      try {
+        checkPassword(password);
+      } catch (BusinessException ex) {
+        throw new StartupConfigurationException(
+            "用户库为空，FLINK_WEB_ADMIN_PASSWORD 未通过校验：密码至少 12 个字符，UTF-8 编码后最多 72 字节。",
+            "在后端 Pod 所在 namespace 的 flink-web-secrets 中设置 FLINK_WEB_ADMIN_PASSWORD，"
+                + "然后重启后端 Deployment。该配置填写原始密码，不填写 Base64 或 fwenc1: 传输密文。"
+                + "如果此前已创建用户，请先检查数据库路径和 PVC 是否指向原数据，勿删除数据库重建。");
+      }
       var admin =
           mapper
               .createObjectNode()

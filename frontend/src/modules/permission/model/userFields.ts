@@ -9,7 +9,7 @@ export const userFields: CatalogField[] = [
   {
     key: 'password',
     label: '密码',
-    help: '12–72 位，修改用户时留空保留原密码。',
+    help: '至少 12 个字符，UTF-8 最多 72 字节；修改用户时留空保留原密码。',
     type: 'secret',
   },
   {
