@@ -43,7 +43,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: backend
-          image: 192.168.68.163:5000/flink-web/app:0.0.3
+          image: 192.168.68.1:5000/flink-web/app:0.0.4
           ports: [{containerPort: 8080}]
           env:
             - {name: FLINK_WEB_NAMESPACE, value: flink-kubernetes-operator}
@@ -116,7 +116,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: frontend
-          image: 192.168.68.163:5000/flink-web/web:0.0.3
+          image: 192.168.68.1:5000/flink-web/web:0.0.4
           ports: [{containerPort: 8080}]
           securityContext:
             allowPrivilegeEscalation: false

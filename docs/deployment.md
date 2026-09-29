@@ -210,6 +210,16 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up --build -d
 
 实现依据：[node-forge 算法文档](https://github.com/digitalbazaar/forge)、[浏览器安全随机数说明](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues)。
 
+### 本机 Registry（2026-09-29）
+
+Windows Docker Desktop 已部署 `registry:3`，容器名 `registry`，重启策略 `always`，数据挂载 `D:\DevTools\registry` → `/var/lib/registry`。用户要求仅供 `192.168.68.0/24` 访问，保持防火墙开启，不向其他网络开放。
+
+当前容器仅发布 `127.0.0.1:15000:5000`，本机 API 已验证；此前推送、拉取和持久化验证通过，保留测试镜像 `registry:3`。Docker Desktop WSL 直接绑定 `192.168.68.1` 报 `cannot assign requested address`，因此使用 Windows 端口转发提供局域网入口 5000。
+
+防火墙已创建 `DockerRegistry5000-VMnet8`：仅允许源 `192.168.68.0/24` 访问目标 `192.168.68.1:5000`，此前宽泛规则已撤销，各防火墙配置文件仍启用。Windows 已建立 `192.168.68.1:5000` → `127.0.0.1:15000` 的转发，并重载 IP Helper；本机通过该局域网地址访问 `/v2/` 返回 HTTP 200。尚未从另一台虚拟机或局域网设备验证访问。WSL 使用 mirrored 网络，同端口绑定冲突通过区分内部 15000 与局域网 5000 解决。可重用 `D:\DevTools\registry\enable-lan.ps1` 完成规则配置。
+
+仓库为 HTTP、无认证。网段内 Docker 客户端需将 `192.168.68.1:5000` 合并到 Docker Engine 的 `insecure-registries` 并重启引擎，镜像地址格式为 `192.168.68.1:5000/镜像名:标签`。参见 [Registry HTTP 配置](https://distribution.github.io/distribution/about/insecure/)。
+
 ## 5. 数据库、迁移与备份
 
 SQLite 使用单连接池、DELETE journal、FULL synchronous、实例文件锁及启动完整性检查。不要让多个进程或 Pod 同时使用同一库文件。
