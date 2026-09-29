@@ -21,7 +21,7 @@ stringData:
   # 首次创建管理员：至少 12 个字符，UTF-8 最多 72 字节；不是 fwenc1: 密文。
   FLINK_WEB_ADMIN_PASSWORD: "123456789abcd"
   # 仅首次新装用 openssl rand -base64 32 生成，粘贴完整输出；与数据备份分开保管。
-  FLINK_WEB_MASTER_KEY: ""
+  FLINK_WEB_MASTER_KEY: "CUcwAB40WHnaafrxW8QWRztmoyV4hEgtljFOeVUyimQ="
 ---
 apiVersion: apps/v1
 kind: Deployment
