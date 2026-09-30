@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import { sourceTypes, isJdbc, isKafka, configurationOnly } from '../model/sourceTypes'
@@ -78,7 +80,7 @@ async function load() {
       request<any[]>('/api/catalog/configs'),
     ])
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 onMounted(load)
@@ -105,7 +107,7 @@ async function save() {
     editing.value = false
     message.value = '数据源已保存，可在 SQL 开发页插入建表语句。'
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -123,7 +125,7 @@ async function probe(row: Source, schema = false) {
       if (
         editing.value &&
         form.id === row.id &&
-        window.confirm('用数据库字段替换当前表结构？需要保存后才会生效。')
+        (await confirmDialog('用数据库字段替换当前表结构？需要保存后才会生效。'))
       )
         form.columns = result.columns
       else if (!editing.value) {
@@ -133,20 +135,20 @@ async function probe(row: Source, schema = false) {
     }
     message.value = result.message
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
 }
 async function remove(row: Source) {
-  if (!window.confirm('删除数据源 ' + row.name + '？已插入的 SQL 不会改变。')) return
+  if (!(await confirmDialog('删除数据源 ' + row.name + '？已插入的 SQL 不会改变。'))) return
   try {
     await request('/api/catalog/datasources/' + row.id + '?revision=' + row.revision, {
       method: 'DELETE',
     })
     rows.value = rows.value.filter((r) => r.id !== row.id)
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 
@@ -158,13 +160,18 @@ async function previewSql(row: Source) {
     previewName.value = row.name
     sqlPreview.value = result.sql
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
 }
-function applyMetadata(value: { database: string; table: string; columns: ColumnDefinition[] }) {
-  if (!metadataSource.value || !window.confirm('使用当前表结构编辑数据源？保存后才会生效。')) return
+async function applyMetadata(value: {
+  database: string
+  table: string
+  columns: ColumnDefinition[]
+}) {
+  if (!metadataSource.value || !(await confirmDialog('使用当前表结构编辑数据源？保存后才会生效。')))
+    return
   edit(metadataSource.value)
   form.database = value.database
   if (form.connectorType === 'postgresql' && value.table.includes('.')) {
@@ -210,13 +217,17 @@ function resetFilters() {
         <div class="field-grid">
           <label
             >唯一标识<input
+              data-field="id"
               v-model="form.id"
               required
-              pattern="[a-z0-9][a-z0-9_.-]{0,100}"
+              pattern="[a-z0-9][a-z0-9_.\-]{0,100}"
               :disabled="!!form.revision" /></label
-          ><label>数据源名称<input v-model="form.name" required maxlength="100" /></label>
+          ><label
+            >数据源名称<input data-field="name" v-model="form.name" required maxlength="100"
+          /></label>
           <label
             >连接类型<select
+              data-field="connectorType"
               v-model="form.connectorType"
               aria-label="连接类型"
               @change="typeChanged"
@@ -226,27 +237,36 @@ function resetFilters() {
               </option>
             </select></label
           ><label
-            >SQL 表名<input v-model="form.tableName" required pattern="[A-Za-z_][A-Za-z0-9_]{0,63}"
+            >SQL 表名<input
+              data-field="tableName"
+              v-model="form.tableName"
+              required
+              pattern="[A-Za-z_][A-Za-z0-9_]{0,63}"
           /></label>
           <template v-if="isKafka(form.connectorType)"
             ><label
               >Bootstrap servers<input
+                data-field="brokers"
                 v-model="form.brokers"
                 required
                 placeholder="broker:9092" /><HelpTip
                 text="多个地址使用逗号分隔；基础版本使用集群内明文协议。" /></label
-            ><label>Topic<input v-model="form.topic" required /></label
+            ><label>Topic<input data-field="topic" v-model="form.topic" required /></label
             ><label v-if="form.connectorType === 'kafka'"
-              >消费组<input v-model="form.groupId" required /></label
+              >消费组<input data-field="groupId" v-model="form.groupId" required /></label
             ><label
-              >消息格式<select v-model="form.format">
+              >消息格式<select data-field="format" v-model="form.format">
                 <option>json</option>
                 <option>csv</option>
                 <option v-if="form.connectorType === 'kafka'">raw</option>
               </select></label
             >
             <label v-if="form.connectorType === 'kafka'"
-              >起始位置<select v-model="form.startupMode" aria-label="起始位置">
+              >起始位置<select
+                data-field="startupMode"
+                v-model="form.startupMode"
+                aria-label="起始位置"
+              >
                 <option value="group-offsets">消费组已提交位点</option>
                 <option value="earliest-offset">最早位点</option>
                 <option value="latest-offset">最新位点</option>
@@ -255,6 +275,7 @@ function resetFilters() {
             >
             <label v-if="form.startupMode === 'timestamp'"
               >起始时间戳（毫秒）<input
+                data-field="startupTimestamp"
                 v-model.number="form.startupTimestamp"
                 type="number"
                 min="0"
@@ -263,27 +284,43 @@ function resetFilters() {
           ></template>
           <template v-else-if="isJdbc(form.connectorType)"
             ><label
-              >主机<input v-model="form.host" required placeholder="mysql.default.svc" /></label
+              >主机<input
+                data-field="host"
+                v-model="form.host"
+                required
+                placeholder="mysql.default.svc" /></label
             ><label
-              >端口<input v-model="form.port" required type="number" min="1" max="65535" /></label
-            ><label>数据库<input v-model="form.database" required /></label
+              >端口<input
+                data-field="port"
+                v-model="form.port"
+                required
+                type="number"
+                min="1"
+                max="65535" /></label
+            ><label>数据库<input data-field="database" v-model="form.database" required /></label
             ><label v-if="form.connectorType === 'postgresql'"
               >Schema<input
+                data-field="schema"
                 v-model="form.schema"
                 required
                 pattern="[A-Za-z_][A-Za-z0-9_]{0,63}" /></label
-            ><label>数据库表<input v-model="form.table" required /></label
+            ><label>数据库表<input data-field="table" v-model="form.table" required /></label
             ><label
-              >TLS 模式<select v-model="form.sslMode">
+              >TLS 模式<select data-field="sslMode" v-model="form.sslMode">
                 <option>PREFERRED</option>
                 <option>REQUIRED</option>
                 <option>VERIFY_CA</option>
                 <option>VERIFY_IDENTITY</option>
                 <option>DISABLED</option>
               </select></label
-            ><label>用户名<input v-model="form.username" required autocomplete="off" /></label
             ><label
-              >密码配置引用<select v-model="form.passwordRef" required>
+              >用户名<input
+                data-field="username"
+                v-model="form.username"
+                required
+                autocomplete="off" /></label
+            ><label
+              >密码配置引用<select data-field="passwordRef" v-model="form.passwordRef" required>
                 <option value="">选择已注册的密钥</option>
                 <option
                   v-for="secret in secrets.filter((s) => ['secret', 'secretRef'].includes(s.kind))"
@@ -297,13 +334,14 @@ function resetFilters() {
           <template v-else-if="form.connectorType === 'filesystem'">
             <label
               >文件路径<input
+                data-field="path"
                 v-model="form.path"
                 required
                 placeholder="s3://bucket/path/" /><HelpTip
                 text="S3/S3A/HDFS/file 路径由 Flink 容器访问，凭据通过运行时配置或 Pod 身份提供；此处只校验路径。"
             /></label>
             <label
-              >文件格式<select v-model="form.format">
+              >文件格式<select data-field="format" v-model="form.format">
                 <option>json</option>
                 <option>csv</option>
                 <option>parquet</option>
@@ -314,6 +352,7 @@ function resetFilters() {
           </template>
           <label v-else-if="form.connectorType === 'datagen'"
             >每秒生成行数<input
+              data-field="rowsPerSecond"
               v-model.number="form.rowsPerSecond"
               type="number"
               min="1"
@@ -321,7 +360,9 @@ function resetFilters() {
               step="1"
               required
           /></label>
-          <label class="wide-field">描述<input v-model="form.description" maxlength="500" /></label>
+          <label class="wide-field"
+            >描述<input data-field="description" v-model="form.description" maxlength="500"
+          /></label>
         </div>
         <div class="field-heading">
           <h3>表结构</h3>
@@ -345,11 +386,13 @@ function resetFilters() {
         />
         <div v-for="(column, index) in form.columns" :key="index" class="column-row">
           <input
+            data-field="name"
             v-model="column.name"
             :aria-label="'字段名称 ' + (index + 1)"
             required
             pattern="[A-Za-z_][A-Za-z0-9_]{0,63}"
           /><input
+            data-field="type"
             v-model="column.type"
             list="flink-data-types"
             :aria-label="'字段类型 ' + (index + 1)"
@@ -358,6 +401,7 @@ function resetFilters() {
           />
           <label class="column-flag"
             ><input
+              data-field="nullable"
               v-model="column.nullable"
               type="checkbox"
               :disabled="column.primaryKey"
@@ -366,6 +410,7 @@ function resetFilters() {
           >
           <label class="column-flag"
             ><input
+              data-field="primaryKey"
               v-model="column.primaryKey"
               type="checkbox"
               :disabled="!isJdbc(form.connectorType) && form.connectorType !== 'upsert-kafka'"
@@ -411,7 +456,7 @@ function resetFilters() {
         </datalist>
         <div class="field-grid watermark-fields">
           <label
-            >事件时间 Watermark<select v-model="form.watermarkColumn">
+            >事件时间 Watermark<select data-field="watermarkColumn" v-model="form.watermarkColumn">
               <option value="">不配置 Watermark</option>
               <option
                 v-for="column in form.columns.filter((c) =>
@@ -426,6 +471,7 @@ function resetFilters() {
           /></label>
           <label
             >Watermark 延迟（秒）<input
+              data-field="watermarkDelaySeconds"
               v-model.number="form.watermarkDelaySeconds"
               type="number"
               min="0"
@@ -443,10 +489,12 @@ function resetFilters() {
   </section>
   <section class="panel detail-panel">
     <div class="filter-bar">
-      <input v-model="query" class="search" placeholder="搜索名称 / 标识 / 描述" /><select
-        v-model="type"
-        aria-label="数据源类型筛选"
-      >
+      <input
+        data-field="query"
+        v-model="query"
+        class="search"
+        placeholder="搜索名称 / 标识 / 描述"
+      /><select data-field="type" v-model="type" aria-label="数据源类型筛选">
         <option value="">全部类型</option>
         <option v-for="kind in sourceTypes" :key="kind.value" :value="kind.value">
           {{ kind.label }}

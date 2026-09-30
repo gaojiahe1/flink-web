@@ -13,11 +13,11 @@ import org.springframework.stereotype.Service;
 import org.yaml.snakeyaml.*;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
-/** 安全解析和校验 FlinkDeployment YAML，应用默认 Namespace、运行账号及状态存储策略。 */
+/** 安全解析和校验 FlinkDeployment YAML，应用默认 Namespace、运行账号并保留用户的状态存储配置。 */
 @Service
 public class YamlServiceImpl implements YamlService {
   private final ObjectMapper mapper;
-  private final String namespace, serviceAccount, stateRoot;
+  private final String namespace, serviceAccount;
   private final ArtifactPodBuilder podTemplates;
 
   /** 注入 JSON 映射器并读取 Namespace、工作负载账号和状态存储根目录。 */
@@ -31,7 +31,6 @@ public class YamlServiceImpl implements YamlService {
     this.podTemplates = podTemplates;
     this.namespace = properties.namespace();
     this.serviceAccount = serviceAccount;
-    this.stateRoot = stateRoot;
   }
 
   /** 限制 YAML 大小、标签、重复键及别名，将单个文档安全转换为对象。 */
@@ -124,18 +123,13 @@ public class YamlServiceImpl implements YamlService {
     for (String key : List.of("rest.port", "rest.bind-port"))
       if (config.has(key) && !config.path(key).asText().equals("8081"))
         fail("平台内部 Flink REST 端口固定为 8081");
-    boolean v2 = spec.path("flinkVersion").asText().startsWith("v2");
-    String root = stateRoot.replaceAll("/+$", "") + "/" + name;
-    if (!root.startsWith("s3://")) fail("状态存储必须为 s3:// 地址");
-    config.remove(v2 ? "state.checkpoints.num-retained" : "execution.checkpointing.num-retained");
-    config.put(v2 ? "execution.checkpointing.num-retained" : "state.checkpoints.num-retained", "1");
-    config.putIfAbsent("execution.checkpointing.interval", TextNode.valueOf("60s"));
-    String cp = v2 ? "execution.checkpointing.dir" : "state.checkpoints.dir",
-        sp = v2 ? "execution.checkpointing.savepoint-dir" : "state.savepoints.dir";
-    config.putIfAbsent(cp, TextNode.valueOf(root + "/checkpoints"));
-    config.putIfAbsent(sp, TextNode.valueOf(root + "/savepoints"));
-    if (!config.path(cp).asText().startsWith("s3://")
-        || !config.path(sp).asText().startsWith("s3://")) fail("checkpoint 和 savepoint 目录必须使用 S3");
+    for (String key : List.of("state.checkpoints.num-retained", "execution.checkpointing.num-retained"))
+      if (config.has(key) && !config.path(key).asText().matches("[1-9][0-9]*"))
+        fail("flinkConfiguration: " + key + " 必须为正整数");
+    for (String key : List.of("state.checkpoints.dir", "state.savepoints.dir",
+        "execution.checkpointing.dir", "execution.checkpointing.savepoint-dir"))
+      if (config.has(key) && !config.path(key).asText().matches("[a-zA-Z][a-zA-Z0-9+.-]*:/.*"))
+        fail("flinkConfiguration: " + key + " 必须是带协议的存储路径");
     config
         .fields()
         .forEachRemaining(

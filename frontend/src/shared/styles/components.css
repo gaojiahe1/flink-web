@@ -1086,3 +1086,46 @@ select:not([multiple]) {
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+/* 所有页面共用字段级错误与站内确认对话框。 */
+input.field-invalid,
+select.field-invalid,
+textarea.field-invalid,
+.code-editor.field-invalid,
+.flink-config-editor.field-invalid .config-editor-host,
+[data-field].field-invalid {
+  border: 1px solid #e5484d !important;
+  box-shadow: 0 0 0 2px rgb(229 72 77 / 10%);
+}
+.field-error,
+.inline-validation {
+  color: #d9363e;
+}
+.inline-validation {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+.app-confirm-dialog {
+  width: min(460px, calc(100vw - 40px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  background: white;
+  box-shadow: 0 20px 60px #10243d30;
+}
+.app-confirm-dialog::backdrop {
+  background: #14243e66;
+}
+.app-confirm-dialog h3 {
+  margin: 0 0 16px;
+}
+.app-confirm-dialog p {
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.app-confirm-dialog .dialog-footer {
+  padding: 20px 0 0;
+}

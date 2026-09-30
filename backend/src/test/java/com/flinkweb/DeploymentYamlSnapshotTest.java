@@ -26,7 +26,11 @@ class DeploymentYamlSnapshotTest {
     String yaml = snapshot.render(source, List.of("known-secret"));
     assertThat(yaml)
         .contains("RUNNING", "resourceVersion", "demo")
-        .doesNotContain("private-", "secret123", "known-secret");
+        .contains("private-embedded")
+        .doesNotContain("private-env", "private-argument", "private-json", "secret123", "known-secret");
+    var decoded = mapper.valueToTree(new org.yaml.snakeyaml.Yaml().load(yaml));
+    assertThat(decoded.path("status")).isEqualTo(source.path("status"));
+    assertThat(yaml).contains("status:\n  jobStatus:\n    state: RUNNING");
     assertThat(source.toString()).contains("private-env");
   }
 }

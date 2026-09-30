@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { computed, ref, watch } from 'vue'
 import { workbenchApi } from '../api/workbench'
 import { permissionApi } from '../../permission/api/permission'
@@ -90,7 +92,7 @@ async function run(task: () => Promise<void>) {
   try {
     await task()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -147,9 +149,9 @@ function readLog() {
 async function restore() {
   if (
     !selectedRelease.value ||
-    !window.confirm(
+    !(await confirmDialog(
       '将此版本恢复为新的草稿修订？不会自动部署。密钥引用按当前配置解析，运行状态不会回滚。',
-    )
+    ))
   )
     return
   await run(async () => {
@@ -212,13 +214,13 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
     <div class="workbench-body" v-if="tab === 'releases'">
       <div v-if="releases.length" class="toolbar-actions release-controls">
         <label
-          >发布版本<select v-model="releaseId">
+          >发布版本<select data-field="releaseId" v-model="releaseId">
             <option v-for="release in releases" :key="release.id" :value="release.id">
               {{ time(release.createdAt) }} · {{ release.actor }} · 草稿 {{ release.draftRevision }}
             </option>
           </select></label
         ><label
-          >对照版本<select v-model="compareWith">
+          >对照版本<select data-field="compareWith" v-model="compareWith">
             <option value="current">当前草稿</option>
             <option v-for="release in releases" :key="release.id" :value="release.id">
               {{ time(release.createdAt) }}
@@ -311,11 +313,12 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
           </tbody>
         </table>
         <div v-if="operator && acl.canOperate" class="toolbar-actions log-controls">
-          <select v-model="pod" aria-label="日志 Pod">
+          <select data-field="podTemplate" v-model="pod" aria-label="日志 Pod">
             <option v-for="item in pods" :key="item.name">{{ item.name }}</option></select
-          ><select v-model="container" aria-label="日志容器">
+          ><select data-field="container" v-model="container" aria-label="日志容器">
             <option v-for="item in containers" :key="item">{{ item }}</option></select
-          ><label class="inline-check"><input type="checkbox" v-model="previous" />上一实例</label
+          ><label class="inline-check"
+            ><input data-field="previous" type="checkbox" v-model="previous" />上一实例</label
           ><button class="button" :disabled="!container || busy || queryDisabled" @click="readLog">
             读取最近 500 行
           </button>
@@ -432,15 +435,24 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
       </p>
       <form v-if="acl.canManage && developer" @submit.prevent="saveAccess">
         <div class="field-grid">
-          <label>负责人账号<input v-model="acl.owner" required /></label
-          ><label>业务标签<input v-model="acl.project" maxlength="100" /></label
-          ><label>只读用户组<input v-model="readGroups" placeholder="多个组标识用逗号分隔" /></label
+          <label>负责人账号<input data-field="owner" v-model="acl.owner" required /></label
+          ><label
+            >业务标签<input data-field="project" v-model="acl.project" maxlength="100" /></label
+          ><label
+            >只读用户组<input
+              data-field="readGroups"
+              v-model="readGroups"
+              placeholder="多个组标识用逗号分隔" /></label
           ><label
             >运行维护用户组<input
+              data-field="operateGroups"
               v-model="operateGroups"
               placeholder="允许启停、快照和诊断" /></label
           ><label
-            >编辑用户组<input v-model="editGroups" placeholder="允许编辑和发布，仍受平台角色限制"
+            >编辑用户组<input
+              data-field="editGroups"
+              v-model="editGroups"
+              placeholder="允许编辑和发布，仍受平台角色限制"
           /></label>
         </div>
         <p class="muted">
@@ -451,6 +463,7 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
         </p>
         <label
           >外部监控 / 日志链接<textarea
+            data-field="links"
             v-model="links"
             rows="4"
             placeholder='[{"name":"Grafana","url":"https://monitor.example.com/..."}]'

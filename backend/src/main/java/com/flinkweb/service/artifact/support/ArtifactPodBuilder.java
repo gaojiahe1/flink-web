@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ArtifactPodBuilder {
   private final ObjectMapper mapper;
+  private final com.flinkweb.client.storage.S3StorageClient storage;
   private final RecordRepository records;
   private final String image, hosts, endpoint, region, credentialsSecret;
 
@@ -18,12 +19,14 @@ public class ArtifactPodBuilder {
   public ArtifactPodBuilder(
       ObjectMapper mapper,
       RecordRepository records,
+      com.flinkweb.client.storage.S3StorageClient storage,
       @Value("${platform.artifacts.downloader-image:flink-web-downloader:0.1.0}") String image,
       @Value("${platform.artifacts.allowed-hosts:}") String hosts,
       @Value("${platform.s3.endpoint:}") String endpoint,
       @Value("${platform.s3.region:us-east-1}") String region,
       @Value("${platform.artifacts.credentials-secret:}") String credentialsSecret) {
     this.mapper = mapper;
+    this.storage = storage;
     this.records = records;
     this.image = image;
     this.hosts = hosts;
@@ -38,7 +41,8 @@ public class ArtifactPodBuilder {
     Set<String> filenames = new HashSet<>();
     int index = 0;
     for (JsonNode id : ids) {
-      var artifact = records.require("artifacts", id.asText());
+      var artifact = id.asText().startsWith("s3:") ? storage.describe(id.asText().substring(3))
+          : records.require("artifacts", id.asText());
       String filename = artifact.path("filename").asText();
       if (!filenames.add(filename))
         throw new com.flinkweb.exception.common.BusinessException(
@@ -118,6 +122,27 @@ public class ArtifactPodBuilder {
     spec.remove("podTemplate");
     spec.withObject("/job")
         .put("jarURI", "local:///opt/flink/usrlib/" + manifest.get(0).path("filename").asText());
+  }
+
+  /** 仅移除平台生成的下载器、挂载和卷，保留用户的其他模板字段。 */
+  public void clearManaged(ObjectNode spec) {
+    for (String component : List.of("", "jobManager", "taskManager")) {
+      JsonNode pod = (component.isEmpty() ? spec : spec.path(component)).path("podTemplate").path("spec");
+      if (!pod.isObject()) continue;
+      removeNamed((ObjectNode) pod, "initContainers", "fw-download");
+      removeNamed((ObjectNode) pod, "volumes", "fw-artifacts");
+      for (JsonNode container : pod.path("containers"))
+        if (container.isObject()) removeNamed((ObjectNode) container, "volumeMounts", "fw-artifacts");
+    }
+  }
+
+  /** 从具名数组中删除平台独占的元素。 */
+  private void removeNamed(ObjectNode parent, String field, String name) {
+    if (parent.path(field).isArray()) {
+      ArrayNode items = (ArrayNode) parent.get(field);
+      for (int i = items.size() - 1; i >= 0; i--)
+        if (name.equals(items.get(i).path("name").asText())) items.remove(i);
+    }
   }
 
   /** 将公共 PodTemplate 与 JM/TM 模板分别合并，避免依赖集群端的数组合并行为。 */

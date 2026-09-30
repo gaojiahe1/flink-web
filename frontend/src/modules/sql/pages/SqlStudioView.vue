@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
+import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
@@ -15,7 +18,8 @@ import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../../permission/stores/auth'
 import { requestId } from '../../../shared/utils/requestId'
@@ -29,6 +33,7 @@ type Catalog = {
   yaml?: string
 }
 type Runtime = {
+  workspaceId: string
   imageId: string
   jarURI: string
   parallelism: number
@@ -54,9 +59,35 @@ type SqlDraft = {
   jobId?: string
   publishedAt?: string
 }
+const router = useRouter()
+const sqlNameInput = ref<HTMLInputElement>()
+let nameCheck = 0
+async function checkName() {
+  const current = ++nameCheck
+  const name = form.name
+  sqlNameInput.value?.setCustomValidity('')
+  if (selected.value || !name) return true
+  const result = await request<{ available: boolean }>(
+    '/api/jobs/name-availability?' + new URLSearchParams({ name, excludeId: linkedJob.value }),
+  )
+  if (nameCheck !== current || form.name !== name) return false
+  const duplicate = !result.available || records.value.some((record) => record.name === name)
+  sqlNameInput.value?.setCustomValidity(duplicate ? '作业名称已存在，请使用其他名称' : '')
+  if (duplicate) showValidationError('作业名称已存在，请使用其他名称', document)
+  return !duplicate
+}
+async function blurName() {
+  try {
+    await checkName()
+  } catch (e) {
+    if (sqlNameInput.value) sqlNameInput.value.setCustomValidity('名称校验失败，请重试')
+    error.value = showValidationError('作业名称校验失败，请重试', document)
+  }
+}
 const example =
   "-- 数据生成 → 控制台输出；运行镜像需包含 datagen / print 连接器\nCREATE TEMPORARY TABLE source_events (\n  id BIGINT,\n  payload STRING\n) WITH (\n  'connector' = 'datagen',\n  'rows-per-second' = '1'\n);\n\nCREATE TEMPORARY TABLE sink_events (\n  id BIGINT,\n  payload STRING\n) WITH ('connector' = 'print');\n\nINSERT INTO sink_events\nSELECT id, payload FROM source_events;"
 const initialRuntime = (): Runtime => ({
+  workspaceId: requestId(),
   catalogId: '',
   database: '',
   jmCpu: 1,
@@ -77,6 +108,7 @@ const runtime = reactive<Runtime>(initialRuntime())
 const records = ref<SqlDraft[]>([]),
   images = ref<Catalog[]>([]),
   artifacts = ref<Artifact[]>([])
+const stateConfigBusy = ref(false)
 const artifactUploading = ref(false),
   configValid = ref(true),
   templates = ref<Catalog[]>([]),
@@ -145,7 +177,7 @@ onMounted(async () => {
   try {
     const result = await Promise.all([
       request<Catalog[]>('/api/catalog/images'),
-      request<Artifact[]>('/api/catalog/artifacts'),
+      Promise.resolve([] as Artifact[]),
       load(),
       request<any[]>('/api/catalog/datasources'),
       request<Catalog[]>('/api/catalog/templates'),
@@ -159,16 +191,16 @@ onMounted(async () => {
     savedSnapshot.value = snapshot()
     if (!editable.value && records.value[0]) open(records.value[0], true)
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     loading.value = false
   }
 })
-function mayDiscard() {
-  return !dirty.value || window.confirm('当前 SQL 有未保存的修改，确认切换？')
+async function mayDiscard() {
+  return !dirty.value || (await confirmDialog('当前 SQL 有未保存的修改，确认切换？'))
 }
-function open(record: SqlDraft, force = false) {
-  if (!force && !mayDiscard()) return
+async function open(record: SqlDraft, force = false) {
+  if (!force && !(await mayDiscard())) return
   selected.value = record.id
   linkedJob.value = record.jobId || ''
   Object.assign(form, {
@@ -178,6 +210,7 @@ function open(record: SqlDraft, force = false) {
     revision: record.revision,
   })
   Object.assign(runtime, initialRuntime(), JSON.parse(JSON.stringify(record.runtime)))
+  if (record.jobId) runtime.workspaceId = record.jobId
   config.value = JSON.stringify(runtime.flinkConfiguration || {}, null, 2)
   pod.value = JSON.stringify(runtime.podTemplate || {}, null, 2)
   preview.value = ''
@@ -197,8 +230,8 @@ async function reloadRestoredSql() {
     message.value = '已恢复 SQL 草稿，请检查后再发布。'
   }
 }
-function create() {
-  if (!mayDiscard()) return
+async function create() {
+  if (!(await mayDiscard())) return
   selected.value = ''
   linkedJob.value = ''
   Object.assign(form, { name: '', description: '', sql: example, revision: 0 })
@@ -212,7 +245,7 @@ function create() {
   message.value = ''
   savedSnapshot.value = snapshot()
 }
-function applyPodTemplate() {
+async function applyPodTemplate() {
   const template = templates.value.find((t) => t.id === podTemplateId.value)
   if (!template?.yaml) return
   const doc = parseDocument(template.yaml)
@@ -227,7 +260,7 @@ function applyPodTemplate() {
   }
   if (
     pod.value.trim() !== '{}' &&
-    !window.confirm('替换当前 PodTemplate？已注入的数据源环境变量也会被替换。')
+    !(await confirmDialog('替换当前 PodTemplate？已注入的数据源环境变量也会被替换。'))
   )
     return
   pod.value = JSON.stringify(value, null, 2)
@@ -246,10 +279,12 @@ function payload() {
   }
 }
 async function persist() {
-  if (!form.name) {
+  if (!form.name || !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(form.name)) {
     sideTab.value = 'runtime'
-    throw new Error('请填写 SQL 作业名称')
+    await nextTick()
+    throw new Error('请填写有效的 SQL 作业名称')
   }
+  if (!(await checkName())) throw new Error('作业名称已存在，请使用其他名称')
   const record = await request<SqlDraft>('/api/sql/jobs/' + encodeURIComponent(form.name), {
     method: 'PUT',
     ...jsonBody(payload()),
@@ -262,13 +297,14 @@ async function persist() {
   return record
 }
 async function run(task: () => Promise<void>) {
+  if (busy.value || stateConfigBusy.value) return
   busy.value = true
   error.value = ''
   message.value = ''
   try {
     await task()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -299,12 +335,12 @@ function render() {
     message.value = result.message
   })
 }
-function publish(deploy: boolean) {
+async function publish(deploy: boolean) {
   if (
     deploy &&
-    !window.confirm(
+    !(await confirmDialog(
       '确认保存并部署当前 SQL？运行镜像需包含 SQL Runner 和连接器。已有同名部署会按升级策略变更。',
-    )
+    ))
   )
     return
   return run(async () => {
@@ -323,12 +359,13 @@ function publish(deploy: boolean) {
         '/api/jobs/' + job.id + '/actions/deploy',
         { method: 'POST', ...jsonBody({ revision: job.revision, requestId: requestId() }) },
       )
-      message.value = result.state + '：' + result.message
+      if (result.state === 'ACCEPTED') await router.push('/jobs')
+      else message.value = result.state + '：' + result.message
     } else message.value = '已生成部署草稿。可前往作业管理部署、启停和创建快照。'
   })
 }
-function remove() {
-  if (!selected.value || !window.confirm('删除 SQL 草稿「' + form.name + '」？')) return
+async function remove() {
+  if (!selected.value || !(await confirmDialog('删除 SQL 草稿「' + form.name + '」？'))) return
   return run(async () => {
     await request('/api/sql/jobs/' + selected.value + '?revision=' + form.revision, {
       method: 'DELETE',
@@ -343,7 +380,7 @@ async function refreshSources() {
   try {
     sources.value = await request('/api/catalog/datasources')
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 function insertSource(id: string) {
@@ -457,12 +494,13 @@ function executeSql() {
         <button
           v-if="editable"
           class="button primary full-width"
-          :disabled="busy || artifactUploading || loading"
+          :disabled="busy || artifactUploading || stateConfigBusy || loading"
           @click="create"
         >
           ＋ 新建 SQL
         </button>
         <input
+          data-field="query"
           v-model="query"
           class="sql-search"
           placeholder="搜索 SQL 草稿"
@@ -507,21 +545,21 @@ function executeSql() {
           <button
             v-if="editable"
             class="button"
-            :disabled="busy || artifactUploading || loading"
+            :disabled="busy || artifactUploading || stateConfigBusy || loading"
             @click="save"
           >
             保存 SQL</button
           ><button
             v-if="editable"
             class="button"
-            :disabled="busy || artifactUploading || loading"
+            :disabled="busy || artifactUploading || stateConfigBusy || loading"
             @click="validate"
           >
             SQL 检查</button
           ><button
             v-if="editable"
             class="text-button"
-            :disabled="busy || artifactUploading || loading"
+            :disabled="busy || artifactUploading || stateConfigBusy || loading"
             @click="render"
           >
             预览 YAML
@@ -530,7 +568,7 @@ function executeSql() {
         <button
           v-if="editable"
           class="button primary"
-          :disabled="busy || artifactUploading || loading"
+          :disabled="busy || artifactUploading || stateConfigBusy || loading"
           @click="executeSql"
         >
           执行 SQL</button
@@ -539,6 +577,7 @@ function executeSql() {
       <div class="catalog-context">
         <label
           >当前 Catalog<select
+            data-field="catalogId"
             v-model="runtime.catalogId"
             aria-label="当前 Catalog"
             :disabled="!editable || busy || loading"
@@ -555,6 +594,7 @@ function executeSql() {
         >
         <label
           >当前数据库<input
+            data-field="database"
             v-model="runtime.database"
             :disabled="!runtime.catalogId || !editable || busy"
             placeholder="Catalog 默认数据库"
@@ -565,6 +605,7 @@ function executeSql() {
         </button>
       </div>
       <CodeEditor
+        data-field="sql"
         v-model="form.sql"
         language="sql"
         label="SQL 编辑器"
@@ -610,52 +651,83 @@ function executeSql() {
       <fieldset :disabled="!editable || busy || loading">
         <label
           >SQL 作业名称<input
+            data-field="name"
+            ref="sqlNameInput"
             v-model="form.name"
+            @blur="blurName"
+            @input="sqlNameInput?.setCustomValidity('')"
+            required
+            pattern="[a-z0-9]([\-a-z0-9]*[a-z0-9])?"
             placeholder="orders-sql"
             maxlength="63"
             :disabled="!!selected" /><HelpTip
-            text="小写字母、数字、连字符；发布后也是集群作业名称。"
+            text="小写字母、数字、连字符；名称唯一，发布后自动分配编号，资源名为 flink-编号。"
         /></label>
         <label
-          >描述<input v-model="form.description" maxlength="500" placeholder="描述数据流用途"
+          >描述<input
+            data-field="description"
+            v-model="form.description"
+            maxlength="500"
+            placeholder="描述数据流用途"
         /></label>
         <label
           >运行镜像<FlinkImageSelect
+            data-field="imageId"
             v-model="runtime.imageId"
             :images="images"
             label="运行镜像" /><HelpTip
             text="镜像需包含 SQL Runner、Table Planner 及匹配版本的连接器。"
         /></label>
+        <StateStorageForm
+          v-model="configValues"
+          :version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || '1.20'"
+          :scope-id="runtime.workspaceId"
+          @busy="stateConfigBusy = $event"
+          :disabled="busy || !editable"
+        />
         <div class="runtime-grid">
           <label
             >并行度<input
+              data-field="parallelism"
               v-model.number="runtime.parallelism"
               type="number"
               min="1"
               step="1" /></label
           ><label
-            >每个 TM Slot<input v-model.number="runtime.slots" type="number" min="1" step="1"
+            >每个 TM Slot<input
+              data-field="slots"
+              v-model.number="runtime.slots"
+              type="number"
+              min="1"
+              step="1"
           /></label>
         </div>
         <div class="runtime-grid">
-          <MemoryInput v-model="runtime.jmMemory" label="JM 内存" /><MemoryInput
-            v-model="runtime.tmMemory"
-            label="TM 内存"
-          />
+          <MemoryInput
+            data-field="jmMemory"
+            v-model="runtime.jmMemory"
+            label="JM 内存"
+          /><MemoryInput data-field="tmMemory" v-model="runtime.tmMemory" label="TM 内存" />
         </div>
         <div class="runtime-grid">
           <label
             >JM CPU<input
+              data-field="jmCpu"
               v-model.number="runtime.jmCpu"
               type="number"
               min="0.1"
               step="any" /></label
           ><label
-            >TM CPU<input v-model.number="runtime.tmCpu" type="number" min="0.1" step="any"
+            >TM CPU<input
+              data-field="tmCpu"
+              v-model.number="runtime.tmCpu"
+              type="number"
+              min="0.1"
+              step="any"
           /></label>
         </div>
         <label
-          >升级策略<select v-model="runtime.upgradeMode">
+          >升级策略<select data-field="upgradeMode" v-model="runtime.upgradeMode">
             <option value="savepoint">savepoint · 保存状态</option>
             <option value="stateless">stateless · 无状态</option>
             <option value="last-state">last-state · 需要 HA</option>
@@ -664,12 +736,14 @@ function executeSql() {
         <details class="runtime-advanced">
           <summary>附加依赖与高级配置</summary>
           <label
-            >SQL Runner 路径<input v-model="runtime.jarURI" /><HelpTip
+            >SQL Runner 路径<input data-field="jarURI" v-model="runtime.jarURI" /><HelpTip
               text="镜像内 local:/// JAR 路径；默认 /opt/flink/lib/flink-web-sql-runner.jar。"
           /></label>
           <ArtifactPicker
+            data-field="dependencyArtifactIds"
             v-model="runtime.dependencyArtifactIds"
             :artifacts="artifacts"
+            :scope-id="runtime.workspaceId"
             category="dependency"
             :disabled="busy || !editable"
             @uploaded="uploaded"
@@ -677,12 +751,13 @@ function executeSql() {
           />
           <h4>Flink 运行配置</h4>
           <FlinkConfigEditor
+            data-field="flinkConfiguration"
             v-model="configValues"
             :readonly="busy || !editable"
             @valid="configValid = $event"
           />
           <label
-            >从模板获取 PodTemplate<select v-model="podTemplateId">
+            >从模板获取 PodTemplate<select data-field="podTemplateId" v-model="podTemplateId">
               <option value="">选择已登记模板</option>
               <option v-for="template in templates" :key="template.id" :value="template.id">
                 {{ template.name }}
@@ -696,7 +771,11 @@ function executeSql() {
           >
             应用 PodTemplate</button
           ><label
-            >PodTemplate<textarea v-model="pod" rows="6" class="code-input" /><HelpTip
+            >PodTemplate<textarea
+              data-field="podTemplate"
+              v-model="pod"
+              rows="6"
+              class="code-input" /><HelpTip
               text="JSON 对象，可注入 Secret 环境变量；应用时复制模板 spec.podTemplate；已有内容会提示确认。"
           /></label>
         </details>
@@ -704,13 +783,13 @@ function executeSql() {
       <div v-if="editable" class="sql-publish">
         <button
           class="button"
-          :disabled="busy || artifactUploading || loading"
+          :disabled="busy || artifactUploading || stateConfigBusy || loading"
           @click="publish(false)"
         >
           生成部署草稿</button
         ><button
           class="button primary"
-          :disabled="busy || artifactUploading || loading"
+          :disabled="busy || artifactUploading || stateConfigBusy || loading"
           @click="publish(true)"
         >
           部署并启动
@@ -737,10 +816,11 @@ function executeSql() {
         插入建表 SQL 后可编写 INSERT 语句并部署执行。MySQL 为 JDBC 有界读取，不是 CDC。
       </p>
       <div class="filter-bar">
-        <input v-model="sourceQuery" placeholder="筛选数据源" /><ManualRefreshButton
-          :action="refreshSources"
-          :disabled="busy"
-        />
+        <input
+          data-field="sourceQuery"
+          v-model="sourceQuery"
+          placeholder="筛选数据源"
+        /><ManualRefreshButton :action="refreshSources" :disabled="busy" />
       </div>
       <div v-for="source in filteredSources" :key="source.id" class="source-item">
         <div>

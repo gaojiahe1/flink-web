@@ -9,6 +9,8 @@ export interface SystemInfo {
   capabilities: { name: string; implemented: boolean }[]
 }
 export interface JobDraft {
+  jobNumber: number
+  deploymentName: string
   id: string
   name: string
   description: string
@@ -21,4 +23,4 @@ export interface JobDraft {
 export type DraftInput = Pick<
   JobDraft,
   'name' | 'description' | 'flinkVersion' | 'yaml' | 'revision'
->
+> & { workspaceId?: string }

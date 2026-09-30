@@ -23,6 +23,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class OperationServiceImpl implements OperationService {
   private final JobService jobs;
+  private final com.flinkweb.repository.job.JobRepository jobRepository;
+  private final com.flinkweb.service.job.runtime.StopService stops;
   private final JobOwnershipService ownership;
   private final YamlService yaml;
   private final VariableRenderer variables;
@@ -37,6 +39,8 @@ public class OperationServiceImpl implements OperationService {
   /** 注入作业、渲染、集群、幂等记录及身份校验服务。 */
   public OperationServiceImpl(
       JobService jobs,
+      com.flinkweb.repository.job.JobRepository jobRepository,
+      com.flinkweb.service.job.runtime.StopService stops,
       YamlService yaml,
       VariableRenderer variables,
       KubernetesClient client,
@@ -48,6 +52,8 @@ public class OperationServiceImpl implements OperationService {
       ReleaseService releases,
       com.flinkweb.client.storage.S3StorageClient storage) {
     this.jobs = jobs;
+    this.jobRepository = jobRepository;
+    this.stops = stops;
     this.ownership = ownership;
     this.access = access;
     this.releases = releases;
@@ -149,18 +155,48 @@ public class OperationServiceImpl implements OperationService {
             .put("state", "SUBMITTING");
     operation = store.save("operations", key, operation, 0);
     try {
-      JsonNode existing = client.call("GET", client.base() + "/" + job.name(), null);
+      JsonNode existing = client.call("GET", client.base() + "/" + job.deploymentName(), null);
       if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
+      if (action.equals("stop") || action.equals("suspend")) {
+        String progress = stops.stop(id, request.path("upgradeMode").asText("savepoint"), existing);
+        operation.put("state", "ACCEPTED").put("message", progress);
+        audit.record("JOB_STOP", id, "ACCEPTED");
+        return store.save("operations", key, operation, 1);
+      }
+      if (stops.pending(id)) {
+        var progress = stops.advance(id);
+        if (!"DONE".equals(progress.path("phase").asText())) fail("停止尚未完成，请刷新确认资源删除后再操作");
+      }
+      if (Set.of("start", "restore", "deploy").contains(action) && existing.isMissingNode()) {
+        ownership.release(id);
+        jobRepository.useNumberedName(id);
+        job = jobs.get(id);
+        existing = client.call("GET", client.base() + "/" + job.deploymentName(), null);
+        if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
+      }
+      if (Set.of("start", "restore").contains(action)
+          && !job.deploymentName().equals("flink-" + job.jobNumber()))
+        fail("旧作业请先停止并删除原 FlinkDeployment；停止完成后启动会使用编号资源名");
       if (action.equals("delete") && !existing.isMissingNode()) {
         String state = existing.path("status").path("jobStatus").path("state").asText("UNKNOWN");
         if ("suspended".equals(existing.path("spec").path("job").path("state").asText())
             || !Set.of("FAILED", "FINISHED", "CANCELED").contains(state))
           fail("运行中、挂起中或状态未知的作业禁止删除；仅可删除终态作业");
       }
-      if ((action.equals("suspend") || action.equals("stop"))
-          && (!"RUNNING".equals(existing.path("status").path("jobStatus").path("state").asText())
-              || "suspended".equals(existing.path("spec").path("job").path("state").asText())))
-        fail("只有运行中的作业可以停止");
+      String desired = existing.path("spec").path("job").path("state").asText();
+      String observed = existing.path("status").path("jobStatus").path("state").asText();
+      boolean terminal = Set.of("FAILED", "FINISHED", "CANCELED").contains(observed);
+      boolean reconciling =
+          existing.path("metadata").path("generation").asLong()
+              > existing.path("status").path("observedGeneration").asLong(Long.MAX_VALUE)
+          || Set.of("UPGRADING", "DEPLOYING", "ROLLING_BACK")
+              .contains(existing.path("status").path("lifecycleState").asText());
+      if (existing.path("metadata").hasNonNull("deletionTimestamp")) fail("资源正在删除，不能操作");
+      if (action.equals("start") && "running".equals(desired) && (!terminal || reconciling))
+        fail("作业已启动或正在启动，请勿重复启动");
+      if ((action.equals("savepoint") || action.equals("checkpoint"))
+          && (!"RUNNING".equals(observed) || !"running".equals(desired) || reconciling))
+        fail("快照需要实际正常运行且未在启停或升级中的作业");
       JsonNode response;
       if (action.equals("delete")) {
         if (existing.isMissingNode()) {
@@ -177,16 +213,36 @@ public class OperationServiceImpl implements OperationService {
               .putObject("preconditions")
               .put("uid", existing.path("metadata").path("uid").asText())
               .put("resourceVersion", existing.path("metadata").path("resourceVersion").asText());
-          response = client.call("DELETE", client.base() + "/" + job.name(), options);
-          ownership.release(id);
+          response = client.call("DELETE", client.base() + "/" + job.deploymentName(), options);
         }
       } else {
         ObjectNode resource;
         RenderedDeployment rendered = null;
-        if (action.equals("deploy")) {
-          rendered = variables.render(yaml.parse(job.yaml()));
-          resource = yaml.validate(rendered.deployment(), job.name());
-          if (!("v" + job.flinkVersion().replaceAll("^(\\d+\\.\\d+).*", "$1").replace('.', '_'))
+        if (action.equals("deploy") || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
+          ObjectNode stoppedResource = action.equals("deploy") ? null : stops.restartResource(id);
+          if (stoppedResource != null) {
+            resource = stoppedResource;
+            resource.withObject("/metadata").put("name", job.deploymentName());
+            resource.withObject("/spec/flinkConfiguration").remove("kubernetes.cluster-id");
+          } else {
+            if (auth == null || auth.getAuthorities().stream().noneMatch(a ->
+                a.getAuthority().equals("ROLE_ADMIN") || a.getAuthority().equals("ROLE_DEVELOPER")))
+              fail("首次部署或没有停止前配置时，需要开发者执行部署");
+            access.require(id, "edit");
+            rendered = variables.render(yaml.parse(job.yaml()));
+            rendered.deployment().withObject("/metadata").put("name", job.deploymentName());
+            rendered.deployment().withObject("/spec").withObject("/flinkConfiguration").remove("kubernetes.cluster-id");
+            resource = yaml.validate(rendered.deployment(), job.deploymentName());
+          }
+          if (!action.equals("deploy")) {
+            resource.withObject("/spec").withObject("/job").put("state", "running");
+            String path = action.equals("restore") ? request.path("savepointPath").asText() : stops.restorePath(id);
+            if (!path.isBlank()) {
+              if (action.equals("restore") && !storage.checkSnapshot(path).path("exists").asBoolean()) fail("恢复快照元数据不存在，请检查状态存储");
+              resource.withObject("/spec").withObject("/job").put("initialSavepointPath", path);
+            } else resource.withObject("/spec").withObject("/job").remove("initialSavepointPath");
+          }
+          if (stoppedResource == null && !("v" + job.flinkVersion().replaceAll("^(\\d+\\.\\d+).*", "$1").replace('.', '_'))
               .equals(resource.path("spec").path("flinkVersion").asText()))
             fail("草稿 Flink 版本与 YAML 不一致");
         } else {
@@ -239,7 +295,7 @@ public class OperationServiceImpl implements OperationService {
         String method = "POST", path = client.base();
         if (!existing.isMissingNode()) {
           method = "PUT";
-          path += "/" + job.name();
+          path += "/" + job.deploymentName();
           metadata.put(
               "resourceVersion", existing.path("metadata").path("resourceVersion").asText());
           for (String field : List.of("uid", "finalizers", "ownerReferences", "creationTimestamp"))
@@ -258,6 +314,7 @@ public class OperationServiceImpl implements OperationService {
           variables.materialize(rendered, client);
         }
         response = client.call(method, path, resource);
+        if (Set.of("start", "restore", "deploy").contains(action)) stops.clear(id);
       }
       operation
           .put("state", "ACCEPTED")

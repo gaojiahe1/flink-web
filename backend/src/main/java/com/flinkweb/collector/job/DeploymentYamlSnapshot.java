@@ -37,8 +37,15 @@ public class DeploymentYamlSnapshot {
 
   /** 输出脱敏快照，保留资源版本和状态；不得将此内容直接用于重新部署。 */
   public String render(JsonNode deployment, List<String> secrets) {
-    JsonNode copy = clean(deployment, secrets, "");
-    return new Yaml().dump(mapper.convertValue(copy, Object.class));
+    ObjectNode source = ((ObjectNode) deployment).deepCopy();
+    JsonNode status = source.remove("status");
+    ObjectNode copy = (ObjectNode) clean(source, secrets, "");
+    if (status != null) copy.set("status", status);
+    var options = new org.yaml.snakeyaml.DumperOptions();
+    options.setDefaultFlowStyle(org.yaml.snakeyaml.DumperOptions.FlowStyle.BLOCK);
+    options.setPrettyFlow(true);
+    options.setSplitLines(false);
+    return new Yaml(options).dump(mapper.convertValue(copy, Object.class));
   }
 
   /** 递归处理敏感字段，环境变量字面值、命令参数和序列化状态一律隐藏。 */

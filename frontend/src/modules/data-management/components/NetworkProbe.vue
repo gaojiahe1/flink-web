@@ -38,10 +38,22 @@ async function test() {
     </summary>
     <form class="network-form" @submit.prevent="test">
       <label
-        >诊断主机<input v-model="host" placeholder="db.default.svc" required maxlength="253"
+        >诊断主机<input
+          data-field="host"
+          v-model="host"
+          placeholder="db.default.svc"
+          required
+          maxlength="253"
       /></label>
       <label
-        >诊断端口<input v-model.number="port" type="number" min="1" max="65535" step="1" required
+        >诊断端口<input
+          data-field="port"
+          v-model.number="port"
+          type="number"
+          min="1"
+          max="65535"
+          step="1"
+          required
       /></label>
       <button class="button" :disabled="busy">{{ busy ? '验证中…' : '验证端口' }}</button>
     </form>

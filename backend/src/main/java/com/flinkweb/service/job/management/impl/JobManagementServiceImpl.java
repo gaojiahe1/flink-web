@@ -39,7 +39,7 @@ public class JobManagementServiceImpl implements JobManagementService {
                     op ->
                         id.equals(op.path("jobId").asText())
                             && !"REJECTED".equals(op.path("state").asText()));
-    if (deployed && !client.call("GET", client.base() + "/" + job.name(), null).isMissingNode())
+    if (deployed && !client.call("GET", client.base() + "/" + job.deploymentName(), null).isMissingNode())
       throw new BusinessException(
           HttpStatus.CONFLICT, "DEPLOYMENT_EXISTS", "请先删除集群资源并确认完成，再删除平台记录");
     jobs.delete(id, revision);

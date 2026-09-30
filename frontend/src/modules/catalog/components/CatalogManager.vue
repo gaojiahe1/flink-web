@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
@@ -69,7 +71,7 @@ async function load() {
     const result = await request<Row[]>(path)
     if (path === api.value) rows.value = result
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 watch(
@@ -94,7 +96,6 @@ function edit(row?: Row) {
       kind: 'plain',
       enabled: true,
       role: 'VIEWER',
-      flinkVersion: '1.20',
       yaml: '',
       value: '',
     },
@@ -123,16 +124,16 @@ async function save() {
     editing.value = false
     message.value = '已保存'
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
 }
 async function remove(row: Row) {
   if (
-    !window.confirm(
+    !(await confirmDialog(
       '删除记录 ' + row.id + '？制品登记删除不会清理 S3 对象，配置删除可能影响后续提交。',
-    )
+    ))
   )
     return
   try {
@@ -141,7 +142,7 @@ async function remove(row: Row) {
     })
     await load()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 const listing = ref<{
@@ -163,7 +164,7 @@ async function browse(path = prefix.value, token = '') {
     prefix.value = listing.value!.prefix
     if (token) tokens.value.push(token)
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -223,18 +224,23 @@ function resetFilters() {
       /></label>
     </div>
     <div class="toolbar-actions">
-      <select v-model="category" aria-label="上传文件目录">
+      <select data-field="category" v-model="category" aria-label="上传文件目录">
         <option value="">公共目录</option>
         <option value="main">主 JAR</option>
         <option value="dependency">依赖与配置</option></select
-      ><input v-model="prefix" placeholder="留空使用配置的根目录" /><ManualRefreshButton
-        :action="() => browse()"
-        :disabled="busy"
-        label="列出目录"
-      />
+      ><input
+        data-field="prefix"
+        v-model="prefix"
+        placeholder="留空使用配置的根目录"
+      /><ManualRefreshButton :action="() => browse()" :disabled="busy" label="列出目录" />
     </div>
     <div v-if="listing">
-      <input v-model="objectQuery" class="search" placeholder="筛选当前页对象 / 目录" />
+      <input
+        data-field="objectQuery"
+        v-model="objectQuery"
+        class="search"
+        placeholder="筛选当前页对象 / 目录"
+      />
       <p class="muted">s3://{{ listing.bucket }}/{{ listing.prefix }}</p>
       <button
         v-for="dir in listing.directories.filter((d) =>
@@ -287,7 +293,13 @@ function resetFilters() {
       <div class="field-grid">
         <label
           >{{ type === 'users' ? '用户名' : '唯一标识'
-          }}<input v-model="form.id" required :disabled="!!form.revision" /><small>{{
+          }}<input
+            data-field="id"
+            v-model="form.id"
+            pattern="[a-z0-9][a-z0-9_.\-]{0,100}"
+            required
+            :disabled="!!form.revision"
+          /><small>{{
             type === 'users'
               ? '使用字母、数字、点、下划线或连字符。'
               : '小写字母、数字、点、下划线、连字符；用于变量引用。'
@@ -298,22 +310,37 @@ function resetFilters() {
           :key="field.key"
           :class="{ 'wide-field': field.type === 'textarea' }"
           >{{ field.label }}
-          <select v-if="field.choices" v-model="form[field.key]">
+          <select :data-field="field.key" v-if="field.choices" v-model="form[field.key]">
             <option v-for="choice in field.choices" :key="choice">{{ choice }}</option>
           </select>
           <CodeEditor
+            :data-field="field.key"
             v-else-if="field.type === 'textarea'"
             v-model="form[field.key]"
             label="模板 YAML"
           />
-          <input v-else-if="field.type === 'checkbox'" v-model="form[field.key]" type="checkbox" />
           <input
+            :data-field="field.key"
+            v-else-if="field.type === 'checkbox'"
+            v-model="form[field.key]"
+            type="checkbox"
+          />
+          <input
+            :data-field="field.key"
             v-else
             v-model="form[field.key]"
             :type="
               field.type === 'secret' && !showSecret && (type === 'users' || form.kind === 'secret')
                 ? 'password'
                 : 'text'
+            "
+            :required="['repository', 'version', 'uri', 'sha256', 'filename'].includes(field.key)"
+            :pattern="
+              field.key === 'version' && type === 'images'
+                ? '(1\\.(16|17|18|19|20)|2\\.[0-3])(\\.[0-9]+)?([\\-_].*)?'
+                : field.key === 'sha256'
+                  ? '[a-fA-F0-9]{64}'
+                  : undefined
             "
             autocomplete="off"
           />
@@ -323,9 +350,14 @@ function resetFilters() {
       <label
         v-if="type === 'users' || (type === 'configs' && form.kind === 'secret')"
         class="inline-label"
-        ><input v-model="showSecret" type="checkbox" />显示本次输入的密码/密钥</label
+        ><input
+          data-field="showSecret"
+          v-model="showSecret"
+          type="checkbox"
+        />显示本次输入的密码/密钥</label
       ><label v-if="type === 'configs' && form.kind === 'plain'" class="inline-label"
-        ><input v-model="jsonValue" type="checkbox" />将配置值按 JSON 类型解析</label
+        ><input data-field="jsonValue" v-model="jsonValue" type="checkbox" />将配置值按 JSON
+        类型解析</label
       >
       <div class="form-actions">
         <button type="button" class="button" @click="editing = false">取消</button
@@ -337,7 +369,8 @@ function resetFilters() {
     <div class="panel-toolbar">
       <h3>{{ type === 'artifacts' ? '制品登记' : '记录列表' }}</h3>
       <div class="toolbar-actions">
-        <input v-model="query" placeholder="搜索记录" /><select
+        <input data-field="query" v-model="query" placeholder="搜索记录" /><select
+          data-field="category"
           v-if="type === 'artifacts'"
           v-model="category"
           aria-label="制品目录筛选"

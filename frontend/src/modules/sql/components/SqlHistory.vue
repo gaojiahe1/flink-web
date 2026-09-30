@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import { ref, watch, computed } from 'vue'
 import { sqlHistoryApi } from '../api/history'
@@ -39,7 +41,7 @@ async function load() {
     versions.value = result
     selected.value = result[0]?.id || ''
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -47,7 +49,7 @@ async function load() {
 async function restore() {
   if (
     !chosen.value ||
-    !window.confirm('恢复此 SQL 和运行配置为新草稿？当前未保存修改会被替换，不会部署。')
+    !(await confirmDialog('恢复此 SQL 和运行配置为新草稿？当前未保存修改会被替换，不会部署。'))
   )
     return
   busy.value = true
@@ -57,7 +59,7 @@ async function restore() {
     emit('restored')
     await load()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -71,7 +73,7 @@ async function restore() {
     </div>
     <p class="muted">保存产生历史版本，恢复只更新草稿。</p>
     <div v-if="error" class="notice error">{{ error }}</div>
-    <select v-model="selected" aria-label="SQL 历史版本">
+    <select data-field="selected" v-model="selected" aria-label="SQL 历史版本">
       <option v-for="version in versions" :key="version.id" :value="version.id">
         {{ new Date(version.createdAt).toLocaleString() }} · {{ version.actor }}
       </option>

@@ -37,9 +37,10 @@ public class FormServiceImpl implements FormService {
     checkInput(input);
     String name = input.path("name").asText(), template = input.path("templateId").asText("");
     ObjectNode resource =
-        template.isEmpty()
+        input.path("baseYaml").asText().isBlank() ? template.isEmpty()
             ? mapper.createObjectNode()
-            : yaml.parse(records.require("templates", template).path("yaml").asText());
+            : yaml.parse(records.require("templates", template).path("yaml").asText())
+            : yaml.parse(input.path("baseYaml").asText());
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
     ObjectNode spec = resource.withObject("/spec");
@@ -50,7 +51,7 @@ public class FormServiceImpl implements FormService {
     ObjectNode job = spec.withObject("/job");
     job.put("jarURI", input.path("jarURI").asText("local:///opt/flink/usrlib/job.jar"))
         .put("parallelism", input.path("parallelism").asInt(1))
-        .put("state", "running")
+        .put("state", job.path("state").asText("running"))
         .put("upgradeMode", input.path("upgradeMode").asText("savepoint"));
     if (!input.path("entryClass").asText().isEmpty())
       job.put("entryClass", input.path("entryClass").asText());
@@ -64,10 +65,10 @@ public class FormServiceImpl implements FormService {
         .withObject("/resource")
         .put("memory", input.path("tmMemory").asText("2048m"))
         .put("cpu", input.path("tmCpu").asDouble(1));
+    if (input.path("flinkConfiguration").isObject())
+      spec.set("flinkConfiguration", input.get("flinkConfiguration").deepCopy());
     spec.withObject("/flinkConfiguration")
         .put("taskmanager.numberOfTaskSlots", input.path("slots").asText("1"));
-    if (input.path("flinkConfiguration").isObject())
-      spec.withObject("/flinkConfiguration").setAll((ObjectNode) input.get("flinkConfiguration"));
     if (input.path("podTemplate").isObject())
       spec.set("podTemplate", input.get("podTemplate").deepCopy());
     if (!image.path("pullSecret").asText("").isEmpty())
@@ -77,6 +78,7 @@ public class FormServiceImpl implements FormService {
           .addObject()
           .put("name", image.path("pullSecret").asText());
     ArrayNode downloads = downloads(input);
+    if (downloads.isEmpty()) artifacts.clearManaged(spec);
     if (!downloads.isEmpty()) {
       String originalJar = job.path("jarURI").asText();
       if (input.path("mainArtifactId").asText().isBlank()
@@ -142,8 +144,10 @@ public class FormServiceImpl implements FormService {
     var unique = new java.util.HashSet<String>();
     for (JsonNode id : result) if (!unique.add(id.asText())) yaml.fail("主 JAR 和附加依赖不能重复选择");
     if (!main.isBlank() || (input.has("artifactIds") && !result.isEmpty())) {
-      var artifact = records.require("artifacts", result.get(0).asText());
-      if (!artifact.path("filename").asText().toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
+      String reference = result.get(0).asText();
+      String filename = reference.startsWith("s3:") ? reference.substring(3)
+          : records.require("artifacts", reference).path("filename").asText();
+      if (!filename.toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
         yaml.fail("主制品必须是 .jar 文件；源码和配置文件只能作为附加文件");
     }
     return result;

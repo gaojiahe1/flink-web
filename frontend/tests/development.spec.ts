@@ -13,27 +13,22 @@ async function catalog(page:Page,type:string,id:string,value:object) {
   expect(response.ok()).toBeTruthy()
 }
 
-test('JAR form separates main package and dependencies, preserves arguments', async ({ page }) => {
+test('JAR form preserves container JAR and arguments without artifact registration', async ({ page }) => {
   await login(page)
-  const suffix=Date.now(), image='jar-image-'+suffix, main='main-'+suffix, dep='dep-'+suffix
+  const suffix=Date.now(), image='jar-image-'+suffix
   await catalog(page,'images',image,{name:'Browser Flink',repository:'registry.test/flink',version:'1.20',flinkVersion:'1.20'})
-  await catalog(page,'artifacts',main,{name:'主程序',uri:'s3://test/main.jar',filename:'main.jar',sha256:'a'.repeat(64)})
-  await catalog(page,'artifacts',dep,{name:'连接器',uri:'s3://test/connector.jar',filename:'connector.jar',sha256:'b'.repeat(64)})
   await page.getByRole('link',{name:'＋ 新建 JAR 作业',exact:true}).click()
   await expect(page.getByRole('heading',{name:'新建 JAR 作业'})).toBeVisible()
   await page.getByLabel('作业名称',{exact:false}).first().fill('jar-e2e-'+suffix)
   await page.getByLabel('镜像版本',{exact:false}).selectOption(image)
-  await page.getByLabel('主 JAR 制品',{exact:true}).selectOption(main)
-  await page.getByLabel('附加依赖与配置文件',{exact:true}).selectOption([dep])
   await page.getByLabel('入口类',{exact:false}).fill('com.example.Main')
   await page.getByLabel('程序参数',{exact:false}).fill('--message\nhello world')
   await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
   await expect(page.getByText(/本地验证通过；提交时仍需/)).toBeVisible()
   const yaml=await page.getByRole('textbox',{name:'YAML 编辑器',exact:true}).innerText()
-  expect(yaml).toContain('jarURI: local:///opt/flink/usrlib/main.jar')
+  expect(yaml).toContain('jarURI: local:///opt/flink/usrlib/job.jar')
   expect(yaml).toContain('com.example.Main')
   expect(yaml).toContain('hello world')
-  expect(yaml).toContain('connector.jar')
   await page.screenshot({path:'test-results/jar-development.png',fullPage:true})
   await page.getByRole('button',{name:'保存草稿',exact:true}).click()
   await expect(page.getByRole('button',{name:'jar-e2e-'+suffix,exact:true})).toBeVisible()

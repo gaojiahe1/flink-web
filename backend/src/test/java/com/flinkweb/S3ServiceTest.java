@@ -123,4 +123,20 @@ class S3ServiceTest {
           .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
     }
   }
+  /** 固定作业目录上传和直接选择无需登记，目录边界仍由后端执行。 */
+  @Test
+  void directObjectReferencesStayInsideConfiguredRoot() {
+    var file = new org.springframework.mock.web.MockMultipartFile("file", "job.jar",
+        "application/java-archive", "data".getBytes(StandardCharsets.UTF_8));
+    var uploaded = service.upload(file, "artifacts/jobs/one/");
+    assertThat(uploaded.path("id").asText()).isEqualTo("s3:artifacts/jobs/one/job.jar");
+    assertThat(uploaded.path("uri").asText()).isEqualTo("s3://test-bucket/artifacts/jobs/one/job.jar");
+    var reference = service.describe("artifacts/jobs/one/job.jar");
+    assertThat(reference.path("sha256").asText()).isEqualTo("3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7");
+    assertThatThrownBy(() -> service.describe("outside/job.jar")).isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+    assertThatThrownBy(() -> service.delete("artifacts/jobs/")).isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+    assertThat(service.defaults().toString()).doesNotContain("local-test-only");
+    assertThat(service.list("", null).path("rootPrefix").asText()).isEqualTo("artifacts/");
+  }
+
 }

@@ -21,6 +21,9 @@ public interface JobRepository {
   /** 使用期望修订号更新草稿，并报告是否发生并发冲突。 */
   boolean update(JobDraft draft, long expectedRevision);
 
+  /** 在旧资源确认不存在后切换为编号资源名。 */
+  void useNumberedName(String id);
+
   /** 使用期望修订号删除草稿，并报告是否删除成功。 */
   boolean delete(String id, long expectedRevision);
 }

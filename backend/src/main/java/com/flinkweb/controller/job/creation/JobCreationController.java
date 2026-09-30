@@ -38,6 +38,14 @@ public class JobCreationController {
             input.path("dryRun").asBoolean()));
   }
 
+  /** 作业名称失焦时校验是否重名。 */
+  @GetMapping("/name-availability")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<java.util.Map<String, Boolean>> nameAvailable(
+      @RequestParam String name, @RequestParam(defaultValue = "") String excludeId) {
+    return ApiResponse.ok(java.util.Map.of("available", jobs.nameAvailable(name, excludeId)));
+  }
+
   /** 将表单输入渲染为可供预览和编辑的 YAML。 */
   @PostMapping("/render-form")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")

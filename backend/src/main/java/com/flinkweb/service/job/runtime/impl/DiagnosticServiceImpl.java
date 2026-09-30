@@ -49,7 +49,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
   /** 手动查询当前作业事件与 Pod 概览，不返回容器环境变量。 */
   public ObjectNode inspect(String id) {
     var job = jobs.get(id);
-    var deployment = client.require(job.name());
+    var deployment = client.require(job.deploymentName());
     ownership.assertManaged(deployment, id);
     String uid = deployment.path("metadata").path("uid").asText();
     var result =
@@ -60,7 +60,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     var pods = result.putArray("pods");
     for (JsonNode pod :
         client
-            .call("GET", client.core() + "/pods?labelSelector=" + encode("app=" + job.name()), null)
+            .call("GET", client.core() + "/pods?labelSelector=" + encode("app=" + job.deploymentName()), null)
             .path("items")) {
       if (!belongs(pod, uid, 0, new HashSet<>())) continue;
       var row =
@@ -102,7 +102,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     if (!podName.matches("[a-z0-9][a-z0-9.-]{0,252}")
         || !container.matches("[a-z0-9][a-z0-9-]{0,62}")) fail("Pod 或容器名称无效");
     var job = jobs.get(id);
-    var deployment = client.require(job.name());
+    var deployment = client.require(job.deploymentName());
     ownership.assertManaged(deployment, id);
     var pod = client.call("GET", client.core() + "/pods/" + podName, null);
     if (pod.isMissingNode()

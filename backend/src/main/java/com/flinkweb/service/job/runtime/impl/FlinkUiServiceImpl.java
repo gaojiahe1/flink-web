@@ -51,7 +51,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       throw new BusinessException(
           HttpStatus.FORBIDDEN, "SENSITIVE_ENDPOINT", "平台代理不开放可能泄露密钥的环境和原始日志接口");
     // 目标地址仅由已登记作业名和固定 Namespace 生成，不接受外部目标 URL。
-    String host = job.name() + "-rest." + namespace + ".svc:8081";
+    String host = job.deploymentName() + "-rest." + namespace + ".svc:8081";
     String query = request.getQueryString();
     URI target = URI.create("http://" + host + "/" + path + (query == null ? "" : "?" + query));
     var outgoing =

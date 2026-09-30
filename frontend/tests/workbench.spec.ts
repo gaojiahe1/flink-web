@@ -59,14 +59,14 @@ test('SQL copies PodTemplate, uses installed parser and restores history without
  await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
  await page.getByRole('button',{name:'版本历史',exact:true}).click()
  await page.getByLabel('SQL 历史版本').selectOption(versions[0].id)
- page.once('dialog',d=>d.accept())
  await page.getByRole('button',{name:'恢复此版本',exact:true}).click()
+ await page.getByRole('dialog',{name:'确认操作'}).getByRole('button',{name:'确定',exact:true}).click()
  await expect(sql).toContainText('VALUES (1)')
  expect(clusterCalls).toBe(0)
  await page.screenshot({path:'test-results/sql-history-workbench.png',fullPage:true})
 })
-test('running and suspended jobs both prohibit deletion and only running can suspend',async({page})=>{
- const jobs=['running','suspended','finished'].map((state,i)=>({id:'policy-'+i,name:'policy-'+state,description:'',flinkVersion:'1.20.3',revision:0,yaml:''}))
+test('running and suspended jobs prohibit draft deletion but can both be stopped',async({page})=>{
+ const jobs=['running','suspended','finished'].map((state,i)=>({id:'policy-'+i,jobNumber:i+1,deploymentName:'policy-'+state,name:'policy-'+state,description:'',flinkVersion:'1.20.3',revision:0,yaml:''}))
  const states=jobs.map((j,i)=>({name:j.name,jobId:j.id,managed:true,desiredState:i===1?'suspended':'running',jobState:['RUNNING','SUSPENDED','FINISHED'][i],snapshots:[]}))
  await page.route('**/api/jobs',r=>r.fulfill({json:{data:jobs}}))
  await page.route('**/api/jobs/refresh',r=>r.fulfill({json:{data:{items:states,queriedAt:new Date().toISOString()}}}))
@@ -76,7 +76,7 @@ test('running and suspended jobs both prohibit deletion and only running can sus
  await expect(row('policy-suspended').getByRole('button',{name:'删除',exact:true})).toBeDisabled()
  await expect(row('policy-finished').getByRole('button',{name:'删除',exact:true})).toBeEnabled()
  await expect(row('policy-running').getByRole('button',{name:'停止',exact:true})).toBeEnabled()
- await expect(row('policy-suspended').getByRole('button',{name:'停止',exact:true})).toBeDisabled()
+ await expect(row('policy-suspended').getByRole('button',{name:'停止',exact:true})).toBeEnabled()
  await expect(page.getByRole('button',{name:'管理',exact:true})).toHaveCount(0)
 })
 test('user permissions persist a group without collaboration entry',async({page})=>{

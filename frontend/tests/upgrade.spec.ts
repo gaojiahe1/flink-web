@@ -98,7 +98,7 @@ test('multiple dependency uploads keep every filename and lock submission until 
  await expect(page.getByText('PodTemplate 扩展',{exact:true})).toHaveCount(0)
 })
 test('batch actions show partial failures and restore selection includes snapshot time',async({page})=>{
- const jobs=[{id:'ui-job-a',name:'orders-stream',description:'订单实时处理',flinkVersion:'1.20',revision:1},{id:'ui-job-b',name:'inventory-stream',description:'库存实时同步',flinkVersion:'1.20',revision:1}]
+ const jobs=[{id:'ui-job-a',jobNumber:1,deploymentName:'orders-stream',name:'orders-stream',description:'订单实时处理',flinkVersion:'1.20',revision:1},{id:'ui-job-b',jobNumber:2,deploymentName:'inventory-stream',name:'inventory-stream',description:'库存实时同步',flinkVersion:'1.20',revision:1}]
  const states=jobs.map(j=>({name:j.name,jobId:j.id,managed:true,jobState:'RUNNING',desiredState:'running',savepointInfo:{lastSavepoint:{location:'s3://state/'+j.id+'/savepoint',timeStamp:1790150400000}},snapshots:[]}))
  let refreshes=0;const commands:{url:string;body:any}[]=[]
  await page.route('**/api/jobs',route=>route.fulfill({json:{data:jobs}}))

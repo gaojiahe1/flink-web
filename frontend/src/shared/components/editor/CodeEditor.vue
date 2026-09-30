@@ -94,7 +94,11 @@ watch(
 onBeforeUnmount(() => view?.destroy())
 </script>
 <template>
-  <div class="code-editor">
+  <div
+    class="code-editor"
+    :class="{ 'field-invalid': issues.length > 0 }"
+    :aria-invalid="issues.length > 0"
+  >
     <div ref="host" class="code-editor-host"></div>
     <div v-if="issues.length" class="editor-errors" role="alert">{{ issues[0] }}</div>
   </div>

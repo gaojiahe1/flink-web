@@ -37,8 +37,14 @@ class LocalStorageTest {
           "INSERT INTO platform_records(collection,id,payload,revision) VALUES"
               + " ('operations','old-op',?,1)",
           "{\"id\":\"old-op\",\"jobId\":\"old-job\",\"createdAt\":\"2026-01-01T00:00:00Z\"}");
+      jdbc.update("INSERT INTO job_drafts VALUES (?,?,?,?,?,?,?,?)",
+          "legacy-job", "old-deployment", "", "1.20", "kind: FlinkDeployment", 0,
+          "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
       new SchemaInitializer(jdbc, properties);
       new SchemaInitializer(jdbc, properties);
+      assertThat(jdbc.queryForObject("SELECT deployment_name FROM job_numbers WHERE job_id='legacy-job'", String.class))
+          .isEqualTo("old-deployment");
+      assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM job_numbers WHERE job_id='legacy-job'", Integer.class)).isEqualTo(1);
       assertThat(
               jdbc.queryForObject(
                   "SELECT COUNT(*) FROM platform_record_subjects WHERE subject_id='old-job'",
@@ -49,7 +55,7 @@ class LocalStorageTest {
                   "SELECT revision FROM platform_records WHERE id='legacy'", Long.class))
           .isEqualTo(8L);
       assertThat(jdbc.queryForObject("SELECT MAX(version) FROM platform_schema", Integer.class))
-          .isEqualTo(4);
+          .isEqualTo(5);
       assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM job_bindings", Integer.class)).isZero();
       try (var connection = ds.getConnection()) {
         for (int i = 0; i < 2; i++)
@@ -58,7 +64,7 @@ class LocalStorageTest {
               new org.springframework.core.io.ClassPathResource("db/sqlite/schema.sql"));
       }
       assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM platform_schema", Integer.class))
-          .isEqualTo(4);
+          .isEqualTo(5);
     }
   }
 
@@ -100,7 +106,7 @@ class LocalStorageTest {
                   Long.class))
           .isEqualTo(1L);
       assertThat(jdbc.queryForObject("SELECT MAX(version) FROM platform_schema", Integer.class))
-          .isEqualTo(4);
+          .isEqualTo(5);
     }
     var missing =
         new PlatformProperties(

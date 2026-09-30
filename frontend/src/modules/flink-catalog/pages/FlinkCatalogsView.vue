@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -62,7 +64,7 @@ async function load() {
       ),
     ])
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     loading.value = false
   }
@@ -86,7 +88,7 @@ async function testCatalog(row: FlinkCatalog) {
     const result = await catalogsApi.test(row.id)
     message.value = result.message
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -107,7 +109,7 @@ async function save() {
     snippet.value = undefined
     message.value = 'Catalog 已登记，可在 SQL 开发中选择。不会创建远端数据库。'
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -120,13 +122,13 @@ async function details(row: FlinkCatalog) {
   try {
     snippet.value = await catalogsApi.snippet(row.id)
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
 }
 async function remove(row: FlinkCatalog) {
-  if (!window.confirm('删除 Catalog「' + row.name + '」登记？不会删除远端库表。')) return
+  if (!(await confirmDialog('删除 Catalog「' + row.name + '」登记？不会删除远端库表。'))) return
   busy.value = true
   error.value = ''
   try {
@@ -138,7 +140,7 @@ async function remove(row: FlinkCatalog) {
     }
     message.value = 'Catalog 登记已删除'
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -163,14 +165,18 @@ async function remove(row: FlinkCatalog) {
         <div class="field-grid">
           <label
             >Catalog 标识<input
+              data-field="id"
               v-model="form.id"
               required
               pattern="[a-z_][a-z0-9_]{0,63}"
               :disabled="!!form.revision" /><HelpTip text="SQL 中的目录名，保存后不可修改。"
           /></label>
-          <label>显示名称<input v-model="form.name" required maxlength="100" /></label>
+          <label
+            >显示名称<input data-field="name" v-model="form.name" required maxlength="100"
+          /></label>
           <label
             >Catalog 类型<select
+              data-field="type"
               v-model="form.type"
               aria-label="Catalog 类型"
               @change="typeChanged"
@@ -184,12 +190,18 @@ async function remove(row: FlinkCatalog) {
           >
           <label
             >默认数据库<input
+              data-field="defaultDatabase"
               v-model="form.defaultDatabase"
               required
-              pattern="[A-Za-z_][A-Za-z0-9_-]{0,63}"
+              pattern="[A-Za-z_][A-Za-z0-9_\-]{0,63}"
           /></label>
           <label v-if="form.type === 'jdbc'"
-            >JDBC 数据源<select v-model="form.dataSourceId" required @change="sourceChanged">
+            >JDBC 数据源<select
+              data-field="dataSourceId"
+              v-model="form.dataSourceId"
+              required
+              @change="sourceChanged"
+            >
               <option value="">选择 MySQL / PostgreSQL 数据源</option>
               <option
                 v-for="source in sources.filter((s) =>
@@ -204,6 +216,7 @@ async function remove(row: FlinkCatalog) {
           /></label>
           <label v-if="form.type === 'hive'"
             >Hive 配置目录<input
+              data-field="hiveConfDir"
               v-model="form.hiveConfDir"
               required
               placeholder="/opt/flink/conf/hive" /><HelpTip
@@ -211,12 +224,15 @@ async function remove(row: FlinkCatalog) {
           /></label>
           <label v-if="['paimon', 'iceberg'].includes(form.type)"
             >Warehouse<input
+              data-field="warehouse"
               v-model="form.warehouse"
               required
               placeholder="s3://bucket/warehouse/" /><HelpTip
               text="Paimon 使用 Filesystem Catalog，Iceberg 使用 Hadoop Catalog。需要匹配的运行时插件与存储权限；平台不直接访问湖存储。"
           /></label>
-          <label class="wide-field">描述<input v-model="form.description" maxlength="500" /></label>
+          <label class="wide-field"
+            >描述<input data-field="description" v-model="form.description" maxlength="500"
+          /></label>
         </div>
         <HelpTip
           text="保存仅登记配置。内存、JDBC、Hive 和湖存储目录均在 Flink 作业运行时初始化，平台不会创建远端数据库。"
@@ -230,10 +246,12 @@ async function remove(row: FlinkCatalog) {
   </section>
   <section class="panel detail-panel">
     <div class="filter-bar">
-      <input v-model="query" class="search" placeholder="搜索 Catalog 名称 / 标识" /><select
-        v-model="kind"
-        aria-label="Catalog 类型筛选"
-      >
+      <input
+        data-field="query"
+        v-model="query"
+        class="search"
+        placeholder="搜索 Catalog 名称 / 标识"
+      /><select data-field="kind" v-model="kind" aria-label="Catalog 类型筛选">
         <option value="">全部类型</option>
         <option value="memory">内存</option>
         <option value="jdbc">JDBC · MySQL / PostgreSQL</option>

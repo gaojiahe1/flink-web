@@ -44,6 +44,11 @@ public class JobServiceImpl implements JobService {
     return repository.findAll().stream().filter(job -> permitted.test(job.id(), "read")).toList();
   }
 
+  /** 检查全局唯一名称，保存仍由数据库唯一约束兜底。 */
+  public boolean nameAvailable(String name, String excludeId) {
+    return repository.findByName(name).filter(job -> !job.id().equals(excludeId)).isEmpty();
+  }
+
   /** 读取指定草稿，不存在时返回明确业务错误。 */
   public JobDraft get(String id) {
     access.require(id, "read");
@@ -56,23 +61,27 @@ public class JobServiceImpl implements JobService {
   @org.springframework.transaction.annotation.Transactional
   public JobDraft create(DraftRequest request) {
     yaml.parse(request.yaml());
+    if (request.workspaceId() != null && !request.workspaceId().matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_WORKSPACE", "文件目录标识无效");
+    if (request.workspaceId() != null && repository.findById(request.workspaceId()).isPresent())
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_ID_EXISTS", "作业目录标识已存在，请重新创建");
     if (repository.findByName(request.name()).isPresent())
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请修改名称或编辑已有作业");
     var now = Instant.now();
     var draft =
         new JobDraft(
-            UUID.randomUUID().toString(),
+            request.workspaceId() == null ? UUID.randomUUID().toString() : UUID.fromString(request.workspaceId()).toString(),
             request.name(),
             request.description(),
             request.flinkVersion(),
             request.yaml(),
             0,
             now,
-            now);
+            now, 0, null);
     repository.insert(draft);
     access.initialize(draft.id());
     audit.record("DRAFT_CREATE", draft.id(), "SUCCESS");
-    return draft;
+    return repository.findById(draft.id()).orElseThrow();
   }
 
   /** 保持作业名称不变，校验 YAML 后以修订号更新草稿及审计。 */
@@ -92,7 +101,7 @@ public class JobServiceImpl implements JobService {
             request.yaml(),
             request.revision() + 1,
             existing.createdAt(),
-            Instant.now());
+            Instant.now(), existing.jobNumber(), existing.deploymentName());
     if (!repository.update(updated, request.revision())) throw conflict();
     audit.record("DRAFT_UPDATE", id, "SUCCESS");
     return updated;

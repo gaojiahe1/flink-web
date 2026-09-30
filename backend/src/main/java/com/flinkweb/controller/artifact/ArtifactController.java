@@ -27,13 +27,32 @@ public class ArtifactController {
     return ApiResponse.ok(s3.list(prefix, token));
   }
 
-  /** 接收上传文件，由业务层写入 S3 并登记元数据。 */
+  /** 接收上传文件，由业务层直接写入所选 S3 目录。 */
   @PostMapping("/upload")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
   public ApiResponse<ObjectNode> upload(
       @RequestParam("file") MultipartFile file,
-      @RequestParam(defaultValue = "shared") String category) {
-    return ApiResponse.ok(s3.upload(file, category));
+      @RequestParam(defaultValue = "shared") String category,
+      @RequestParam(required = false) String prefix) {
+    return ApiResponse.ok(s3.upload(file, prefix == null ? category : prefix));
+  }
+
+  /** 返回不含凭证的 S3 默认连接配置。 */
+  @GetMapping("/defaults")
+  public ApiResponse<ObjectNode> defaults() { return ApiResponse.ok(s3.defaults()); }
+
+  /** 创建允许范围内的对象目录。 */
+  @PostMapping("/directories")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> mkdir(@RequestBody ObjectNode input) {
+    return ApiResponse.ok(s3.mkdir(input.path("prefix").asText()));
+  }
+
+  /** 删除明确指定的单个对象。 */
+  @DeleteMapping("/objects")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> delete(@RequestParam String key) {
+    return ApiResponse.ok(s3.delete(key));
   }
 
   /** 校验登录权限后转发制品下载流，完成后释放资源。 */

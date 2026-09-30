@@ -20,6 +20,7 @@ public class JobQueryServiceImpl implements JobQueryService {
   private final String namespace;
   private final AccessService access;
   private final SnapshotService snapshots;
+  private final com.flinkweb.service.job.runtime.StopService stops;
 
   /** 注入按需采集器、草稿仓库和资源绑定仓库。 */
   public JobQueryServiceImpl(
@@ -28,13 +29,15 @@ public class JobQueryServiceImpl implements JobQueryService {
       JobBindingRepository bindings,
       PlatformProperties properties,
       AccessService access,
-      SnapshotService snapshots) {
+      SnapshotService snapshots,
+      com.flinkweb.service.job.runtime.StopService stops) {
     this.collector = collector;
     this.jobs = jobs;
     this.bindings = bindings;
     this.namespace = properties.namespace();
     this.access = access;
     this.snapshots = snapshots;
+    this.stops = stops;
   }
 
   /** 即时采集集群状态，标记已纳管、可纳管及同名身份冲突的作业。 */
@@ -42,11 +45,26 @@ public class JobQueryServiceImpl implements JobQueryService {
     ObjectNode result = collector.collect();
     var registered = jobs.findAll();
     var bound = bindings.findAll();
+    var stopProgress = result.putObject("stopProgress");
+    for (var job : registered) {
+      if (!access.evaluator().test(job.id(), "operate")) continue;
+      try {
+        var progress = stops.advance(job.id());
+        if (progress != null) {
+          var visibleProgress = stopProgress.putObject(job.id());
+          for (String field : java.util.List.of("phase", "message", "savepointPath"))
+            if (progress.has(field)) visibleProgress.set(field, progress.get(field));
+        }
+      } catch (com.flinkweb.exception.common.BusinessException ex) {
+        stopProgress.putObject(job.id()).put("phase", "ERROR").put("message", ex.getMessage());
+      }
+    }
     var permitted = access.evaluator();
     for (JsonNode item : result.path("items")) {
       ObjectNode row = (ObjectNode) item;
       var local =
-          registered.stream().filter(j -> j.name().equals(row.path("name").asText())).findFirst();
+          registered.stream().filter(j -> j.deploymentName().equals(row.path("name").asText())).findFirst();
+      boolean nameConflict = registered.stream().anyMatch(j -> j.name().equals(row.path("name").asText()));
       boolean managed = false;
       if (local.isPresent()) {
         var binding = bound.stream().filter(b -> b.jobId().equals(local.get().id())).findFirst();
@@ -61,9 +79,10 @@ public class JobQueryServiceImpl implements JobQueryService {
               "canAdopt",
               !managed
                   && local.isEmpty()
+                  && !nameConflict
                   && row.path("application").asBoolean()
                   && !row.path("deleting").asBoolean());
-      row.put("registrationConflict", !managed && local.isPresent());
+      row.put("registrationConflict", !managed && (local.isPresent() || nameConflict));
       if (managed) {
         row.put("jobId", local.orElseThrow().id());
         if (permitted.test(local.orElseThrow().id(), "read"))
@@ -73,7 +92,7 @@ public class JobQueryServiceImpl implements JobQueryService {
     var filtered = result.arrayNode();
     for (var item : result.path("items")) {
       var local =
-          registered.stream().filter(j -> j.name().equals(item.path("name").asText())).findFirst();
+          registered.stream().filter(j -> j.deploymentName().equals(item.path("name").asText())).findFirst();
       if (local.isPresent() ? permitted.test(local.get().id(), "read") : access.admin())
         filtered.add(item);
     }

@@ -11,4 +11,12 @@ public record JobDraft(
     String yaml,
     long revision,
     Instant createdAt,
-    Instant updatedAt) {}
+    Instant updatedAt,
+    long jobNumber,
+    String deploymentName) {
+  /** 兼容历史草稿及纳管入口，新作业由数据库分配编号。 */
+  public JobDraft(String id, String name, String description, String flinkVersion, String yaml,
+      long revision, Instant createdAt, Instant updatedAt) {
+    this(id, name, description, flinkVersion, yaml, revision, createdAt, updatedAt, 0, name);
+  }
+}

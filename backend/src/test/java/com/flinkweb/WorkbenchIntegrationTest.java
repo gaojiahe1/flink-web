@@ -68,6 +68,7 @@ class WorkbenchIntegrationTest {
   @Autowired ReleaseService releases;
   @Autowired SqlJobService sql;
   @Autowired OperationService operations;
+  @Autowired com.flinkweb.service.job.runtime.StopService stops;
   @Autowired YamlService yaml;
   @Autowired DiagnosticService diagnostics;
   @Autowired MockMvc mvc;
@@ -113,7 +114,7 @@ class WorkbenchIntegrationTest {
   /** 标记测试集群资源的 UID 与平台所属关系。 */
   ObjectNode live(JobDraft job, String state, String desired) {
     var node = yaml.parse(job.yaml());
-    node.withObject("/metadata")
+    node.withObject("/metadata").put("name", job.deploymentName())
         .put("uid", "uid-" + job.id())
         .put("resourceVersion", "5")
         .withObject("/labels")
@@ -324,10 +325,10 @@ class WorkbenchIntegrationTest {
   void logsRequireOwnerChainAndRedactCredentials() {
     var job = draft();
     var deployment = live(job, "RUNNING", "running");
-    when(kubernetes.require(job.name())).thenReturn(deployment);
+    when(kubernetes.require(job.deploymentName())).thenReturn(deployment);
     when(kubernetes.core()).thenReturn("/api/v1/namespaces/test");
     var pod = mapper.createObjectNode();
-    pod.putObject("metadata").putObject("labels").put("app", job.name());
+    pod.putObject("metadata").putObject("labels").put("app", job.deploymentName());
     pod.putObject("spec").putArray("containers").addObject().put("name", "main");
     when(kubernetes.call(eq("GET"), contains("/pods/pod-test"), isNull())).thenReturn(pod);
     assertThatThrownBy(() -> diagnostics.log(job.id(), "pod-test", "main", 10000, false))
@@ -344,4 +345,125 @@ class WorkbenchIntegrationTest {
     assertThat(text).doesNotContain("should-not-show", "hidden-token", "user:secret");
     verify(kubernetes).text(contains("tailLines=1000"), eq(262144));
   }
+  /** 编号稳定递增，名称预检不能通过不可见作业绕过唯一性。 */
+  @Test
+  void jobNumbersAreStableAndNeverReused() throws Exception {
+    var first = draft();
+    assertThat(first.jobNumber()).isPositive();
+    assertThat(first.deploymentName()).isEqualTo("flink-" + first.jobNumber());
+    mvc.perform(get("/api/jobs/name-availability").param("name", first.name())
+        .with(user("outsider").roles("DEVELOPER")))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.available").value(false));
+    actor("admin", "ADMIN");
+    var updated = jobs.update(first.id(), new DraftRequest(first.name(), "updated", first.flinkVersion(), first.yaml(), first.revision()));
+    assertThat(updated.jobNumber()).isEqualTo(first.jobNumber());
+    assertThat(updated.deploymentName()).isEqualTo(first.deploymentName());
+    jobs.delete(updated.id(), updated.revision());
+    var second = draft();
+    assertThat(second.jobNumber()).isGreaterThan(first.jobNumber());
+    assertThat(jobs.get(second.id()).jobNumber()).isEqualTo(second.jobNumber());
+  }
+
+  /** 启动阶段允许停止；快照只在实时正常运行时提交，重复启动被拒绝。 */
+  @Test
+  void startingCanStopButOnlyStableRunningCanSnapshot() {
+    var job = draft();
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("PUT"), anyString(), any()))
+        .thenAnswer(invocation -> ((ObjectNode) invocation.getArgument(2)).deepCopy());
+    for (String state : List.of("CREATED", "INITIALIZING", "RESTARTING", "UNKNOWN")) {
+      var resource = live(job, state, "running");
+      when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+      assertThat(operations.execute(job.id(), "start", command(job), () -> "admin").path("state").asText()).isEqualTo("REJECTED");
+      for (String action : List.of("savepoint", "checkpoint"))
+        assertThat(operations.execute(job.id(), action, command(job), () -> "admin").path("state").asText()).isEqualTo("REJECTED");
+      assertThat(operations.execute(job.id(), "stop", command(job).put("upgradeMode", "stateless"), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    }
+    stops.clear(job.id());
+    var resource = live(job, "RUNNING", "suspended");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    assertThat(operations.execute(job.id(), "checkpoint", command(job), () -> "admin").path("state").asText()).isEqualTo("REJECTED");
+    resource.withObject("/spec/job").put("state", "running");
+    resource.withObject("/metadata").put("generation", 2);
+    resource.withObject("/status").put("observedGeneration", 1);
+    assertThat(operations.execute(job.id(), "savepoint", command(job), () -> "admin").path("state").asText()).isEqualTo("REJECTED");
+    resource.withObject("/status").put("observedGeneration", 2).put("lifecycleState", "STABLE");
+    for (String action : List.of("savepoint", "checkpoint"))
+      assertThat(operations.execute(job.id(), action, command(job), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+  }
+
+  /** 保留状态的停止必须观测到新的 Savepoint 后才删除，并且删除前保存恢复路径。 */
+  @Test
+  void stopPersistsSavepointBeforeDeletingAndCanResume() {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/spec/flinkConfiguration").put("state.savepoints.dir", "s3://state/savepoints");
+    resource.withObject("/status/jobStatus/savepointInfo/lastSavepoint").put("location", "s3://state/old");
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("PUT"), anyString(), any())).thenAnswer(i -> ((ObjectNode)i.getArgument(2)).deepCopy());
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    assertThat(operations.execute(job.id(), "stop", command(job), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    assertThat(stops.pending(job.id())).isTrue();
+    stops.advance(job.id());
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+    resource.withObject("/spec/job").put("state", "suspended");
+    resource.withObject("/status").put("lifecycleState", "SUSPENDED");
+    resource.withObject("/status/jobStatus").put("state", "FINISHED");
+    stops.advance(job.id());
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+    resource.withObject("/status/jobStatus/savepointInfo/lastSavepoint").put("location", "s3://state/new");
+    var progress = stops.advance(job.id());
+    assertThat(progress.path("phase").asText()).isEqualTo("DELETING");
+    assertThat(stops.restorePath(job.id())).isEqualTo("s3://state/new");
+    verify(kubernetes).call(eq("DELETE"), eq("/cr/" + job.deploymentName()),
+        argThat(body -> body.at("/preconditions/uid").asText().equals("uid-" + job.id())));
+    resource.withObject("/metadata").put("deletionTimestamp", "2026-09-30T00:00:00Z");
+    assertThat(operations.execute(job.id(), "stop", command(job), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(MissingNode.getInstance());
+    assertThat(stops.advance(job.id()).path("phase").asText()).isEqualTo("DONE");
+    assertThat(stops.pending(job.id())).isFalse();
+  }
+
+  /** 停止中的资源不能重复启动或做快照，即便旧观测仍显示运行。 */
+  @Test
+  void immediateStopCanRepeatButBlocksStartingAndSnapshots() {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    for (int i = 0; i < 2; i++)
+      assertThat(operations.execute(job.id(), "stop", command(job).put("upgradeMode", "stateless"), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    for (String action : List.of("start", "savepoint", "checkpoint", "deploy"))
+      assertThat(operations.execute(job.id(), action, command(job), () -> "admin").path("state").asText()).isEqualTo("REJECTED");
+    verify(kubernetes, atLeast(2)).call(eq("DELETE"), anyString(), any());
+    verify(kubernetes, never()).call(eq("PUT"), anyString(), any());
+    verify(kubernetes, never()).call(eq("POST"), anyString(), any());
+  }
+
+  /** 重建复用停止前的运行配置，不把未部署草稿修改隐式发布，也保留旧工作负载账号。 */
+  @Test
+  void startAfterStopUsesDeployedConfigurationInsteadOfEditedDraft() {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/spec").put("serviceAccount", "legacy-flink");
+    resource.withObject("/spec/job").put("parallelism", 2);
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    assertThat(operations.execute(job.id(), "stop", command(job).put("upgradeMode", "stateless"), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    var edited = yaml.parse(job.yaml());
+    edited.withObject("/spec/job").put("parallelism", 9);
+    var changed = jobs.update(job.id(), new DraftRequest(job.name(), "not deployed", job.flinkVersion(), yaml.dump(edited), job.revision()));
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(MissingNode.getInstance());
+    when(kubernetes.call(eq("POST"), anyString(), any())).thenAnswer(i -> ((ObjectNode)i.getArgument(2)).deepCopy());
+    assertThat(operations.execute(job.id(), "start", command(changed), () -> "admin").path("state").asText()).isEqualTo("ACCEPTED");
+    verify(kubernetes).call(eq("POST"), eq("/cr"), argThat(body ->
+        body.at("/spec/job/parallelism").asInt() == 2
+        && body.at("/spec/serviceAccount").asText().equals("legacy-flink")
+        && !body.path("metadata").has("uid")));
+    assertThat(stops.advance(job.id())).isNull();
+  }
+
 }

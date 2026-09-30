@@ -24,7 +24,10 @@ public class JdbcJobRepository implements JobRepository {
               rs.getString("yaml_text"),
               rs.getLong("revision"),
               Instant.parse(rs.getString("created_at")),
-              Instant.parse(rs.getString("updated_at")));
+              Instant.parse(rs.getString("updated_at")), rs.getLong("job_number"), rs.getString("deployment_name"));
+
+  private static final String SELECT =
+      "SELECT d.*,n.job_number,n.deployment_name FROM job_drafts d JOIN job_numbers n ON d.id=n.job_id";
 
   /** 注入 JDBC 模板，供草稿持久化操作使用。 */
   public JdbcJobRepository(JdbcTemplate jdbc, SchemaInitializer ignored) {
@@ -33,21 +36,35 @@ public class JdbcJobRepository implements JobRepository {
 
   /** 按更新时间查询全部作业草稿。 */
   public List<JobDraft> findAll() {
-    return jdbc.query("SELECT * FROM job_drafts ORDER BY updated_at DESC, id", MAPPER);
+    return jdbc.query(SELECT + " ORDER BY updated_at DESC, id", MAPPER);
   }
 
   /** 根据平台作业标识查询草稿。 */
   public Optional<JobDraft> findById(String id) {
-    return jdbc.query("SELECT * FROM job_drafts WHERE id = ?", MAPPER, id).stream().findFirst();
+    return jdbc.query(SELECT + " WHERE d.id = ?", MAPPER, id).stream().findFirst();
   }
 
   /** 按作业名称查询草稿，用于纳管同名冲突检测。 */
   public Optional<JobDraft> findByName(String name) {
-    return jdbc.query("SELECT * FROM job_drafts WHERE name=?", MAPPER, name).stream().findFirst();
+    return jdbc.query(SELECT + " WHERE d.name=?", MAPPER, name).stream().findFirst();
   }
 
   /** 插入新的作业草稿；名称重复由数据库唯一约束拒绝。 */
   public void insert(JobDraft draft) {
+    jdbc.update("INSERT INTO job_numbers(job_id,deployment_name) VALUES (?,?)",
+        draft.id(), draft.deploymentName());
+    if (draft.deploymentName() == null) {
+      long number = jdbc.queryForObject("SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
+      String deploymentName = "flink-" + number;
+      // 跳过老环境已经占用的资源名，保留历史身份。
+      while (jdbc.queryForObject("SELECT COUNT(*) FROM job_numbers WHERE deployment_name=?", Long.class, deploymentName) > 0) {
+        jdbc.update("UPDATE job_numbers SET job_id=? WHERE job_id=?", "reserved-" + number, draft.id());
+        jdbc.update("INSERT INTO job_numbers(job_id) VALUES (?)", draft.id());
+        number = jdbc.queryForObject("SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
+        deploymentName = "flink-" + number;
+      }
+      jdbc.update("UPDATE job_numbers SET deployment_name=? WHERE job_id=?", deploymentName, draft.id());
+    }
     jdbc.update(
         """
 INSERT INTO job_drafts(id,name,description,flink_version,yaml_text,revision,created_at,updated_at)
@@ -79,6 +96,16 @@ WHERE id=? AND revision=?
             draft.id(),
             expectedRevision)
         == 1;
+  }
+
+  /** 在旧资源确认不存在后持久化稳定的编号资源名。 */
+  public void useNumberedName(String id) {
+    var job = findById(id).orElseThrow();
+    if (jdbc.queryForObject("SELECT COUNT(*) FROM job_numbers WHERE deployment_name=? AND job_id<>?", Long.class,
+        "flink-" + job.jobNumber(), id) > 0)
+      throw new com.flinkweb.exception.common.BusinessException(org.springframework.http.HttpStatus.CONFLICT,
+          "DEPLOYMENT_NAME_CONFLICT", "编号资源名被历史资源占用，请先停止并迁移占用该名称的作业");
+    jdbc.update("UPDATE job_numbers SET deployment_name=? WHERE job_id=?", "flink-" + job.jobNumber(), id);
   }
 
   /** 仅在修订号匹配时删除草稿，返回是否成功。 */

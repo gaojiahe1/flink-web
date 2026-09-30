@@ -88,6 +88,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SQL", "SQL 脚本不能超过 32 KiB");
     catalogs.prepare(input.runtime().deepCopy());
     ObjectNode old = records.find("sql_jobs", id);
+    var existingJob = jobRepository.findByName(input.name());
+    if (existingJob.isPresent() && (old == null || !existingJob.get().id().equals(old.path("jobId").asText())))
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
     ObjectNode record =
         mapper
             .createObjectNode()
@@ -192,7 +195,8 @@ public class SqlJobServiceImpl implements SqlJobService {
             input.description(),
             rendered.path("flinkVersion").asText(),
             rendered.path("yaml").asText(),
-            existing.map(JobDraft::revision).orElse(0L));
+            existing.map(JobDraft::revision).orElse(0L),
+            input.runtime().path("workspaceId").isTextual() ? input.runtime().path("workspaceId").asText() : null);
     JobDraft result =
         existing.isPresent() ? jobs.update(existing.get().id(), draft) : jobs.create(draft);
     if (existing.isEmpty()) access.copy("sql:" + id, result.id());

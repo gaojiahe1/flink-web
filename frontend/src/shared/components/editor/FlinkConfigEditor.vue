@@ -114,7 +114,7 @@ watch(
 onBeforeUnmount(() => view?.destroy())
 </script>
 <template>
-  <div class="flink-config-editor">
+  <div class="flink-config-editor" :class="{ 'field-invalid': !!error }" :aria-invalid="!!error">
     <div ref="host" class="config-editor-host"></div>
     <p v-if="error" class="field-error" role="alert">{{ error }}</p>
     <HelpTip

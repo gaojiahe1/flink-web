@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import JobWorkbench from '../components/JobWorkbench.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -62,8 +64,10 @@ function showYaml(name: string) {
   yamlDialog.value?.showModal()
 }
 const detailEpoch = ref(0)
-const mode = ref('savepoint'),
-  restorePath = ref('')
+const mode = ref('savepoint')
+const stopProgress = ref<
+  Record<string, { phase: string; message: string; savepointPath?: string }>
+>({})
 const controller = new AbortController()
 const developer = computed(() =>
   currentUser.value?.roles.some((r) => ['ADMIN', 'DEVELOPER'].includes(r.replace('ROLE_', ''))),
@@ -132,11 +136,19 @@ function openAction(action: string, jobs: JobDraft[]) {
     error.value = '所选作业中包含没有操作权限的作业'
     return
   }
+  if (jobs.some((job) => !canPerform(job, action))) {
+    error.value = '当前状态不支持该操作；快照仅允许正常运行中的作业，请刷新状态后重试。'
+    return
+  }
   error.value = ''
   targets.value = [...jobs]
   pendingAction.value = action
   startMode.value = 'normal'
-  mode.value = 'savepoint'
+  mode.value = jobs.every(
+    (j) => state(j)?.jobState === 'RUNNING' && state(j)?.desiredState === 'running',
+  )
+    ? 'savepoint'
+    : 'stateless'
   paths.value = {}
   results.value = []
   operationDialog.value?.showModal()
@@ -174,17 +186,31 @@ async function confirmAction() {
             savepointPath: paths.value[job.id] || '',
           }),
         })
+        if (result.state === 'ACCEPTED') accepted(job, command)
         results.value.push({ name: job.name, state: result.state, message: result.message })
       } catch (e) {
         results.value.push({ name: job.name, state: 'REJECTED', message: (e as Error).message })
       }
+    }
+    if (['stop', 'suspend'].includes(pendingAction.value)) {
+      operationDialog.value?.close()
+      error.value = results.value
+        .filter((r) => r.state !== 'ACCEPTED')
+        .map((r) => r.name + '：' + r.message)
+        .join('；')
     }
     message.value =
       '已提交 ' +
       results.value.filter((r) => r.state === 'ACCEPTED').length +
       ' / ' +
       targets.value.length +
-      ' 个操作；运行结果请手动刷新。'
+      ' 个操作；运行结果请手动刷新。' +
+      (pendingAction.value === 'stop'
+        ? results.value
+            .filter((r) => r.state === 'ACCEPTED')
+            .map((r) => r.name + '：' + r.message)
+            .join('；')
+        : '')
   } finally {
     acting.value = false
   }
@@ -199,7 +225,7 @@ function badgeClass(value?: string) {
         : 'neutral'
 }
 
-const state = (job: JobDraft) => runtime.value.find((item) => item.name === job.name)
+const state = (job: JobDraft) => runtime.value.find((item) => item.name === job.deploymentName)
 async function load() {
   const [items, permissions] = await Promise.all([
     jobsApi.list(),
@@ -218,16 +244,22 @@ const {
 } = useManualRefresh(async () => {
   error.value = ''
   try {
-    const result = await request<{ items: Runtime[]; queriedAt: string }>('/api/jobs/refresh', {
+    const result = await request<{
+      items: Runtime[]
+      queriedAt: string
+      stopProgress?: Record<string, { phase: string; message: string; savepointPath?: string }>
+    }>('/api/jobs/refresh', {
       method: 'POST',
       signal: controller.signal,
     })
     runtime.value = result.items
+    stopProgress.value = result.stopProgress || {}
+    submittedActions.value = {}
     queriedAt.value = result.queriedAt
     await load()
   } catch (e) {
     if ((e as Error).name !== 'AbortError') {
-      error.value = (e as Error).message
+      error.value = showValidationError((e as Error).message)
       runtime.value = []
       queriedAt.value = ''
     }
@@ -243,7 +275,7 @@ onMounted(async () => {
   try {
     await load()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
     loading.value = false
   }
   void refresh()
@@ -251,11 +283,11 @@ onMounted(async () => {
 onUnmounted(() => controller.abort())
 async function adopt(job: Runtime) {
   if (
-    !window.confirm(
+    !(await confirmDialog(
       '纳管「' +
         job.name +
         '」？将保存现有 YAML 并绑定 Kubernetes UID，纳管本身不会修改配置或重启作业。',
-    )
+    ))
   )
     return
   adopting.value = job.uid
@@ -277,7 +309,7 @@ async function adopt(job: Runtime) {
     message.value =
       '已纳管 ' + job.name + '，运行配置未修改。后续可查看 YAML、启停、快照和 Flink UI。'
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     adopting.value = ''
   }
@@ -288,12 +320,14 @@ async function details(job: JobDraft) {
   try {
     history.value = await request<Operation[]>('/api/jobs/' + job.id + '/operations')
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 async function action(job: JobDraft, action: string) {
   if (
-    !window.confirm('确认对「' + job.name + '」执行 ' + action + '？操作提交后需手动刷新确认结果。')
+    !(await confirmDialog(
+      '确认对「' + job.name + '」执行 ' + action + '？操作提交后需手动刷新确认结果。',
+    ))
   )
     return
   acting.value = true
@@ -306,25 +340,66 @@ async function action(job: JobDraft, action: string) {
         requestId: requestId(),
         revision: job.revision,
         upgradeMode: mode.value,
-        savepointPath: restorePath.value,
       }),
     })
+    if (result.state === 'ACCEPTED') accepted(job, action)
     message.value = result.state + '：' + result.message
     await details(job)
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     acting.value = false
   }
+}
+function accepted(job: JobDraft, action: string) {
+  const live = state(job)
+  if (['start', 'restore', 'deploy', 'stop', 'suspend'].includes(action)) {
+    if (live) live.desiredState = ['stop', 'suspend'].includes(action) ? 'suspended' : 'running'
+    // 只更新提交后的期望状态，观测状态仍显示最近一次查询结果。
+    submittedActions.value[job.id] = action
+  }
+}
+const submittedActions = ref<Record<string, string>>({})
+function canStart(job: JobDraft) {
+  const live = state(job)
+  return (
+    mayOperate(job) &&
+    !acting.value &&
+    !!queriedAt.value &&
+    !submittedActions.value[job.id] &&
+    (!stopProgress.value[job.id] || stopProgress.value[job.id]?.phase === 'DONE') &&
+    (!live ||
+      (live.managed &&
+        !live.deleting &&
+        (live.desiredState === 'suspended' ||
+          ['FAILED', 'FINISHED', 'CANCELED'].includes(live.jobState))))
+  )
+}
+function canPerform(job: JobDraft, action: string) {
+  if (action === 'start') return canStart(job)
+  if (['stop', 'suspend'].includes(action)) return canStop(job)
+  const live = state(job)
+  return (
+    mayOperate(job) &&
+    !acting.value &&
+    !!live?.managed &&
+    !live.deleting &&
+    !submittedActions.value[job.id] &&
+    (!stopProgress.value[job.id] || stopProgress.value[job.id]?.phase === 'DONE') &&
+    live.desiredState === 'running' &&
+    live.jobState === 'RUNNING' &&
+    !['UPGRADING', 'DEPLOYING', 'ROLLING_BACK'].includes(live.lifecycleState)
+  )
 }
 function canStop(job: JobDraft) {
   const live = state(job)
   return (
     mayOperate(job) &&
     !acting.value &&
-    live?.managed &&
-    live.jobState === 'RUNNING' &&
-    live.desiredState !== 'suspended'
+    (live?.managed ||
+      ['start', 'restore', 'deploy', 'stop', 'suspend'].includes(
+        submittedActions.value[job.id] || '',
+      ))
   )
 }
 function canDelete(job: JobDraft) {
@@ -352,13 +427,14 @@ async function restored(job: JobDraft) {
   await load()
 }
 async function remove(job: JobDraft) {
-  if (!window.confirm('删除平台草稿「' + job.name + '」？已部署作业需要先删除集群资源。')) return
+  if (!(await confirmDialog('删除平台草稿「' + job.name + '」？已部署作业需要先删除集群资源。')))
+    return
   try {
     await jobsApi.remove(job)
     await load()
     selected.value = null
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   }
 }
 
@@ -421,7 +497,11 @@ function resetFilters() {
             ]"
             :key="entry[0]"
             class="button"
-            :disabled="!checkedJobs.length || acting"
+            :disabled="
+              !checkedJobs.length ||
+              acting ||
+              checkedJobs.some((job) => !canPerform(job, entry[0]!))
+            "
             @click="openAction(entry[0]!, checkedJobs)"
           >
             {{ entry[1] }}
@@ -432,14 +512,16 @@ function resetFilters() {
       </div>
     </div>
     <div class="filter-bar">
-      <input v-model="query" class="search" placeholder="搜索作业名称 / ID / 描述" /><select
-        v-model="statusFilter"
-        aria-label="状态筛选"
-      >
+      <input
+        data-field="query"
+        v-model="query"
+        class="search"
+        placeholder="搜索作业名称 / ID / 描述"
+      /><select data-field="statusFilter" v-model="statusFilter" aria-label="状态筛选">
         <option value="">全部状态</option>
         <option value="UNDEPLOYED">未部署 / 未查询</option>
         <option v-for="status in statuses" :key="status">{{ status }}</option></select
-      ><select v-model="versionFilter" aria-label="版本筛选">
+      ><select data-field="versionFilter" v-model="versionFilter" aria-label="版本筛选">
         <option value="">全部版本</option>
         <option v-for="version in [...new Set(drafts.map((j) => j.flinkVersion))]" :key="version">
           {{ version }}
@@ -480,6 +562,7 @@ function resetFilters() {
           >
             <td class="check-column">
               <input
+                data-field="selectedIds"
                 v-model="selectedIds"
                 type="checkbox"
                 :value="job.id"
@@ -488,12 +571,19 @@ function resetFilters() {
             </td>
             <td>
               <button class="text-button job-name" @click="details(job)">{{ job.name }}</button
-              ><small class="table-description">{{ job.description || 'Job ID: ' + job.id }}</small>
+              ><small class="table-description"
+                >编号 {{ job.jobNumber }} · {{ job.deploymentName }}</small
+              >
             </td>
             <td>
               <span class="version-pill">{{ job.flinkVersion }}</span>
             </td>
-            <td>{{ state(job)?.desiredState || '—' }}</td>
+            <td>
+              {{ state(job)?.desiredState || '—'
+              }}<small v-if="stopProgress[job.id]" class="table-description">{{
+                stopProgress[job.id]?.message
+              }}</small>
+            </td>
             <td>
               <span class="badge" :class="badgeClass(state(job)?.jobState)">{{
                 state(job)?.registrationConflict
@@ -502,13 +592,17 @@ function resetFilters() {
               }}</span>
             </td>
             <td class="row-actions">
-              <button class="text-button" :disabled="!state(job)?.yaml" @click="showYaml(job.name)">
+              <button
+                class="text-button"
+                :disabled="!state(job)?.yaml"
+                @click="showYaml(job.deploymentName)"
+              >
                 当前 YAML
               </button>
               <template v-if="mayOperate(job)"
                 ><button
                   class="text-button"
-                  :disabled="acting || !state(job)?.managed || state(job)?.jobState === 'RUNNING'"
+                  :disabled="!canStart(job)"
                   @click="openAction('start', [job])"
                 >
                   启动</button
@@ -548,7 +642,7 @@ function resetFilters() {
         按需刷新</span
       >
       <div class="toolbar-actions">
-        <select v-model.number="pageSize" aria-label="每页条数">
+        <select data-field="pageSize" v-model.number="pageSize" aria-label="每页条数">
           <option :value="10">10 条 / 页</option>
           <option :value="20">20 条 / 页</option>
           <option :value="50">50 条 / 页</option></select
@@ -582,11 +676,19 @@ function resetFilters() {
       <template v-if="!results.length">
         <fieldset v-if="pendingAction === 'start'" :disabled="acting" class="choice-group">
           <legend>启动方式</legend>
-          <label><input v-model="startMode" type="radio" value="normal" />按当前策略启动</label
+          <label
+            ><input
+              data-field="startMode"
+              v-model="startMode"
+              type="radio"
+              value="normal"
+            />按当前策略启动</label
           ><label
-            ><input v-model="startMode" type="radio" value="savepoint" />从 Savepoint 恢复</label
+            ><input data-field="startMode" v-model="startMode" type="radio" value="savepoint" />从
+            Savepoint 恢复</label
           ><label
-            ><input v-model="startMode" type="radio" value="checkpoint" />从 Checkpoint 恢复</label
+            ><input data-field="startMode" v-model="startMode" type="radio" value="checkpoint" />从
+            Checkpoint 恢复</label
           >
         </fieldset>
         <div v-if="pendingAction === 'start' && startMode !== 'normal'">
@@ -617,18 +719,24 @@ function resetFilters() {
                 {{ snapshotTime(point.time) }} · {{ point.path }}
               </option></select
             ><small v-if="!snapshotOptions(state(job)).some((p) => p.type === startMode)"
-              >暂无可恢复路径。旧版本 Operator 可能不提供 Checkpoint
-              路径，请使用详情中的指定路径恢复。</small
+              >暂无可恢复路径。旧版本 Operator 可能不提供 Checkpoint 路径。</small
             ></label
           >
         </div>
         <label v-if="['stop', 'suspend'].includes(pendingAction)" class="restore-choice"
-          >停止策略<select v-model="mode" :disabled="acting">
-            <option value="savepoint">生成 Savepoint 后停止</option>
+          >停止策略<select data-field="mode" v-model="mode" :disabled="acting">
+            <option value="savepoint">Savepoint 完成后删除 FlinkDeployment</option>
             <option value="stateless">立即停止，不保留本次状态</option>
-            <option value="last-state">使用 HA 保留状态</option>
           </select></label
         >
+        <p v-if="['stop', 'suspend'].includes(pendingAction)" class="notice">
+          {{
+            mode === 'savepoint'
+              ? '仅适用于正常运行且已配置 Savepoint 目录的作业。先生成保存点，手动刷新确认完成后删除 FlinkDeployment；保存点失败时保留资源。下次启动自动使用保存的路径恢复。'
+              : '立即删除 FlinkDeployment，适用于启动中、异常或无需保留状态的作业。本次停止不生成保存点。'
+          }}
+          删除完成前可再次点击停止，或改为立即删除。
+        </p>
         <p class="muted dialog-note">
           批量操作逐个提交，失败不影响其他作业；API 接受不代表作业已完成操作。
         </p>
@@ -728,9 +836,8 @@ function resetFilters() {
       <button class="text-button" @click="yamlDialog?.close()">关闭</button>
     </div>
     <p class="muted">
-      最近刷新：{{
-        queriedAt ? new Date(queriedAt).toLocaleString() : '尚未查询'
-      }}。敏感字段已隐藏，此快照仅供查询。打开不会再次请求集群。
+      最近刷新：{{ queriedAt ? new Date(queriedAt).toLocaleString() : '尚未查询' }}。spec
+      中的敏感配置已隐藏，status 保留原始内容。此快照仅供查询，打开不会再次请求集群。
     </p>
     <pre class="yaml-snapshot-content">{{
       selectedYaml || '当前没有可用快照，请关闭后刷新列表。'
@@ -742,76 +849,14 @@ function resetFilters() {
       <button class="text-button" @click="selected = null">收起</button>
     </div>
     <div class="form-panel">
-      <div v-if="mayOperate(selected)" class="toolbar-actions wrap">
-        <label
-          >状态升级策略<select v-model="mode">
-            <option>savepoint</option>
-            <option>last-state</option>
-            <option>stateless</option>
-          </select></label
-        >
-        <button
-          v-if="mayEdit(selected)"
-          class="button primary"
-          :disabled="acting"
-          @click="action(selected, 'deploy')"
-        >
-          部署草稿
-        </button>
-        <button
-          v-for="entry in [
-            ['start', '启动'],
-            ['stop', '停止'],
-            ['savepoint', 'Savepoint'],
-            ['checkpoint', 'Checkpoint'],
-          ]"
-          :key="entry[0]"
-          class="button"
-          :disabled="acting || (entry[0] === 'stop' && !canStop(selected))"
-          @click="
-            ['start', 'stop', 'suspend', 'savepoint', 'checkpoint'].includes(entry[0]!)
-              ? openAction(entry[0]!, [selected])
-              : action(selected, entry[0]!)
-          "
-        >
-          {{ entry[1] }}
-        </button>
-      </div>
-      <p class="muted">
-        savepoint：保存状态后变更；last-state：从 HA
-        状态恢复；stateless：丢弃状态。新作业默认只保留最近一次已完成
-        checkpoint；纳管作业保留原策略，savepoint 单独保留。
-      </p>
-      <div v-if="mayOperate(selected)" class="toolbar-actions">
-        <input
-          v-model="restorePath"
-          placeholder="s3://bucket/job/savepoints/savepoint-xxx"
-          aria-label="恢复路径"
-        /><button
-          class="button"
-          :disabled="acting || !restorePath"
-          @click="action(selected, 'restore')"
-        >
-          从指定路径恢复
-        </button>
-      </div>
-      <details>
-        <summary>最近快照信息</summary>
-        <pre>{{
-          JSON.stringify(
-            {
-              savepoint: state(selected)?.savepointInfo,
-              checkpoint: state(selected)?.checkpointInfo,
-              snapshots: state(selected)?.snapshots,
-            },
-            null,
-            2,
-          )
-        }}</pre>
-      </details>
       <div class="panel-toolbar">
         <h3>操作记录</h3>
-        <input v-model="operationQuery" class="search" placeholder="筛选操作记录" />
+        <input
+          data-field="operationQuery"
+          v-model="operationQuery"
+          class="search"
+          placeholder="筛选操作记录"
+        />
       </div>
       <div v-if="!history.length" class="muted">暂无操作</div>
       <table v-else>

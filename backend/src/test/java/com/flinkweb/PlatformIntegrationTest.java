@@ -116,10 +116,16 @@ class PlatformIntegrationTest {
   @Test
   void statePolicyAndTypedVariables() {
     var node = yaml.validate(yaml.parse(source("sample")), "sample");
-    assertThat(node.at("/spec/flinkConfiguration/state.checkpoints.num-retained").asText())
-        .isEqualTo("1");
-    assertThat(node.at("/spec/flinkConfiguration/state.checkpoints.dir").asText())
-        .isEqualTo("s3://flink-state/sample/checkpoints");
+    assertThat(node.at("/spec/flinkConfiguration").size()).isZero();
+    node.withObject("/spec/flinkConfiguration")
+        .put("state.checkpoints.num-retained", "7")
+        .put("state.checkpoints.dir", "hdfs:///jobs/checkpoints")
+        .put("execution.checkpointing.interval", "90 s")
+        .put("restart-strategy.type", "fixed-delay")
+        .put("restart-strategy.fixed-delay.attempts", "4");
+    var validated = yaml.validate(node, "sample");
+    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.num-retained").asText()).isEqualTo("7");
+    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.dir").asText()).isEqualTo("hdfs:///jobs/checkpoints");
     String config = "parallel-" + UUID.randomUUID();
     catalogs.save(
         "configs", config, mapper.createObjectNode().put("kind", "plain").put("value", 3));
@@ -337,7 +343,10 @@ class PlatformIntegrationTest {
                   .content(body))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.data.state").value("ACCEPTED"));
-    verify(kubernetes, times(1)).call(eq("POST"), eq("/cr"), any());
+    var submitted = org.mockito.ArgumentCaptor.forClass(JsonNode.class);
+    verify(kubernetes, times(1)).call(eq("POST"), eq("/cr"), submitted.capture());
+    assertThat(submitted.getValue().at("/metadata/name").asText())
+        .isEqualTo("flink-" + mapper.readTree(created.getResponse().getContentAsString()).at("/data/jobNumber").asLong());
     verify(kubernetes, times(1))
         .call(eq("POST"), eq("/cr?dryRun=All&fieldValidation=Strict"), any());
   }
@@ -417,6 +426,7 @@ class PlatformIntegrationTest {
   @Autowired JobAdoptionService adoption;
   @Autowired JobOwnershipService ownership;
   @Autowired JobService jobs;
+  @Autowired com.flinkweb.repository.job.JobRepository jobRepository;
   @Autowired com.flinkweb.repository.job.JobBindingRepository bindings;
 
   /** 生成含旧 ServiceAccount 和 checkpoint 策略的既有作业样例。 */
@@ -527,6 +537,7 @@ class PlatformIntegrationTest {
   void adoptedJobCanStopButReplacementUidCannotBeMutated() throws Exception {
     String name = "stop-" + UUID.randomUUID().toString().substring(0, 8);
     ObjectNode live = legacy(name);
+    live.withObject("/spec/flinkConfiguration").put("state.savepoints.dir", "s3://state/savepoints");
     when(kubernetes.require(name)).thenReturn(live);
     var adopted = adoption.adopt(adoptionRequest(live));
     when(kubernetes.base()).thenReturn("/cr");
@@ -779,4 +790,49 @@ class PlatformIntegrationTest {
                 .content("{}"))
         .andExpect(status().isForbidden());
   }
+  /** 表单编辑以原 YAML 为底稿，保留自定义字段并允许清空状态配置。 */
+  @Test
+  void formRoundtripPreservesUnmanagedFieldsAndRemovesDisabledStateOptions() {
+    String imageId = "roundtrip-" + UUID.randomUUID();
+    catalogs.save("images", imageId, mapper.createObjectNode().put("name", imageId)
+        .put("repository", "registry.test/flink").put("version", "1.20.5"));
+    var original = yaml.parse(source("roundtrip"));
+    original.withObject("/spec").put("restartNonce", 123);
+    original.withObject("/spec/jobManager").put("replicas", 2);
+    original.withObject("/spec/flinkConfiguration").put("state.checkpoints.dir", "s3://old/cp");
+    original.withObject("/spec/job").put("initialSavepointPath", "s3://state/preserved");
+    var input = mapper.createObjectNode().put("name", "roundtrip").put("imageId", imageId)
+        .put("baseYaml", yaml.dump(original)).put("parallelism", 3).put("jmMemory", "2g");
+    input.putObject("flinkConfiguration").put("custom.option", "kept");
+    var rendered = yaml.parse(forms.render(input).path("yaml").asText());
+    assertThat(rendered.at("/spec/restartNonce").asInt()).isEqualTo(123);
+    assertThat(rendered.at("/spec/jobManager/replicas").asInt()).isEqualTo(2);
+    assertThat(rendered.at("/spec/jobManager/resource/memory").asText()).isEqualTo("2g");
+    assertThat(rendered.at("/spec/job/initialSavepointPath").asText()).isEqualTo("s3://state/preserved");
+    assertThat(rendered.at("/spec/flinkConfiguration").has("state.checkpoints.dir")).isFalse();
+    assertThat(yaml.validate(rendered, "roundtrip").at("/spec/flinkConfiguration").has("execution.checkpointing.interval")).isFalse();
+  }
+
+  /** 旧资源确认不存在后，启动按平台编号创建并保留平台展示名称。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void legacyJobStartsWithNumberedResourceAfterDeletion() throws Exception {
+    String name = "migrate-" + UUID.randomUUID().toString().substring(0,8);
+    ObjectNode old = legacy(name);
+    old.withObject("/spec").remove("serviceAccount");
+    when(kubernetes.require(name)).thenReturn(old);
+    var job = adoption.adopt(adoptionRequest(old));
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(com.fasterxml.jackson.databind.node.MissingNode.getInstance());
+    when(kubernetes.call(eq("POST"), anyString(), any())).thenAnswer(i -> ((ObjectNode)i.getArgument(2)).deepCopy());
+    mvc.perform(post("/api/jobs/" + job.id() + "/actions/start").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+        .content(mapper.createObjectNode().put("revision", job.revision()).put("requestId", UUID.randomUUID().toString()).toString()))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("ACCEPTED"));
+    assertThat(jobRepository.findById(job.id()).orElseThrow().name()).isEqualTo(name);
+    assertThat(jobRepository.findById(job.id()).orElseThrow().deploymentName()).isEqualTo("flink-" + job.jobNumber());
+    verify(kubernetes).call(eq("POST"), eq("/cr"), argThat(body ->
+        body.at("/metadata/name").asText().equals("flink-" + job.jobNumber())
+        && body.at("/spec/job/state").asText().equals("running")));
+  }
+
 }

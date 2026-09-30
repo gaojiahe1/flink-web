@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-09-29。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-09-30。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -20,7 +20,7 @@
 - 制品桶、状态存储目录及相应访问身份。
 - SQLite 所需可写 PVC，或 MySQL 8+ 数据库及专用账号。
 
-Flink UI 上游固定为 {作业名}-rest.{作业namespace}.svc:8081。代理只允许受控只读请求，不接收任意 URL，不转发平台 Cookie/Authorization；运行配置脱敏，环境与原始日志接口被阻止。不同 Flink UI 版本需实际验收。
+Flink UI 上游固定为 {FlinkDeployment资源名}-rest.{作业namespace}.svc:8081。代理只允许受控只读请求，不接收任意 URL，不转发平台 Cookie/Authorization；运行配置脱敏，环境与原始日志接口被阻止。不同 Flink UI 版本需实际验收。
 
 ## 2. 本地开发启动
 
@@ -83,7 +83,7 @@ npm run format:check
 | FLINK_WEB_OPERATOR_DEPLOYMENT | 查询的 Deployment，默认 flink-kubernetes-operator |
 | FLINK_WEB_OPERATOR_CONTAINER | 取镜像版本的容器名，默认 flink-kubernetes-operator |
 | FLINK_WEB_WORKLOAD_SA | 新作业运行身份，默认 flink；不同于平台身份 |
-| FLINK_WEB_STATE_ROOT | 状态目录根路径，默认 s3://flink-state |
+| FLINK_WEB_STATE_ROOT | 页面 S3 状态目录建议值，默认 s3://flink-state；不再强制写入作业 |
 | FLINK_WEB_S3_BUCKET / FLINK_WEB_S3_ENDPOINT | 制品桶及可选 S3 兼容端点 |
 | FLINK_WEB_S3_PREFIX | 允许浏览的制品根前缀，默认 artifacts/ |
 | AWS_REGION | 默认 us-east-1 |
@@ -111,7 +111,7 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 2. 填写 application.yaml 中已合并的 flink-web-secrets（管理员密码与主密钥）。已有环境必须填回原主密钥；MinIO 凭据复用同 namespace 的 minio-secret。
 3. 核对 application.yaml 所选 ServiceAccount 的 RBAC 后直接应用该文件；数据库不存在时自动创建，已有文件保留，无需额外初始化补丁或部署后的开关切换。当前文件使用已有 flink-operator 身份；若改用平台独立 flink-web 身份，先应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)。
 4. Operator 在其他 namespace 时，修改并应用 [operator-rbac.yaml](../deploy/kubernetes/operator-rbac.yaml)；设置对应 FLINK_WEB_OPERATOR_NAMESPACE。Deployment 名变更时同步修改 Role 的 resourceNames。
-5. 访问 http://NODE_IP:30080，在系统设置手动核对 Operator 版本、就绪副本和 Pod，再登记镜像、模板、配置及制品。
+5. 访问 http://NODE_IP:30080，在系统设置手动核对 Operator 版本、就绪副本和 Pod，再登记镜像、模板和配置，并在对象浏览器上传依赖文件。
 
 ### 当前环境：Secret、MinIO 与首次启动
 
@@ -237,6 +237,9 @@ jdbc:mysql://mysql:3306/flink_web?useUnicode=true&characterEncoding=utf8&serverT
 | V2 | platform_records：用户、配置、模板、制品、SQL、审计等 JSON 元数据 |
 | V3 | job_bindings：资源 UID 与平台作业绑定 |
 | V4 | platform_record_subjects：操作、发布、SQL 版本与快照的主体索引 |
+| V5 | job_numbers：数据库自增作业编号与固定资源名映射；为旧作业补号但不立即改动资源；旧资源删除后重建使用编号名，删除平台作业后保留编号 |
+
+2026-09-30：前后端须配套更新。新草稿分配自增编号，部署名称使用 flink-编号。历史资源纳管或数据库迁移时保持原名，先停止旧资源并确认删除，再启动时重建为编号名；平台展示名和 UUID 不变。停止可立即删除，也可先由 Operator 生成 Savepoint，用户手动刷新或再次停止时推进删除。停止意图和恢复路径落库，进程重启后可继续；不增加后台轮询。编号可能有间隔，不承诺连续。SQLite 迁移与编号重建由自动化测试及 Kubernetes 协议替身验证；MySQL 和真实 Operator 删除/恢复仍需部署环境验收。
 
 全量 DDL 与增量脚本位于 [MySQL](../backend/src/main/resources/db/mysql/schema.sql) 和 [SQLite](../backend/src/main/resources/db/sqlite/schema.sql) 所在目录。已有数据库通过迁移升级，不要删除后重建；全量脚本的 CREATE IF NOT EXISTS 不能修复手工损坏的表。MySQL DDL 存在隐式提交，迁移失败应检查完成情况再恢复启动。
 
@@ -288,7 +291,9 @@ initContainer 在 JM/TM 分别下载 HTTP(S)/S3 文件并校验 SHA-256；超时
 
 制品卷挂载 /opt/flink/usrlib，会遮蔽镜像原目录。依赖下载启用时，把所需用户 JAR 全部列入下载清单；预置主 JAR 可放在未被遮蔽的路径。Flink 核心、Planner、S3 插件保留在运行镜像，不当作普通用户依赖替换。
 
-状态目录在 FLINK_WEB_STATE_ROOT 下按作业划分 checkpoint/savepoint 路径。last-state 还需要运维配置 Kubernetes HA 与 HA 存储。快照存在性检查使用平台 S3 endpoint/凭据，不证明恢复兼容性。
+状态存储在 JAR/SQL 页面显式开启；启用后默认使用 S3，页面用 FLINK_WEB_STATE_ROOT 和作业 UUID 自动生成 checkpoint/savepoint 路径并写入 Flink 配置，同时写入非敏感连接参数；这些字段不再单独展示为表单输入，必要时可在 Flink 配置中调整。后台不再强制周期、保留数量或目录。关闭存储会移除表单管理的 Checkpoint 相关配置。Flink 镜像必须包含对应文件系统插件并获得工作负载凭据；平台 S3 SDK 可访问不表示 Flink 可以访问。last-state 仅保留为升级策略，需要 Kubernetes HA 与 HA 存储，不再作为停止选项。指定路径的手动快照检查仍使用平台 S3 endpoint/凭据并限制到配置的桶，不证明恢复兼容性。
+
+对象浏览器限定在 FLINK_WEB_S3_PREFIX 下，依赖默认位于 jobs/{作业 UUID}/，可选择 shared/。上传直接写入 S3，拒绝同名覆盖；不需要制品登记。可创建目录标记、浏览、下载和删除具体文件，不做递归清理。S3 身份除 List/Get/Put 外，删除文件需要 DeleteObject 权限；条件写入需要对象存储支持 If-None-Match。外部上传没有 sha256 元数据的文件在引用时流式计算校验和，大文件会增加预览等待时间，最大 1 GiB。保留旧登记记录用于已有下载清单兼容。
 
 ## 8. 排障与验收
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import { ref, onBeforeUnmount } from 'vue'
 import { request, jsonBody } from '../../../shared/api/http'
@@ -43,7 +44,7 @@ async function browse(level: 'databases' | 'tables' | 'columns') {
     truncated.value = result.truncated
     queried.value = true
   } catch (e) {
-    if (current === sequence) error.value = (e as Error).message
+    if (current === sequence) error.value = showValidationError((e as Error).message)
   } finally {
     if (current === sequence) busy.value = false
   }
@@ -72,6 +73,7 @@ function select() {
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <label
       >数据库<select
+        data-field="database"
         v-model="database"
         :disabled="busy || !databases.length"
         @change="chooseDatabase"
@@ -81,7 +83,12 @@ function select() {
       </select></label
     >
     <label
-      >数据表<select v-model="table" :disabled="busy || !tables.length" @change="chooseTable">
+      >数据表<select
+        data-field="table"
+        v-model="table"
+        :disabled="busy || !tables.length"
+        @change="chooseTable"
+      >
         <option value="" disabled>选择数据表</option>
         <option v-for="item in tables" :key="item.name" :value="item.name">
           {{ item.name }} · {{ item.type }}

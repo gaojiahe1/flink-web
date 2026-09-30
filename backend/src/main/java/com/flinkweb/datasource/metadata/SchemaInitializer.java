@@ -12,7 +12,8 @@ public final class SchemaInitializer {
     "V1__job_metadata.sql",
     "V2__platform_records.sql",
     "V3__job_bindings.sql",
-    "V4__record_subject_index.sql"
+    "V4__record_subject_index.sql",
+    "V5__job_numbers.sql"
   };
 
   /** 检查已有模式版本与本地数据库完整性，依次应用缺失的 DDL 迁移。 */

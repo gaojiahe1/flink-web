@@ -57,8 +57,8 @@ test('Catalog registration, SQL initialization, draft persistence and protected 
  expect(cluster).toBe(0)
  await page.getByRole('link',{name:'数据管理',exact:true}).click()
  await page.getByRole('link',{name:'Flink Catalog',exact:true}).click()
- page.once('dialog',d=>d.accept())
  await page.getByRole('row').filter({hasText:catalog}).getByRole('button',{name:'删除',exact:true}).click()
+ await page.getByRole('dialog',{name:'确认操作'}).getByRole('button',{name:'确定',exact:true}).click()
  await expect(page.getByRole('alert')).toContainText('SQL 草稿引用')
 })
 

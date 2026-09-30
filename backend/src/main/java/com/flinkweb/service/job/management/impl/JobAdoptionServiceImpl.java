@@ -114,7 +114,7 @@ public class JobAdoptionServiceImpl implements JobAdoptionService {
         new JobBinding(
             draft.id(), namespace, draft.name(), request.uid(), request.resourceVersion(), now));
     audit.record("JOB_ADOPT", draft.id(), "SUCCESS");
-    return draft;
+    return jobs.findById(draft.id()).orElseThrow();
   }
 
   /** 抛出纳管冲突及对应的可识别错误码。 */

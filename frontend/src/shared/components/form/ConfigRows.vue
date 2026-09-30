@@ -59,6 +59,7 @@ function change() {
   <div ref="root" class="config-rows">
     <div v-for="(row, index) in rows" :key="index" class="config-row">
       <input
+        data-field="key"
         data-config-key
         required
         v-model="row.key"
@@ -69,6 +70,7 @@ function change() {
         @change="change"
       /><span>:</span
       ><input
+        data-field="value"
         v-model="row.value"
         :aria-label="'配置值 ' + (index + 1)"
         placeholder="值"

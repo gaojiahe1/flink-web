@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { login } from '../stores/auth'
@@ -17,7 +18,7 @@ async function submit() {
     password.value = ''
     await router.replace('/jobs')
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -42,6 +43,7 @@ async function submit() {
         <div v-if="error" class="notice error" role="alert">{{ error }}</div>
         <label for="login-username">用户名</label>
         <input
+          data-field="username"
           id="login-username"
           v-model="username"
           name="username"
@@ -53,6 +55,7 @@ async function submit() {
         <label for="login-password">密码</label>
         <div class="password-field">
           <input
+            data-field="password"
             id="login-password"
             v-model="password"
             name="password"

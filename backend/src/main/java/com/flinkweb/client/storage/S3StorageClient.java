@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.s3.model.*;
 public class S3StorageClient implements AutoCloseable {
   private final String bucket, prefix;
   private final String stateBucket;
+  private final String endpoint, region, stateRoot;
   private final ObjectMapper mapper;
   private final S3Client client;
 
@@ -35,7 +36,10 @@ public class S3StorageClient implements AutoCloseable {
       @Value("${platform.workload.state-root:s3://flink-state}") String stateRoot) {
     this.mapper = mapper;
     this.bucket = bucket;
-    this.prefix = prefix;
+    this.prefix = prefix.replaceAll("/+$", "") + "/";
+    this.endpoint = endpoint;
+    this.region = region;
+    this.stateRoot = stateRoot;
     URI stateUri = URI.create(stateRoot);
     this.stateBucket = "s3".equals(stateUri.getScheme()) ? stateUri.getHost() : null;
     var builder =
@@ -79,7 +83,7 @@ public class S3StorageClient implements AutoCloseable {
       if (token != null && !token.isBlank()) builder.continuationToken(token);
       var response = client.listObjectsV2(builder.build());
       var result =
-          mapper.createObjectNode().put("bucket", bucket).put("prefix", safePrefix(requested));
+          mapper.createObjectNode().put("bucket", bucket).put("prefix", safePrefix(requested)).put("rootPrefix", prefix);
       var dirs = result.putArray("directories");
       for (var dir : response.commonPrefixes()) dirs.add(dir.prefix());
       var objects = result.putArray("objects");
@@ -105,7 +109,8 @@ public class S3StorageClient implements AutoCloseable {
 
   /** 按主程序、依赖和公共目录上传，使用随机标识避免同名覆盖。 */
   public ObjectNode upload(MultipartFile file, String category) {
-    if (!Set.of("main", "dependency", "shared").contains(category))
+    boolean direct = category.startsWith(prefix);
+    if (!direct && !Set.of("main", "dependency", "shared").contains(category))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_CATEGORY", "制品目录类型无效");
     configured();
     String filename = file.getOriginalFilename();
@@ -124,13 +129,15 @@ public class S3StorageClient implements AutoCloseable {
       }
       String checksum = HexFormat.of().formatHex(digest.digest()),
           id = UUID.randomUUID().toString(),
-          key = prefix + (prefix.endsWith("/") ? "" : "/") + category + "/" + id + "/" + filename;
+          key = direct ? safePrefix(category).replaceAll("/+$", "") + "/" + filename
+              : prefix + category + "/" + id + "/" + filename;
       client.putObject(
           PutObjectRequest.builder()
               .bucket(bucket)
               .key(key)
               .contentType("application/octet-stream")
               .metadata(Map.of("sha256", checksum))
+              .overrideConfiguration(c -> c.putHeader("If-None-Match", "*"))
               .build(),
           RequestBody.fromFile(temporary));
       var record =
@@ -141,9 +148,13 @@ public class S3StorageClient implements AutoCloseable {
               .put("filename", filename)
               .put("sha256", checksum)
               .put("uri", "s3://" + bucket + "/" + key);
-      return record.put("id", id);
+      return record.put("id", "s3:" + key).put("key", key);
     } catch (BusinessException ex) {
       throw ex;
+    } catch (S3Exception ex) {
+      if (ex.statusCode() == 412 || ex.statusCode() == 409)
+        throw new BusinessException(HttpStatus.CONFLICT, "OBJECT_EXISTS", "同名文件已存在，请更换文件名或先删除旧文件");
+      throw unavailable();
     } catch (Exception ex) {
       throw unavailable();
     } finally {
@@ -153,6 +164,59 @@ public class S3StorageClient implements AutoCloseable {
         } catch (Exception ignored) {
         }
     }
+  }
+
+  /** 返回可公开的连接默认值，不返回任何凭证。 */
+  public ObjectNode defaults() {
+    return mapper.createObjectNode().put("bucket", bucket).put("rootPrefix", prefix)
+        .put("endpoint", endpoint).put("region", region).put("stateRoot", stateRoot);
+  }
+
+  /** 读取选中对象并计算真实校验和，支持直接上传到固定目录的文件。 */
+  public ObjectNode describe(String key) {
+    configured();
+    safePrefix(key);
+    if (key.endsWith("/")) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请选择文件");
+    try {
+      var head = client.headObject(HeadObjectRequest.builder().bucket(bucket).key(key).build());
+      if (head.contentLength() != null && head.contentLength() > 1024L * 1024 * 1024)
+        throw new BusinessException(HttpStatus.BAD_REQUEST, "FILE_TOO_LARGE", "单个依赖文件不能超过下载器的 1 GiB 限制");
+      String checksum = head.metadata().getOrDefault("sha256", "");
+      if (!checksum.matches("[a-fA-F0-9]{64}")) {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (var input = new DigestInputStream(download(key), digest)) {
+          input.transferTo(java.io.OutputStream.nullOutputStream());
+        }
+        checksum = HexFormat.of().formatHex(digest.digest());
+      }
+      return mapper.createObjectNode().put("id", "s3:" + key).put("key", key)
+          .put("filename", key.substring(key.lastIndexOf('/') + 1))
+          .put("uri", "s3://" + bucket + "/" + key).put("sha256", checksum);
+    } catch (BusinessException ex) { throw ex; }
+      catch (Exception ex) { throw unavailable(); }
+  }
+
+  /** 创建目录标记，不覆盖已经存在的对象。 */
+  public ObjectNode mkdir(String requested) {
+    configured();
+    String key = safePrefix(requested).replaceAll("/+$", "") + "/";
+    if (key.equals(prefix)) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "请输入子目录");
+    try {
+      client.putObject(PutObjectRequest.builder().bucket(bucket).key(key)
+          .overrideConfiguration(c -> c.putHeader("If-None-Match", "*")).build(), RequestBody.empty());
+      return mapper.createObjectNode().put("key", key);
+    } catch (Exception ex) { throw unavailable(); }
+  }
+
+  /** 仅删除明确指定的单个文件；不执行递归目录删除。 */
+  public ObjectNode delete(String key) {
+    configured();
+    safePrefix(key);
+    if (key.endsWith("/")) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请进入目录后选择具体文件，不能递归删除目录");
+    try {
+      client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+      return mapper.createObjectNode().put("deleted", true).put("key", key);
+    } catch (Exception ex) { throw unavailable(); }
   }
 
   /** 校验对象范围后获取下载流，由调用方关闭。 */

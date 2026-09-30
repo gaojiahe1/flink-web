@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { ref, reactive, computed, onMounted } from 'vue'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../stores/auth'
@@ -17,7 +18,7 @@ async function run(task: () => Promise<void>) {
   try {
     await task()
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
   }
@@ -82,13 +83,15 @@ async function saveGroup() {
       <div class="field-grid">
         <label
           >组标识<input
+            data-field="id"
             v-model="group.id"
             required
             :disabled="!!group.revision"
-            pattern="[a-z0-9][a-z0-9_.-]{0,100}" /></label
-        ><label>名称<input v-model="group.name" required /></label
+            pattern="[a-z0-9][a-z0-9_.\-]{0,100}" /></label
+        ><label>名称<input data-field="name" v-model="group.name" required /></label
         ><label class="wide-field"
           >成员账号<input
+            data-field="members"
             v-model="group.members"
             placeholder="现有账号，以逗号分隔；清空可移除全部成员"
         /></label>
