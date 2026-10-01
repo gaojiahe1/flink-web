@@ -3,6 +3,7 @@ import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import JobWorkbench from '../components/JobWorkbench.vue'
+import PodStatusDrawer from '../components/PodStatusDrawer.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
 import { requestId } from '../../../shared/utils/requestId'
@@ -12,6 +13,9 @@ import { currentUser } from '../../permission/stores/auth'
 import { useManualRefresh } from '../../../shared/composables/useManualRefresh'
 import type { JobDraft } from '../../../shared/types/api'
 interface Runtime {
+  healthState?: string
+  error?: string
+  jobManagerDeploymentStatus?: string
   yaml: string
   uid: string
   namespace: string
@@ -52,8 +56,8 @@ const drafts = ref<JobDraft[]>([]),
   queriedAt = ref('')
 const loading = ref(true),
   acting = ref(false),
-  selected = ref<JobDraft | null>(null),
-  history = ref<Operation[]>([])
+  selected = ref<JobDraft | null>(null)
+const podJob = ref<JobDraft | null>(null)
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
 const selectedYaml = computed(
@@ -92,7 +96,8 @@ const filtered = computed(() =>
   drafts.value.filter(
     (job) =>
       (job.name + job.description + job.id).toLowerCase().includes(query.value.toLowerCase()) &&
-      (!statusFilter.value || (state(job)?.jobState || 'UNDEPLOYED') === statusFilter.value) &&
+      (!statusFilter.value ||
+        (state(job)?.healthState || state(job)?.jobState || 'UNDEPLOYED') === statusFilter.value) &&
       (!versionFilter.value || job.flinkVersion === versionFilter.value),
   ),
 )
@@ -103,13 +108,13 @@ const visible = computed(() =>
     Math.min(page.value, pages.value) * pageSize.value,
   ),
 )
-const statuses = computed(() => [...new Set(runtime.value.map((j) => j.jobState))])
+const statuses = computed(() => [...new Set(runtime.value.map((j) => j.healthState || j.jobState))])
 const checkedJobs = computed(() => drafts.value.filter((j) => selectedIds.value.includes(j.id)))
-const filteredHistory = computed(() =>
-  history.value.filter((op) =>
+function filteredHistory(records: Operation[]) {
+  return records.filter((op) =>
     JSON.stringify(op).toLowerCase().includes(operationQuery.value.toLowerCase()),
-  ),
-)
+  )
+}
 watch([query, statusFilter, versionFilter, pageSize], () => (page.value = 1))
 function togglePage(event: Event) {
   const ids = visible.value.map((j) => j.id)
@@ -141,11 +146,15 @@ function openAction(action: string, jobs: JobDraft[]) {
     return
   }
   error.value = ''
+  message.value = ''
   targets.value = [...jobs]
   pendingAction.value = action
   startMode.value = 'normal'
   mode.value = jobs.every(
-    (j) => state(j)?.jobState === 'RUNNING' && state(j)?.desiredState === 'running',
+    (j) =>
+      state(j)?.jobState === 'RUNNING' &&
+      state(j)?.healthState !== 'ERROR' &&
+      state(j)?.desiredState === 'running',
   )
     ? 'savepoint'
     : 'stateless'
@@ -243,6 +252,7 @@ const {
   remaining,
 } = useManualRefresh(async () => {
   error.value = ''
+  message.value = ''
   try {
     const result = await request<{
       items: Runtime[]
@@ -256,6 +266,12 @@ const {
     stopProgress.value = result.stopProgress || {}
     submittedActions.value = {}
     queriedAt.value = result.queriedAt
+    const completed = Object.entries(stopProgress.value).filter(([, p]) => p.phase === 'DONE')
+    message.value = completed.length
+      ? completed
+          .map(([id]) => (drafts.value.find((j) => j.id === id)?.name || id) + '：已停止')
+          .join('；')
+      : ''
     await load()
   } catch (e) {
     if ((e as Error).name !== 'AbortError') {
@@ -317,11 +333,6 @@ async function adopt(job: Runtime) {
 async function details(job: JobDraft) {
   selected.value = job
   detailEpoch.value++
-  try {
-    history.value = await request<Operation[]>('/api/jobs/' + job.id + '/operations')
-  } catch (e) {
-    error.value = showValidationError((e as Error).message)
-  }
 }
 async function action(job: JobDraft, action: string) {
   if (
@@ -352,14 +363,32 @@ async function action(job: JobDraft, action: string) {
   }
 }
 function accepted(job: JobDraft, action: string) {
+  if (['start', 'restore', 'deploy'].includes(action)) delete stopProgress.value[job.id]
   const live = state(job)
   if (['start', 'restore', 'deploy', 'stop', 'suspend'].includes(action)) {
-    if (live) live.desiredState = ['stop', 'suspend'].includes(action) ? 'suspended' : 'running'
+    if (live) live.desiredState = ['stop', 'suspend'].includes(action) ? 'stopped' : 'running'
     // 只更新提交后的期望状态，观测状态仍显示最近一次查询结果。
     submittedActions.value[job.id] = action
   }
 }
 const submittedActions = ref<Record<string, string>>({})
+function desired(job: JobDraft) {
+  if (
+    ['stop', 'suspend'].includes(submittedActions.value[job.id] || '') ||
+    stopProgress.value[job.id]
+  )
+    return stopProgress.value[job.id]?.phase === 'DONE' ? '已停止' : '停止'
+  if (['start', 'deploy', 'restore'].includes(submittedActions.value[job.id] || ''))
+    return 'running'
+  return state(job)?.desiredState || '—'
+}
+function observed(job: JobDraft) {
+  if (state(job)?.registrationConflict) return '资源身份冲突'
+  if (state(job)?.healthState === 'ERROR') return '部署异常'
+  if (state(job)?.deleting) return '删除中'
+  if (!state(job) && stopProgress.value[job.id]?.phase === 'DONE') return '已停止'
+  return state(job)?.jobState || (queriedAt.value ? '未部署' : '未查询')
+}
 function canStart(job: JobDraft) {
   const live = state(job)
   return (
@@ -388,6 +417,7 @@ function canPerform(job: JobDraft, action: string) {
     (!stopProgress.value[job.id] || stopProgress.value[job.id]?.phase === 'DONE') &&
     live.desiredState === 'running' &&
     live.jobState === 'RUNNING' &&
+    live.healthState !== 'ERROR' &&
     !['UPGRADING', 'DEPLOYING', 'ROLLING_BACK'].includes(live.lifecycleState)
   )
 }
@@ -462,7 +492,9 @@ function resetFilters() {
     <div class="stat-card">
       <span>运行中</span
       ><strong>{{
-        queriedAt ? runtime.filter((j) => j.jobState === 'RUNNING').length : '—'
+        queriedAt
+          ? runtime.filter((j) => j.jobState === 'RUNNING' && j.healthState !== 'ERROR').length
+          : '—'
       }}</strong
       ><small>以最近一次集群查询为准</small>
     </div>
@@ -558,7 +590,10 @@ function resetFilters() {
           <tr
             v-for="job in visible"
             :key="job.id"
-            :class="{ 'failed-row': state(job)?.jobState === 'FAILED' }"
+            :class="{
+              'failed-row':
+                state(job)?.healthState === 'ERROR' || state(job)?.jobState === 'FAILED',
+            }"
           >
             <td class="check-column">
               <input
@@ -572,24 +607,35 @@ function resetFilters() {
             <td>
               <button class="text-button job-name" @click="details(job)">{{ job.name }}</button
               ><small class="table-description"
-                >编号 {{ job.jobNumber }} · {{ job.deploymentName }}</small
+                >编号 flink-{{ String(job.jobNumber).padStart(7, '0')
+                }}<template
+                  v-if="job.deploymentName !== 'flink-' + String(job.jobNumber).padStart(7, '0')"
+                >
+                  · 当前资源 {{ job.deploymentName }}</template
+                ></small
               >
             </td>
             <td>
               <span class="version-pill">{{ job.flinkVersion }}</span>
             </td>
             <td>
-              {{ state(job)?.desiredState || '—'
+              {{ desired(job)
               }}<small v-if="stopProgress[job.id]" class="table-description">{{
                 stopProgress[job.id]?.message
               }}</small>
             </td>
             <td>
-              <span class="badge" :class="badgeClass(state(job)?.jobState)">{{
-                state(job)?.registrationConflict
-                  ? '资源身份冲突'
-                  : state(job)?.jobState || (queriedAt ? '未部署' : '未查询')
-              }}</span>
+              <span
+                class="badge"
+                :class="badgeClass(state(job)?.healthState || state(job)?.jobState)"
+                >{{ observed(job) }}</span
+              >
+              <small
+                v-if="state(job)?.error"
+                class="table-description job-error-summary"
+                :title="state(job)?.error"
+                >{{ state(job)?.error }}</small
+              >
             </td>
             <td class="row-actions">
               <button
@@ -598,6 +644,9 @@ function resetFilters() {
                 @click="showYaml(job.deploymentName)"
               >
                 当前 YAML
+              </button>
+              <button class="text-button" :disabled="!state(job)?.managed" @click="podJob = job">
+                Pod 状态
               </button>
               <template v-if="mayOperate(job)"
                 ><button
@@ -830,6 +879,7 @@ function resetFilters() {
       </table>
     </div>
   </section>
+  <PodStatusDrawer v-if="podJob" :key="podJob.id" :job="podJob" @close="podJob = null" />
   <dialog ref="yamlDialog" class="yaml-snapshot-dialog">
     <div class="panel-toolbar">
       <h3>{{ yamlName }} · 当前 FlinkDeployment YAML</h3>
@@ -848,56 +898,6 @@ function resetFilters() {
       <h3>{{ selected.name }}</h3>
       <button class="text-button" @click="selected = null">收起</button>
     </div>
-    <div class="form-panel">
-      <div class="panel-toolbar">
-        <h3>操作记录</h3>
-        <input
-          data-field="operationQuery"
-          v-model="operationQuery"
-          class="search"
-          placeholder="筛选操作记录"
-        />
-      </div>
-      <div v-if="!history.length" class="muted">暂无操作</div>
-      <table v-else>
-        <thead>
-          <tr>
-            <th>操作</th>
-            <th>提交结果</th>
-            <th>说明</th>
-            <th>时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="op in filteredHistory
-              .slice()
-              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))"
-            :key="op.id"
-          >
-            <td>{{ op.action }}</td>
-            <td>{{ op.state }}</td>
-            <td>{{ op.message }}</td>
-            <td>{{ new Date(op.updatedAt).toLocaleString() }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="developer" class="toolbar-actions">
-        <button
-          class="button danger"
-          :disabled="!canDelete(selected)"
-          @click="action(selected, 'delete')"
-        >
-          删除集群资源</button
-        ><button
-          class="text-button danger"
-          :disabled="!canDelete(selected) || !!state(selected)"
-          @click="remove(selected)"
-        >
-          删除平台草稿
-        </button>
-      </div>
-    </div>
     <JobWorkbench
       :key="selected.id + detailEpoch"
       :job="selected"
@@ -905,6 +905,58 @@ function resetFilters() {
       :query-disabled="disabled"
       :remaining="remaining"
       @restored="restored"
-    />
+      ><template #history="{ records }">
+        <div class="form-panel">
+          <div class="panel-toolbar">
+            <h3>操作记录</h3>
+            <input
+              data-field="operationQuery"
+              v-model="operationQuery"
+              class="search"
+              placeholder="筛选操作记录"
+            />
+          </div>
+          <div v-if="!records.length" class="muted">暂无操作</div>
+          <table v-else>
+            <thead>
+              <tr>
+                <th>操作</th>
+                <th>提交结果</th>
+                <th>说明</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="op in filteredHistory(records)
+                  .slice()
+                  .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))"
+                :key="op.id"
+              >
+                <td>{{ op.action }}</td>
+                <td>{{ op.state }}</td>
+                <td>{{ op.message }}</td>
+                <td>{{ new Date(op.updatedAt).toLocaleString() }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="developer" class="toolbar-actions">
+            <button
+              class="button danger"
+              :disabled="!canDelete(selected)"
+              @click="action(selected, 'delete')"
+            >
+              删除集群资源</button
+            ><button
+              class="text-button danger"
+              :disabled="!canDelete(selected) || !!state(selected)"
+              @click="remove(selected)"
+            >
+              删除平台草稿
+            </button>
+          </div>
+        </div>
+      </template></JobWorkbench
+    >
   </section>
 </template>

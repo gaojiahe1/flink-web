@@ -3,7 +3,11 @@ import StateStorageForm from '../../../shared/components/form/StateStorageForm.v
 import { hydrateJar } from '../jarForm'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
-import { setFieldError, showValidationError } from '../../../shared/utils/fieldValidation'
+import {
+  setFieldError,
+  showValidationError,
+  clearValidationErrors,
+} from '../../../shared/utils/fieldValidation'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -265,6 +269,16 @@ async function render() {
   form.yaml = result.yaml
   form.flinkVersion = result.flinkVersion
 }
+watch(
+  [form, options, args, config],
+  () => {
+    clearValidationErrors(formElement.value || document)
+    error.value = ''
+    message.value = ''
+    preview.value = ''
+  },
+  { deep: true },
+)
 async function validate(dryRun = false) {
   if (busy.value || stateConfigBusy.value || !valid()) return
   busy.value = true

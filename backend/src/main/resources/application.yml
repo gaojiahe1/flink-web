@@ -44,7 +44,7 @@ platform:
     service-account: ${FLINK_WEB_WORKLOAD_SA:flink}
     state-root: ${FLINK_WEB_STATE_ROOT:s3://flink-state}
   artifacts:
-    downloader-image: ${FLINK_WEB_DOWNLOADER_IMAGE:flink-web-downloader:0.1.0}
+    downloader-image: ${FLINK_WEB_DOWNLOADER_IMAGE:}
     allowed-hosts: ${FLINK_WEB_ARTIFACT_HOSTS:}
     credentials-secret: ${FLINK_WEB_ARTIFACT_CREDENTIALS_SECRET:}
   s3:

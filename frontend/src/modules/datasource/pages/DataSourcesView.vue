@@ -470,15 +470,19 @@ function resetFilters() {
             ><HelpTip text="选择时间字段后，生成延迟容忍的 Watermark 定义。"
           /></label>
           <label
-            >Watermark 延迟（秒）<input
-              data-field="watermarkDelaySeconds"
-              v-model.number="form.watermarkDelaySeconds"
-              type="number"
-              min="0"
-              max="86400"
-              step="1"
-              :disabled="!form.watermarkColumn"
-          /></label>
+            >Watermark 延迟
+            <div class="input-unit">
+              <input
+                data-field="watermarkDelaySeconds"
+                v-model.number="form.watermarkDelaySeconds"
+                type="number"
+                min="0"
+                max="86400"
+                step="1"
+                :disabled="!form.watermarkColumn"
+              /><span class="unit-suffix">秒</span>
+            </div></label
+          >
         </div>
       </fieldset>
       <div class="form-actions">

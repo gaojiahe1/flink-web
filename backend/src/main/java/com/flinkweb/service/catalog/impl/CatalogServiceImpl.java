@@ -113,9 +113,13 @@ public class CatalogServiceImpl implements CatalogService {
             version = input.path("version").asText();
         if (!repository.matches("[a-zA-Z0-9][a-zA-Z0-9.:/_-]*")) fail("repository: 镜像仓库格式无效");
         if (!version.matches("[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}")) fail("version: 镜像版本格式无效");
-        var match = java.util.regex.Pattern.compile("^(1\\.(?:16|17|18|19|20)|2\\.[0-3])(\\.[0-9]+)?(?:[-_].*)?$").matcher(version);
+        var match =
+            java.util.regex.Pattern.compile(
+                    "^(1\\.(?:16|17|18|19|20)|2\\.[0-3])(\\.[0-9]+)?(?:[-_].*)?$")
+                .matcher(version);
         String flinkVersion;
-        if (match.matches()) flinkVersion = match.group(1) + (match.group(2) == null ? "" : match.group(2));
+        if (match.matches())
+          flinkVersion = match.group(1) + (match.group(2) == null ? "" : match.group(2));
         else if (!input.path("flinkVersion").asText().isBlank())
           flinkVersion = input.path("flinkVersion").asText();
         else if (old != null && old.path("version").asText().equals(version))
@@ -124,8 +128,19 @@ public class CatalogServiceImpl implements CatalogService {
           fail("version: 镜像版本须以 Flink 版本开头，例如 1.20.5-scala_2.12");
           return null;
         }
-        node.put("name", id).put("repository", repository).put("version", version)
-            .put("flinkVersion", flinkVersion).put("javaVersion", input.path("javaVersion").asText());
+        node.put("name", id)
+            .put("repository", repository)
+            .put("version", version)
+            .put("flinkVersion", flinkVersion)
+            .put("javaVersion", input.path("javaVersion").asText());
+        String downloader =
+            input
+                .path("downloaderImage")
+                .asText(old == null ? "" : old.path("downloaderImage").asText())
+                .trim();
+        if (!downloader.isEmpty() && !downloader.matches("[a-zA-Z0-9][a-zA-Z0-9.:/_@-]*"))
+          fail("downloaderImage: 下载器镜像地址无效");
+        node.put("downloaderImage", downloader);
         // 编辑旧记录时保留既有拉取凭据；新表单不再要求填写。
         if (old != null && old.has("pullSecret")) node.set("pullSecret", old.get("pullSecret"));
       }

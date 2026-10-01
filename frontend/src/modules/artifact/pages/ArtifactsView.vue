@@ -1,8 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { request, jsonBody } from '../../../shared/api/http'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { currentUser } from '../../permission/stores/auth'
+import {
+  Database,
+  Folder,
+  File,
+  RefreshCw,
+  Upload,
+  Download,
+  Trash2,
+  FolderPlus,
+  ChevronRight,
+  Search,
+  ArrowUp,
+  Info,
+} from '@lucide/vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 type FileEntry = { key: string; size: number; modifiedAt: string }
 const downloadUrl = (key: string) => '/api/artifacts/download?' + new URLSearchParams({ key })
@@ -34,10 +48,17 @@ const shownDirs = computed(() =>
     d.slice(prefix.value.length).toLowerCase().includes(query.value.toLowerCase()),
   ),
 )
+const chosen = computed(() => objects.value.find((o) => o.key === selected.value[0]))
+watch(query, () => {
+  selected.value = []
+})
+let loadEpoch = 0
 const crumbs = computed(() => prefix.value.slice(root.value.length).split('/').filter(Boolean))
 async function load(path?: string, append = false) {
+  const epoch = ++loadEpoch
   busy.value = true
   error.value = ''
+  message.value = ''
   try {
     const data = await request<{
       bucket: string
@@ -53,6 +74,7 @@ async function load(path?: string, append = false) {
           ...(append && nextToken.value ? { token: nextToken.value } : {}),
         }),
     )
+    if (epoch !== loadEpoch) return
     bucket.value = data.bucket
     root.value = data.rootPrefix
     prefix.value = data.prefix
@@ -61,9 +83,9 @@ async function load(path?: string, append = false) {
     nextToken.value = data.nextToken || ''
     selected.value = []
   } catch (e) {
-    error.value = (e as Error).message
+    if (epoch === loadEpoch) error.value = (e as Error).message
   } finally {
-    busy.value = false
+    if (epoch === loadEpoch) busy.value = false
   }
 }
 function breadcrumb(index: number) {
@@ -90,8 +112,8 @@ async function upload(event: Event) {
       await request('/api/artifacts/upload', { method: 'POST', body })
       count++
     }
-    message.value = '已上传 ' + count + ' 个文件'
     await load(prefix.value)
+    message.value = '已上传 ' + count + ' 个文件'
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -129,8 +151,8 @@ async function remove() {
   try {
     for (const key of selected.value)
       await request('/api/artifacts/objects?' + new URLSearchParams({ key }), { method: 'DELETE' })
-    message.value = '所选文件已删除'
     await load(prefix.value)
+    message.value = '所选文件已删除'
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -138,6 +160,11 @@ async function remove() {
   }
 }
 onMounted(() => load())
+function openFolderDialog() {
+  folder.value = ''
+  error.value = ''
+  folderDialog.value?.showModal()
+}
 </script>
 <template>
   <PageHeader eyebrow="OBJECT STORAGE"
@@ -149,126 +176,201 @@ onMounted(() => load())
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice">{{ message }}</div>
   <section class="panel object-browser">
-    <div class="panel-toolbar">
-      <div>
-        <h3>▣ {{ bucket || 'S3' }}</h3>
-        <small>{{ root }} · {{ objects.length }} 个对象</small>
+    <div class="storage-heading">
+      <div class="bucket-symbol"><Database :size="23" /></div>
+      <div class="bucket-title">
+        <h2>{{ bucket || '对象存储' }}</h2>
+        <small>{{ root || '正在读取存储目录' }}</small>
       </div>
+      <span class="storage-count"
+        >{{ dirs.length }} 个目录 ·
+        {{ objects.filter((o) => !o.key.endsWith('/')).length }} 个文件</span
+      >
       <div class="toolbar-actions">
-        <button class="button" :disabled="busy" @click="load(prefix)">↻ 刷新</button
-        ><label v-if="canWrite" class="button primary upload-button"
-          >上传<input type="file" multiple :disabled="busy || !prefix" @change="upload"
+        <button class="button" :disabled="busy" @click="load(prefix)">
+          <RefreshCw :size="14" />刷新
+        </button>
+        <button
+          v-if="canWrite"
+          class="button"
+          :disabled="busy || !prefix"
+          @click="openFolderDialog"
+        >
+          <FolderPlus :size="14" />新建目录
+        </button>
+        <label v-if="canWrite" class="button primary upload-button" :class="{ disabled: busy }"
+          ><Upload :size="14" />上传文件<input
+            aria-label="上传文件"
+            type="file"
+            multiple
+            :disabled="busy || !prefix"
+            @change="upload"
         /></label>
       </div>
     </div>
+    <nav class="storage-locations" aria-label="存储位置">
+      <button :class="{ active: prefix === root }" :disabled="busy" @click="load(root)">
+        <Database :size="14" />全部文件
+      </button>
+      <button
+        :class="{ active: prefix.startsWith(root + 'jobs/') }"
+        :disabled="busy || !root"
+        @click="load(root + 'jobs/')"
+      >
+        <Folder :size="14" />作业目录
+      </button>
+      <button
+        :class="{ active: prefix.startsWith(root + 'shared/') }"
+        :disabled="busy || !root"
+        @click="load(root + 'shared/')"
+      >
+        <Folder :size="14" />共享目录
+      </button>
+    </nav>
     <div class="object-body">
       <main>
-        <div class="filter-bar">
-          <button class="text-button" :disabled="busy" @click="load(root)">{{ bucket }}</button
-          ><template v-for="(part, index) in crumbs" :key="index"
-            ><span>/</span
-            ><button class="text-button" :disabled="busy" @click="load(breadcrumb(index))">
-              {{ part }}
-            </button></template
-          ><button
-            v-if="canWrite"
-            class="button"
-            :disabled="busy || !prefix"
-            @click="folderDialog?.showModal()"
+        <div class="object-tools">
+          <button
+            class="button parent-folder"
+            aria-label="上一级目录"
+            :disabled="busy || prefix === root"
+            @click="load(prefix.slice(0, -1).slice(0, prefix.slice(0, -1).lastIndexOf('/') + 1))"
           >
-            新建目录
+            <ArrowUp :size="15" />
+          </button>
+          <nav class="object-breadcrumb" aria-label="目录路径">
+            <button :disabled="busy" @click="load(root)">{{ bucket || 'S3' }}</button>
+            <template v-for="(part, index) in crumbs" :key="index"
+              ><ChevronRight :size="13" /><button
+                :title="part"
+                :disabled="busy"
+                @click="load(breadcrumb(index))"
+              >
+                {{ part }}
+              </button></template
+            >
+          </nav>
+        </div>
+        <div class="object-search">
+          <Search :size="16" /><input
+            v-model="query"
+            placeholder="按名称筛选当前目录"
+            aria-label="筛选对象"
+          /><span>{{ shownDirs.length + shown.length }} 项</span>
+        </div>
+        <div class="object-table" :aria-busy="busy">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    aria-label="选择当前页文件"
+                    :disabled="busy || !shown.length"
+                    :checked="shown.length > 0 && shown.every((o) => selected.includes(o.key))"
+                    @change="
+                      selected = ($event.target as HTMLInputElement).checked
+                        ? shown.map((o) => o.key)
+                        : []
+                    "
+                  />
+                </th>
+                <th>名称</th>
+                <th>最后修改</th>
+                <th>大小</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="dir in shownDirs" :key="dir" class="folder-row">
+                <td></td>
+                <td>
+                  <button class="object-name" :disabled="busy" :title="dir" @click="load(dir)">
+                    <Folder :size="18" /><span>{{
+                      dir.slice(prefix.length).replace(/\/$/, '')
+                    }}</span>
+                  </button>
+                </td>
+                <td class="muted">文件夹</td>
+                <td>—</td>
+              </tr>
+              <tr
+                v-for="file in shown"
+                :key="file.key"
+                :class="{ selected: selected.includes(file.key) }"
+              >
+                <td>
+                  <input
+                    v-model="selected"
+                    type="checkbox"
+                    :value="file.key"
+                    :aria-label="'选择 ' + file.key"
+                    :disabled="busy"
+                  />
+                </td>
+                <td>
+                  <span class="object-name" :title="file.key"
+                    ><File :size="17" /><span>{{ file.key.slice(prefix.length) }}</span></span
+                  >
+                </td>
+                <td>{{ new Date(file.modifiedAt).toLocaleString() }}</td>
+                <td>{{ size(file.size) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!shown.length && !shownDirs.length" class="empty-state">
+            <Folder :size="36" />
+            <h3>{{ busy ? '正在加载文件…' : query ? '没有匹配的文件' : '当前目录为空' }}</h3>
+            <p>{{ query ? '更换关键词再试。' : '上传文件或创建子目录后，会显示在这里。' }}</p>
+          </div>
+        </div>
+        <div class="object-footer">
+          <span>{{
+            selected.length ? '已选择 ' + selected.length + ' 个文件' : '选择文件查看详情和操作'
+          }}</span
+          ><button v-if="nextToken" class="button" :disabled="busy" @click="load(prefix, true)">
+            加载更多
           </button>
         </div>
-        <input
-          class="object-filter"
-          v-model="query"
-          placeholder="筛选当前目录中的对象"
-          aria-label="筛选对象"
-        />
-        <table>
-          <thead>
-            <tr>
-              <th>
-                <input
-                  type="checkbox"
-                  aria-label="选择当前页文件"
-                  :checked="shown.length > 0 && shown.every((o) => selected.includes(o.key))"
-                  @change="
-                    selected = ($event.target as HTMLInputElement).checked
-                      ? shown.map((o) => o.key)
-                      : []
-                  "
-                />
-              </th>
-              <th>名称</th>
-              <th>最后修改</th>
-              <th>大小</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="prefix !== root">
-              <td></td>
-              <td>
-                <button
-                  class="text-button"
-                  :disabled="busy"
-                  @click="
-                    load(prefix.slice(0, -1).slice(0, prefix.slice(0, -1).lastIndexOf('/') + 1))
-                  "
-                >
-                  ↑ 上一级
-                </button>
-              </td>
-              <td></td>
-              <td></td>
-            </tr>
-            <tr v-for="dir in shownDirs" :key="dir">
-              <td></td>
-              <td>
-                <button class="text-button" :disabled="busy" @click="load(dir)">
-                  📁 {{ dir.slice(prefix.length).replace(/\/$/, '') }}
-                </button>
-              </td>
-              <td>—</td>
-              <td>—</td>
-            </tr>
-            <tr v-for="file in shown" :key="file.key">
-              <td>
-                <input
-                  type="checkbox"
-                  v-model="selected"
-                  :value="file.key"
-                  :aria-label="'选择 ' + file.key"
-                />
-              </td>
-              <td>{{ file.key.slice(prefix.length) }}</td>
-              <td>{{ new Date(file.modifiedAt).toLocaleString() }}</td>
-              <td>{{ size(file.size) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-if="!busy && !shown.length && !shownDirs.length" class="empty-state">
-          当前目录没有对象
-        </p>
-        <button v-if="nextToken" class="button" :disabled="busy" @click="load(prefix, true)">
-          加载更多
-        </button>
       </main>
       <aside>
-        <h3>已选择 {{ selected.length }} 个对象</h3>
+        <h3>
+          <Info :size="16" />{{
+            selected.length ? '已选择 ' + selected.length + ' 项' : '文件信息'
+          }}
+        </h3>
+        <template v-if="selected.length === 1 && chosen"
+          ><File class="detail-file-icon" :size="36" /><strong class="selected-name">{{
+            chosen.key.split('/').pop()
+          }}</strong>
+          <dl>
+            <dt>大小</dt>
+            <dd>{{ size(chosen.size) }}</dd>
+            <dt>最后修改</dt>
+            <dd>{{ new Date(chosen.modifiedAt).toLocaleString() }}</dd>
+            <dt>对象路径</dt>
+            <dd class="object-key">{{ chosen.key }}</dd>
+          </dl></template
+        >
+        <p v-else class="inspector-placeholder">
+          {{
+            selected.length
+              ? '可批量删除选中的文件，下载请只选一个文件。'
+              : '选中一个文件，查看大小、修改时间和完整路径。'
+          }}
+        </p>
         <div class="object-actions">
-          <a v-if="selected.length === 1" class="button" :href="downloadUrl(selected[0]!)">下载</a
-          ><span v-else class="muted">选择单个文件后可下载</span
+          <a v-if="selected.length === 1" class="button" :href="downloadUrl(selected[0]!)"
+            ><Download :size="14" />下载</a
           ><button
             v-if="canWrite"
             class="button danger"
             :disabled="busy || !selected.length"
             @click="remove"
           >
-            删除所选文件
+            <Trash2 :size="14" />删除所选文件
           </button>
         </div>
-        <p class="muted">文件直接存入 S3，无需制品登记。同名文件不会覆盖。</p>
+        <small>同名文件不会覆盖。删除文件前请确认没有作业依赖。</small>
       </aside>
     </div>
   </section>
@@ -293,45 +395,258 @@ onMounted(() => load())
   </dialog>
 </template>
 <style scoped>
+.storage-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 24px;
+  flex-wrap: wrap;
+}
+.bucket-symbol {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #eaf2ff;
+  color: var(--primary);
+}
+.bucket-title h2 {
+  font-size: 18px;
+  margin: 0 0 3px;
+}
+.bucket-title small,
+.storage-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+.storage-heading .toolbar-actions {
+  margin-left: auto;
+}
+.object-browser .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.storage-locations {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 24px;
+}
+.storage-locations button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 13px 3px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.storage-locations button.active {
+  color: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}
 .object-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
+  grid-template-columns: minmax(0, 1fr) 265px;
 }
 .object-body main {
   min-width: 0;
-  padding: 16px;
+  padding: 20px 24px;
+}
+.object-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.object-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: auto;
+  white-space: nowrap;
+}
+.object-breadcrumb button {
+  background: none;
+  border: 0;
+  padding: 5px;
+  color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.object-breadcrumb button:last-child {
+  color: var(--text);
+  font-weight: 600;
+}
+.object-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+  color: var(--muted);
+}
+.object-search input {
+  margin: 0;
+  max-width: 360px;
+}
+.object-search > span {
+  margin-left: auto;
+  font-size: 12px;
+}
+.object-table {
+  max-height: 55vh;
+  min-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.object-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.object-table th {
+  position: sticky;
+  top: 0;
+  background: #f5f8fc;
+  z-index: 1;
+}
+.object-table th:first-child,
+.object-table td:first-child {
+  width: 36px;
+  padding: 12px 8px;
+}
+.object-table th:nth-child(3) {
+  width: 170px;
+}
+.object-table th:last-child {
+  width: 90px;
+}
+.object-table input {
+  width: auto;
+}
+.object-table tr.selected {
+  background: #edf4ff;
+}
+.object-table td {
+  padding: 13px 10px;
+  font-size: 12px;
+}
+.object-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  min-width: 0;
+  color: var(--text);
+  width: 100%;
+  text-align: left;
+  padding: 0;
+}
+button.object-name {
+  cursor: pointer;
+}
+.object-name svg {
+  flex: none;
+  color: #7189ac;
+}
+.folder-row .object-name svg {
+  color: #d8ab43;
+  fill: #fff2c9;
+}
+.object-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.object-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .object-body aside {
-  border-left: 1px solid var(--border, #e4e8ee);
-  padding: 20px;
+  padding: 24px 20px;
+  border-left: 1px solid var(--line);
+  background: #fbfcfe;
+  min-width: 0;
+}
+aside h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 24px;
+}
+.detail-file-icon {
+  display: block;
+  margin: 20px auto 12px;
+  color: #7b96bc;
+}
+.selected-name {
+  display: block;
+  text-align: center;
+  overflow-wrap: anywhere;
+  margin-bottom: 24px;
+}
+dl {
+  font-size: 12px;
+}
+dt {
+  color: var(--muted);
+  margin-top: 14px;
+}
+dd {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.object-key {
+  font-family: Consolas, monospace;
 }
 .object-actions {
   display: grid;
-  gap: 14px;
-  margin: 20px 0;
+  gap: 10px;
+  margin: 24px 0;
 }
-.object-filter {
-  width: 100%;
-  margin: 12px 0;
+.inspector-placeholder {
+  line-height: 1.8;
+  color: var(--muted);
+  font-size: 12px;
 }
-th:first-child,
-td:first-child {
-  width: 34px;
+aside > small {
+  line-height: 1.7;
+  color: var(--muted);
 }
-td input,
-th input {
-  width: auto;
-}
-.filter-bar {
-  flex-wrap: wrap;
-}
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .object-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .object-body aside {
     border-left: 0;
-    border-top: 1px solid #e4e8ee;
+    border-top: 1px solid var(--line);
+  }
+  .storage-count {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .storage-heading,
+  .object-body main {
+    padding: 14px;
+  }
+  .object-table th:nth-child(3),
+  .object-table td:nth-child(3) {
+    display: none;
   }
 }
 </style>

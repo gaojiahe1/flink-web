@@ -73,7 +73,21 @@ export interface DiagnosticPod {
   name: string
   phase: string
   containers: string[]
-  states: { name: string; restarts: number; reason?: string; message?: string }[]
+  node?: string
+  createdAt?: string
+  reason?: string
+  message?: string
+  conditions?: { type: string; status: string; reason?: string; message?: string }[]
+  states: {
+    name: string
+    restarts: number
+    reason?: string
+    message?: string
+    state?: string
+    init?: boolean
+    ready?: boolean
+    exitCode?: number
+  }[]
 }
 export interface Diagnostic {
   queriedAt: string

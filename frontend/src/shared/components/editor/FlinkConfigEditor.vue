@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import HelpTip from '../form/HelpTip.vue'
+import { clearValidationErrors } from '../../utils/fieldValidation'
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState, Compartment } from '@codemirror/state'
@@ -94,6 +95,7 @@ onMounted(() => {
 watch(
   () => props.modelValue,
   (value) => {
+    if (host.value?.parentElement) clearValidationErrors(host.value.parentElement)
     if (!view || JSON.stringify(value) === lastEmitted) return
     const text = formatFlinkConfig(value)
     if (text !== view.state.doc.toString())

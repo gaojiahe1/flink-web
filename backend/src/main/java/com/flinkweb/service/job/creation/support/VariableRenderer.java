@@ -39,7 +39,46 @@ public class VariableRenderer {
   /** 复制部署资源并递归替换配置引用，收集需要创建的 Secret。 */
   public RenderedDeployment render(ObjectNode source) {
     List<ObjectNode> secrets = new ArrayList<>();
-    return new RenderedDeployment((ObjectNode) walk(source.deepCopy(), secrets, ""), secrets);
+    ObjectNode deployment = source.deepCopy();
+    bindS3Credentials(deployment);
+    return new RenderedDeployment((ObjectNode) walk(deployment, secrets, ""), secrets);
+  }
+
+  /** 将 S3 密钥变量映射为 Flink 主容器凭据，避免密钥明文进入 CR 和历史。 */
+  private void bindS3Credentials(ObjectNode deployment) {
+    JsonNode config = deployment.at("/spec/flinkConfiguration");
+    String access = config.path("s3.access-key").asText();
+    String secret = config.path("s3.secret-key").asText();
+    boolean referenced = access.startsWith("{{secret:") || secret.startsWith("{{secret:");
+    if (!referenced) return;
+    for (String value : List.of(access, secret)) {
+      var match = TOKEN.matcher(value);
+      if (!match.matches() || !match.group(1).equals("secret"))
+        fail("s3.access-key 和 s3.secret-key 必须同时引用配置管理中的密钥");
+      if (store.find("configs", match.group(2)) == null) fail("请先在配置管理中配置 S3 密钥：" + match.group(2));
+    }
+    ObjectNode spec = deployment.withObject("/spec");
+    injectS3Environment(spec.withObject("/podTemplate"), access, secret);
+    for (String role : List.of("jobManager", "taskManager"))
+      if (spec.path(role).path("podTemplate").isObject())
+        injectS3Environment(spec.withObject("/" + role).withObject("/podTemplate"), access, secret);
+    ((ObjectNode) config).remove(List.of("s3.access-key", "s3.secret-key"));
+  }
+
+  /** 合并主容器的 AWS 凭据变量，保留其他环境变量、边车和模板字段。 */
+  private void injectS3Environment(ObjectNode template, String access, String secret) {
+    ArrayNode containers = template.withObject("/spec").withArray("containers");
+    ObjectNode main = null;
+    for (JsonNode container : containers)
+      if ("flink-main-container".equals(container.path("name").asText()))
+        main = (ObjectNode) container;
+    if (main == null) main = containers.addObject().put("name", "flink-main-container");
+    ArrayNode env = main.withArray("env");
+    for (int i = env.size() - 1; i >= 0; i--)
+      if (Set.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+          .contains(env.get(i).path("name").asText())) env.remove(i);
+    env.addObject().put("name", "AWS_ACCESS_KEY_ID").put("value", access);
+    env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", secret);
   }
 
   /** 遍历 YAML 节点，保留普通变量原始类型，并将敏感环境变量改为 Secret 引用。 */

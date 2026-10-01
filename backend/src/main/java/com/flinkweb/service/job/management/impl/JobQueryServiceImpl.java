@@ -42,7 +42,7 @@ public class JobQueryServiceImpl implements JobQueryService {
 
   /** 即时采集集群状态，标记已纳管、可纳管及同名身份冲突的作业。 */
   public ObjectNode refresh() {
-    ObjectNode result = collector.collect();
+    ObjectNode result = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
     var registered = jobs.findAll();
     var bound = bindings.findAll();
     var stopProgress = result.putObject("stopProgress");
@@ -59,12 +59,16 @@ public class JobQueryServiceImpl implements JobQueryService {
         stopProgress.putObject(job.id()).put("phase", "ERROR").put("message", ex.getMessage());
       }
     }
+    result.setAll(collector.collect());
     var permitted = access.evaluator();
     for (JsonNode item : result.path("items")) {
       ObjectNode row = (ObjectNode) item;
       var local =
-          registered.stream().filter(j -> j.deploymentName().equals(row.path("name").asText())).findFirst();
-      boolean nameConflict = registered.stream().anyMatch(j -> j.name().equals(row.path("name").asText()));
+          registered.stream()
+              .filter(j -> j.deploymentName().equals(row.path("name").asText()))
+              .findFirst();
+      boolean nameConflict =
+          registered.stream().anyMatch(j -> j.name().equals(row.path("name").asText()));
       boolean managed = false;
       if (local.isPresent()) {
         var binding = bound.stream().filter(b -> b.jobId().equals(local.get().id())).findFirst();
@@ -85,6 +89,7 @@ public class JobQueryServiceImpl implements JobQueryService {
       row.put("registrationConflict", !managed && (local.isPresent() || nameConflict));
       if (managed) {
         row.put("jobId", local.orElseThrow().id());
+        if (stopProgress.has(local.orElseThrow().id())) row.put("desiredState", "stopped");
         if (permitted.test(local.orElseThrow().id(), "read"))
           snapshots.observe(row, result.path("queriedAt").asText());
       }
@@ -92,7 +97,9 @@ public class JobQueryServiceImpl implements JobQueryService {
     var filtered = result.arrayNode();
     for (var item : result.path("items")) {
       var local =
-          registered.stream().filter(j -> j.deploymentName().equals(item.path("name").asText())).findFirst();
+          registered.stream()
+              .filter(j -> j.deploymentName().equals(item.path("name").asText()))
+              .findFirst();
       if (local.isPresent() ? permitted.test(local.get().id(), "read") : access.admin())
         filtered.add(item);
     }

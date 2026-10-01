@@ -1,10 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
 
 const source = ['apiVersion: flink.apache.org/v1beta1', 'kind: FlinkDeployment', 'metadata:', '  name: orders', 'spec:', '  image: registry.test/flink:1.20.5', '  flinkVersion: v1_20', '  job:', '    jarURI: local:///opt/flink/usrlib/job.jar', '    parallelism: 1', '    state: running', ''].join('\n')
-const draft = { id: 'job-one', jobNumber: 1, deploymentName: 'flink-1', name: 'orders', description: '', flinkVersion: '1.20.5', revision: 0, yaml: source }
+const draft = { id: 'job-one', jobNumber: 1, deploymentName: 'flink-0000001', name: 'orders', description: '', flinkVersion: '1.20.5', revision: 0, yaml: source }
 async function fixture(page: Page, editYaml = source) {
   const renders: any[] = []
-  let live: any = { name: 'flink-1', jobId: draft.id, managed: true, application: true, jobState: 'SUSPENDED', desiredState: 'suspended', lifecycleState: 'STABLE', yaml: source + 'status:\n  error: original error\n', snapshots: [] }
+  let live: any = { name: 'flink-0000001', jobId: draft.id, managed: true, application: true, jobState: 'SUSPENDED', desiredState: 'suspended', lifecycleState: 'STABLE', yaml: source + 'status:\n  error: original error\n', snapshots: [] }
   const actions: string[] = []
   let yamlReads = 0
   const dialogs: string[] = []
@@ -21,7 +21,7 @@ async function fixture(page: Page, editYaml = source) {
     else if (path === '/api/artifacts/objects') data = { bucket: 'flink-web', rootPrefix: 'artifacts/', prefix: url.searchParams.get('prefix') || 'artifacts/', objects: [], directories: [] }
     else if (path === '/api/jobs/name-availability') data = { available: url.searchParams.get('name') !== 'orders' }
     else if (path === '/api/jobs/refresh') { yamlReads++; data = { items: [live], queriedAt: new Date().toISOString() } }
-    else if (path === '/api/jobs') data = req.method() === 'POST' ? { ...draft, ...req.postDataJSON(), deploymentName: 'flink-2', jobNumber: 2 } : [draft]
+    else if (path === '/api/jobs') data = req.method() === 'POST' ? { ...draft, ...req.postDataJSON(), deploymentName: 'flink-0000002', jobNumber: 2 } : [draft]
     else if (path === '/api/jobs/job-one') data = { ...draft, yaml: editYaml }
     else if (path === '/api/jobs/render-form') { renders.push(req.postDataJSON()); data = { yaml: source, flinkVersion: '1.20.5' } }
     else if (path === '/api/jobs/validate') data = { yaml: source, valid: true, message: '验证通过' }
@@ -133,7 +133,10 @@ test('状态存储和重试参数显式进入生成请求，关闭后不再生�
   await page.getByLabel('启用状态存储与 Checkpoint', { exact: true }).check()
   await expect(page.getByLabel('Checkpoint 间隔', { exact: true })).toBeVisible()
   for (const label of ['Checkpoint 存储', '状态后端', 'Checkpoint 目录', 'Savepoint 目录', '取消作业后的保留策略', 'S3 Endpoint', 'S3 Region', '路径式访问']) await expect(page.getByLabel(label, { exact: true })).toHaveCount(0)
-  await page.getByLabel('Checkpoint 间隔', { exact: true }).fill('120 s')
+  await page.getByLabel('Checkpoint 间隔', { exact: true }).fill('2')
+  await page.getByLabel('Checkpoint 间隔单位', { exact: true }).selectOption('min')
+  await page.getByLabel('Checkpoint 存储策略', { exact: true }).selectOption('DELETE_ON_CANCELLATION')
+  await expect(page.locator('.retention-description')).toContainText('正常取消')
   await page.getByLabel('保留 Checkpoint 数量', { exact: true }).fill('5')
   await page.getByLabel('故障恢复策略', { exact: true }).selectOption('fixed-delay')
   await expect(page.locator('.strategy-description')).toContainText('固定时间')
@@ -141,10 +144,16 @@ test('状态存储和重试参数显式进入生成请求，关闭后不再生�
   await page.locator('.state-storage-form').screenshot({ path: 'test-results/state-storage.png' })
   await page.getByRole('button', { name: '本地验证与预览', exact: true }).click()
   await expect.poll(() => f.renders.length).toBe(1)
-  expect(f.renders[0].flinkConfiguration).toMatchObject({ 'execution.checkpointing.interval':'120 s','state.checkpoints.num-retained':'5','restart-strategy.fixed-delay.attempts':'8','s3.endpoint':'http://minio:9000' })
+  expect(f.renders[0].flinkConfiguration).toMatchObject({ 'execution.checkpointing.interval':'2 min','state.checkpoints.num-retained':'5','restart-strategy.fixed-delay.attempts':'8','s3.endpoint':'http://minio:9000' })
   expect(f.renders[0].flinkConfiguration['state.checkpoints.dir']).toMatch(/^s3:\/\/flink-state\/[0-9a-f-]+\/checkpoints$/)
   expect(f.renders[0].flinkConfiguration['state.savepoints.dir']).toMatch(/^s3:\/\/flink-state\/[0-9a-f-]+\/savepoints$/)
   expect(f.renders[0].flinkConfiguration['s3.path.style.access']).toBe('true')
+  expect(f.renders[0].flinkConfiguration['s3.region']).toBeUndefined()
+  expect(f.renders[0].flinkConfiguration['high-availability.type']).toBe('kubernetes')
+  expect(f.renders[0].flinkConfiguration['high-availability.storageDir']).toMatch(/^s3:\/\/flink-state\/[0-9a-f-]+\/ha$/)
+  expect(f.renders[0].flinkConfiguration['s3.access-key']).toBe('{{secret:s3-access-key}}')
+  expect(f.renders[0].flinkConfiguration['s3.secret-key']).toBe('{{secret:s3-secret-key}}')
+  expect(f.renders[0].flinkConfiguration['execution.checkpointing.externalized-checkpoint-retention']).toBe('DELETE_ON_CANCELLATION')
   for (const [strategy, intro, field] of [
     ['failure-rate', '统计周期', '周期内最大失败次数'],
     ['exponential-delay', '按倍数', '初始等待'],
@@ -160,6 +169,7 @@ test('状态存储和重试参数显式进入生成请求，关闭后不再生�
   await expect.poll(() => f.renders.length).toBe(2)
   expect(f.renders[1].flinkConfiguration['execution.checkpointing.interval']).toBeUndefined()
   expect(f.renders[1].flinkConfiguration['state.checkpoints.dir']).toBeUndefined()
+  expect(Object.keys(f.renders[1].flinkConfiguration).some(k => k.startsWith('s3.') || k.startsWith('high-availability'))).toBe(false)
 })
 
 test('对象页提供目录浏览，不再出现制品登记表单', async ({ page }) => {
@@ -171,7 +181,7 @@ test('对象页提供目录浏览，不再出现制品登记表单', async ({ pa
   await page.goto('/#/artifacts')
   await expect(page.getByText('对象浏览器', { exact:true })).toBeVisible()
   await expect(page.getByText('制品登记', { exact:true })).toHaveCount(0)
-  await page.getByRole('button',{name:'📁 jobs',exact:true}).click()
+  await page.getByRole('button',{name:'jobs',exact:true}).click()
   await expect(page.getByRole('cell',{name:'job.jar',exact:true})).toBeVisible()
   await page.locator('.object-browser').screenshot({ path: 'test-results/object-browser.png' })
   await page.getByLabel('选择 artifacts/jobs/job.jar', {exact:true}).check()
@@ -194,10 +204,111 @@ test('主包与依赖直接从当前作业 S3 目录选择，不请求制品登�
   const reference = await main.locator('option').filter({hasText:'main.jar'}).getAttribute('value')
   expect(reference).toMatch(new RegExp('^s3:artifacts/jobs/[0-9a-f-]+/main.jar$'))
   await main.selectOption(reference!)
+  const picker = page.locator('.artifact-picker').first()
+  const heading = await picker.locator('strong').boundingBox()
+  const refresh = await picker.getByRole('button', {name:'刷新文件'}).boundingBox()
+  const upload = await picker.locator('.upload-button').boundingBox()
+  expect(refresh!.x).toBeGreaterThan(heading!.x + heading!.width)
+  expect(Math.abs(refresh!.y - upload!.y)).toBeLessThan(3)
+  await picker.screenshot({path: 'test-results/artifact-picker.png'})
   await page.locator('.object-choices').getByLabel('connector.jar',{exact:true}).check()
   await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
   await expect.poll(() => f.renders.length).toBe(1)
   expect(f.renders[0].mainArtifactId).toBe(reference)
   expect(f.renders[0].dependencyArtifactIds).toEqual([reference!.replace('main.jar','connector.jar')])
   expect(catalogReads).toBe(0)
+})
+
+
+test('更换升级策略后清除旧的 HA 校验边框与提示', async ({page}) => {
+  await fixture(page)
+  await page.route('**/api/jobs/render-form', route => route.fulfill({status:400,json:{error:{code:'VALIDATION',message:'last-state 模式需要配置 Kubernetes HA 及 HA 存储目录'}}}))
+  await page.goto('/#/jobs/jar/new')
+  await page.locator('input[data-field="name"]').fill('retry-config')
+  await page.getByLabel('镜像版本',{exact:true}).selectOption('image')
+  await page.locator('select[data-field="upgradeMode"]').selectOption('last-state')
+  await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
+  await expect(page.locator('.inline-validation')).toContainText('HA')
+  await page.locator('select[data-field="upgradeMode"]').selectOption('stateless')
+  await expect(page.locator('.inline-validation')).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('列表异常优先显示，Pod 抽屉展示初始化容器失败与事件', async ({page}) => {
+  const f = await fixture(page)
+  f.setLive({jobState:'RECONCILING',desiredState:'running',healthState:'ERROR',jobManagerDeploymentStatus:'ERROR',error:'下载器初始化失败'})
+  await page.route('**/api/jobs/job-one/diagnostics', route => route.fulfill({json:{data:{
+    queriedAt:'2026-10-01T08:00:00Z',error:'下载器初始化失败',
+    pods:[{name:'flink-0000001-jm-7df98',phase:'Pending',node:'worker-01',createdAt:'2026-10-01T07:50:00Z',containers:['fw-download','flink-main-container'],
+      states:[{name:'fw-download',init:true,state:'waiting',ready:false,restarts:4,reason:'CrashLoopBackOff',message:'S3 文件下载失败，请检查凭据和对象路径'}],
+      conditions:[{type:'Initialized',status:'False',reason:'ContainersNotInitialized',message:'等待下载器完成'}]}],
+    events:[{type:'Warning',reason:'BackOff',message:'Back-off restarting failed container fw-download',time:'2026-10-01T07:59:00Z'}]
+  }}}))
+  await page.goto('/#/jobs')
+  await expect(page.getByText('部署异常',{exact:true})).toBeVisible()
+  await page.getByLabel('选择当前页',{exact:true}).check()
+  await expect(page.locator('.panel-toolbar').getByRole('button',{name:'Checkpoint',exact:true})).toBeDisabled()
+  await page.getByRole('button',{name:'Pod 状态',exact:true}).click()
+  const drawer = page.getByRole('dialog')
+  await expect(drawer).toContainText('CrashLoopBackOff')
+  await expect(drawer).toContainText('worker-01')
+  await expect(drawer).toContainText('重启 4 次')
+  await expect(drawer).toContainText('Back-off restarting')
+  await drawer.screenshot({path:'test-results/pod-drawer.png'})
+  await page.getByRole('button',{name:'关闭 Pod 状态'}).click()
+  await expect(drawer).toHaveCount(0)
+})
+
+test('停止期望立即更新，刷新清除旧提示，重新启动不残留已停止', async ({page}) => {
+  await fixture(page)
+  let phase = 'running'
+  await page.route('**/api/jobs/refresh', route => route.fulfill({json:{data:{
+    items:phase === 'running' ? [{name:'flink-0000001',jobId:'job-one',managed:true,application:true,desiredState:'running',jobState:'RUNNING',lifecycleState:'STABLE'}] : [],
+    queriedAt:new Date().toISOString(),stopProgress:phase === 'done' ? {'job-one':{phase:'DONE',message:'已删除 FlinkDeployment'}} : {}
+  }}}))
+  await page.goto('/#/jobs')
+  const row=page.getByRole('row').filter({has:page.getByRole('button',{name:'orders',exact:true})})
+  await row.getByRole('button',{name:'停止',exact:true}).click()
+  await page.getByRole('button',{name:'确认停止',exact:true}).click()
+  await expect(row.getByRole('cell').nth(3)).toContainText('停止')
+  phase='done'
+  await expect(page.getByRole('button',{name:/刷新状态/})).toBeEnabled({timeout:6000})
+  await page.getByRole('button',{name:/刷新状态/}).click()
+  await expect(row).toContainText('已停止')
+  await expect(page.locator('.notice').first()).not.toContainText('已提交')
+  await row.getByRole('button',{name:'启动',exact:true}).click()
+  await page.getByRole('button',{name:'确认启动',exact:true}).click()
+  await expect(row.getByRole('cell').nth(3)).not.toContainText('已停止')
+})
+
+test('操作记录与其他详情共用页签，刷新记录后同步展示', async ({page}) => {
+  await fixture(page)
+  let message='首次操作记录'
+  await page.route('**/api/jobs/job-one/operations', route => route.fulfill({json:{data:[{id:'op-1',action:'start',state:'ACCEPTED',message,updatedAt:'2026-10-01T08:00:00Z'}]}}))
+  await page.goto('/#/jobs')
+  await page.getByRole('button',{name:'orders',exact:true}).click()
+  await expect(page.getByText('首次操作记录',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'发布版本',exact:true}).click()
+  await expect(page.getByText('首次操作记录',{exact:true})).toHaveCount(0)
+  await page.getByRole('button',{name:'操作记录',exact:true}).click()
+  message='已刷新操作记录'
+  await page.getByRole('button',{name:'刷新记录',exact:true}).click()
+  await expect(page.getByText('已刷新操作记录',{exact:true})).toBeVisible()
+})
+
+test('大量子目录在限高区域中筛选，不撑长 JAR 表单', async ({page}) => {
+  await fixture(page)
+  await page.route('**/api/artifacts/objects?*', route => {
+    const prefix=new URL(route.request().url()).searchParams.get('prefix')!
+    return route.fulfill({json:{data:{bucket:'flink-web',rootPrefix:'artifacts/',prefix,objects:[],directories:Array.from({length:100},(_,i)=>prefix+'folder-'+String(i).padStart(3,'0')+'/')}}})
+  })
+  await page.goto('/#/jobs/jar/new')
+  const picker=page.locator('.artifact-picker').first()
+  await picker.locator('summary').click()
+  const list=picker.locator('.folder-list')
+  await expect(list.getByRole('button')).toHaveCount(100)
+  expect((await list.boundingBox())!.height).toBeLessThanOrEqual(222)
+  await picker.getByPlaceholder('查找子目录').fill('folder-099')
+  await expect(list.getByRole('button')).toHaveCount(1)
+  await picker.screenshot({path:'test-results/folder-picker.png'})
 })

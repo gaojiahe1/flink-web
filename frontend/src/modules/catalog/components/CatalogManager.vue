@@ -85,6 +85,14 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  form,
+  () => {
+    error.value = ''
+    message.value = ''
+  },
+  { deep: true },
+)
 function edit(row?: Row) {
   for (const key of Object.keys(form)) delete form[key]
   Object.assign(

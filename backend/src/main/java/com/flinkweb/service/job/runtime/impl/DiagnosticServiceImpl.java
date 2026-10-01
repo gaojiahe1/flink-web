@@ -60,13 +60,28 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     var pods = result.putArray("pods");
     for (JsonNode pod :
         client
-            .call("GET", client.core() + "/pods?labelSelector=" + encode("app=" + job.deploymentName()), null)
+            .call(
+                "GET",
+                client.core() + "/pods?labelSelector=" + encode("app=" + job.deploymentName()),
+                null)
             .path("items")) {
       if (!belongs(pod, uid, 0, new HashSet<>())) continue;
       var row =
           pods.addObject()
               .put("name", pod.path("metadata").path("name").asText())
-              .put("phase", pod.path("status").path("phase").asText());
+              .put("phase", pod.path("status").path("phase").asText())
+              .put("node", pod.path("spec").path("nodeName").asText())
+              .put("createdAt", pod.path("metadata").path("creationTimestamp").asText())
+              .put("reason", pod.path("status").path("reason").asText())
+              .put("message", redact(pod.path("status").path("message").asText()));
+      var conditions = row.putArray("conditions");
+      for (JsonNode condition : pod.path("status").path("conditions"))
+        conditions
+            .addObject()
+            .put("type", condition.path("type").asText())
+            .put("status", condition.path("status").asText())
+            .put("reason", condition.path("reason").asText())
+            .put("message", redact(condition.path("message").asText()));
       var containers = row.putArray("containers");
       for (String type : List.of("initContainers", "containers"))
         for (JsonNode container : pod.path("spec").path(type))
@@ -78,7 +93,18 @@ public class DiagnosticServiceImpl implements DiagnosticService {
               states
                   .addObject()
                   .put("name", state.path("name").asText())
-                  .put("restarts", state.path("restartCount").asInt());
+                  .put("restarts", state.path("restartCount").asInt())
+                  .put("init", type.equals("initContainerStatuses"))
+                  .put("ready", state.path("ready").asBoolean())
+                  .put(
+                      "state",
+                      state.path("state").has("running")
+                          ? "running"
+                          : state.path("state").has("waiting")
+                              ? "waiting"
+                              : state.path("state").has("terminated") ? "terminated" : "unknown");
+          if (state.path("state").has("terminated"))
+            node.put("exitCode", state.path("state").path("terminated").path("exitCode").asInt());
           for (String phase : List.of("waiting", "terminated"))
             if (state.path("state").has(phase)) {
               node.put("reason", state.path("state").path(phase).path("reason").asText());

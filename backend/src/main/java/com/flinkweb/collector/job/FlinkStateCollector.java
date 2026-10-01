@@ -71,6 +71,17 @@ public class FlinkStateCollector {
               .put(
                   "jobManagerDeploymentStatus",
                   item.path("status").path("jobManagerDeploymentStatus").asText("UNKNOWN"));
+      String error = item.path("status").path("error").asText("");
+      for (String secret : secrets) error = error.replace(secret, "******");
+      row.put("error", error);
+      row.put(
+          "healthState",
+          "ERROR".equals(row.path("jobManagerDeploymentStatus").asText())
+                  || !error.isBlank()
+                  || "FAILED".equals(row.path("jobState").asText())
+                  || "FAILED".equals(row.path("lifecycleState").asText())
+              ? "ERROR"
+              : row.path("jobState").asText());
       row.put(
           "lastRequest",
           item.path("metadata").path("annotations").path("flink-web/last-request").asText());

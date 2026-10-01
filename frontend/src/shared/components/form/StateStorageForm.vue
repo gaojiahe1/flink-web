@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { request } from '../../api/http'
+import DurationInput from './DurationInput.vue'
 const props = defineProps<{
   modelValue: Record<string, string>
   version: string
   scopeId: string
   disabled?: boolean
 }>()
-const durationPattern =
-  '[0-9]+(\\.[0-9]+)?\\s*(ns|nanoseconds?|us|microseconds?|ms|milliseconds?|s|seconds?|min|minutes?|h|hours?|d|days?)?'
 const emit = defineEmits<{
   'update:modelValue': [Record<string, string>]
   busy: [boolean]
 }>()
-type StorageDefaults = { endpoint: string; region: string; stateRoot: string }
+type StorageDefaults = { endpoint: string; stateRoot: string }
 const defaults = ref<StorageDefaults>()
 const configuring = ref(false),
   error = ref('')
@@ -82,7 +81,10 @@ async function toggle(event: Event) {
         key.startsWith('execution.checkpointing.') ||
         key.startsWith('state.checkpoints.') ||
         key === 'state.checkpoint-storage' ||
-        key === 'state.savepoints.dir'
+        key === 'state.savepoints.dir' ||
+        key.startsWith('s3.') ||
+        key === 'high-availability' ||
+        key.startsWith('high-availability.')
       )
         delete next[key]
     emit('update:modelValue', next)
@@ -105,8 +107,12 @@ async function toggle(event: Event) {
     next['execution.checkpointing.externalized-checkpoint-retention'] = 'RETAIN_ON_CANCELLATION'
     if (connection.endpoint) next['s3.endpoint'] = connection.endpoint
     else delete next['s3.endpoint']
-    next['s3.region'] = connection.region
+    delete next['s3.region']
+    next['s3.access-key'] = '{{secret:s3-access-key}}'
+    next['s3.secret-key'] = '{{secret:s3-secret-key}}'
     next['s3.path.style.access'] = 'true'
+    next['high-availability.type'] = 'kubernetes'
+    next['high-availability.storageDir'] = root + '/' + props.scopeId + '/ha'
     emit('update:modelValue', next)
   } catch (e) {
     checkbox.checked = false
@@ -116,6 +122,16 @@ async function toggle(event: Event) {
     emit('busy', false)
   }
 }
+const retentionDescription = computed(() => {
+  const policy = props.modelValue['execution.checkpointing.externalized-checkpoint-retention']
+  if (policy === 'RETAIN_ON_CANCELLATION')
+    return '取消作业后保留外部 Checkpoint，需手动清理；Savepoint 独立保留。'
+  if (policy === 'DELETE_ON_CANCELLATION')
+    return '正常取消作业时由 Flink 清理外部 Checkpoint；立即删除集群可能来不及清理，仍需检查 S3。Savepoint 不受影响。'
+  if (policy === 'NO_EXTERNALIZED_CHECKPOINTS')
+    return '不保留用于作业结束后恢复的外部 Checkpoint；运行期间仍按间隔做检查点。Savepoint 不受影响。'
+  return '使用当前 Flink 版本的默认外部 Checkpoint 保留行为。'
+})
 const strategyDescriptions: Record<string, { title: string; text: string }> = {
   '': {
     title: 'Flink 默认',
@@ -246,15 +262,12 @@ watch(
       <p v-if="configuring" class="muted" role="status">正在生成 S3 状态配置…</p>
       <p v-if="error" class="field-error" role="alert">{{ error }}</p>
       <div v-if="enabled" class="field-grid">
-        <label
-          >Checkpoint 间隔<input
-            data-field="flinkConfiguration"
-            :pattern="durationPattern"
-            :value="modelValue['execution.checkpointing.interval']"
-            required
-            placeholder="60 s"
-            @input="input('execution.checkpointing.interval', $event)"
-        /></label>
+        <DurationInput
+          label="Checkpoint 间隔"
+          :min="0.000001"
+          :model-value="modelValue['execution.checkpointing.interval']"
+          @update:model-value="set('execution.checkpointing.interval', $event)"
+        />
         <label
           >保留 Checkpoint 数量<input
             data-field="flinkConfiguration"
@@ -265,6 +278,20 @@ watch(
             :value="modelValue[keys.count]"
             @input="input(keys.count, $event)"
         /></label>
+        <label
+          >Checkpoint 存储策略
+          <select
+            aria-label="Checkpoint 存储策略"
+            :value="modelValue['execution.checkpointing.externalized-checkpoint-retention'] || ''"
+            @change="input('execution.checkpointing.externalized-checkpoint-retention', $event)"
+          >
+            <option value="">Flink 默认</option>
+            <option value="RETAIN_ON_CANCELLATION">取消后保留</option>
+            <option value="DELETE_ON_CANCELLATION">取消后删除</option>
+            <option value="NO_EXTERNALIZED_CHECKPOINTS">不保留外部 Checkpoint</option>
+          </select>
+        </label>
+        <p class="muted retention-description">{{ retentionDescription }}</p>
       </div>
       <div class="field-grid">
         <label
@@ -276,19 +303,27 @@ watch(
             <option value="exponential-delay">指数退避</option>
           </select></label
         >
-        <label v-for="field in strategyFields[strategy] || []" :key="field.key"
-          >{{ field.label
-          }}<input
-            data-field="flinkConfiguration"
-            :type="field.numeric ? 'number' : 'text'"
-            :pattern="field.numeric ? undefined : durationPattern"
-            :min="field.min"
-            :max="field.key === 'jitter-factor' ? 1 : undefined"
-            :step="field.step || '1'"
-            required
-            :value="modelValue['restart-strategy.' + strategy + '.' + field.key]"
-            @input="input('restart-strategy.' + strategy + '.' + field.key, $event)"
-        /></label>
+        <template v-for="field in strategyFields[strategy] || []" :key="field.key">
+          <label v-if="field.numeric"
+            >{{ field.label }}
+            <input
+              data-field="flinkConfiguration"
+              type="number"
+              :min="field.min"
+              :max="field.key === 'jitter-factor' ? 1 : undefined"
+              :step="field.step || '1'"
+              required
+              :value="modelValue['restart-strategy.' + strategy + '.' + field.key]"
+              @input="input('restart-strategy.' + strategy + '.' + field.key, $event)"
+            />
+          </label>
+          <DurationInput
+            v-else
+            :label="field.label"
+            :model-value="modelValue['restart-strategy.' + strategy + '.' + field.key]"
+            @update:model-value="set('restart-strategy.' + strategy + '.' + field.key, $event)"
+          />
+        </template>
       </div>
       <p class="strategy-description" aria-live="polite">
         {{

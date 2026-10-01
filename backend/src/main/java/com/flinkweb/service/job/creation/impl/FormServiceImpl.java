@@ -37,9 +37,10 @@ public class FormServiceImpl implements FormService {
     checkInput(input);
     String name = input.path("name").asText(), template = input.path("templateId").asText("");
     ObjectNode resource =
-        input.path("baseYaml").asText().isBlank() ? template.isEmpty()
-            ? mapper.createObjectNode()
-            : yaml.parse(records.require("templates", template).path("yaml").asText())
+        input.path("baseYaml").asText().isBlank()
+            ? template.isEmpty()
+                ? mapper.createObjectNode()
+                : yaml.parse(records.require("templates", template).path("yaml").asText())
             : yaml.parse(input.path("baseYaml").asText());
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
@@ -85,7 +86,7 @@ public class FormServiceImpl implements FormService {
           && !input.has("artifactIds")
           && originalJar.startsWith("local:///opt/flink/usrlib/"))
         yaml.fail("附加依赖会挂载 /opt/flink/usrlib；请同时选择主 JAR，或将镜像内主 JAR 放到该目录之外");
-      artifacts.apply(spec, downloads);
+      artifacts.apply(spec, downloads, image.path("downloaderImage").asText());
       // 只有附加依赖时保留镜像内主 JAR，避免把连接器误当成程序入口。
       if (input.path("mainArtifactId").asText().isBlank() && !input.has("artifactIds"))
         job.put("jarURI", originalJar);
@@ -145,8 +146,10 @@ public class FormServiceImpl implements FormService {
     for (JsonNode id : result) if (!unique.add(id.asText())) yaml.fail("主 JAR 和附加依赖不能重复选择");
     if (!main.isBlank() || (input.has("artifactIds") && !result.isEmpty())) {
       String reference = result.get(0).asText();
-      String filename = reference.startsWith("s3:") ? reference.substring(3)
-          : records.require("artifacts", reference).path("filename").asText();
+      String filename =
+          reference.startsWith("s3:")
+              ? reference.substring(3)
+              : records.require("artifacts", reference).path("filename").asText();
       if (!filename.toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
         yaml.fail("主制品必须是 .jar 文件；源码和配置文件只能作为附加文件");
     }

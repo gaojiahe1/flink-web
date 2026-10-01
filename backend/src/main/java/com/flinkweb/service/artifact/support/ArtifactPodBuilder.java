@@ -20,7 +20,7 @@ public class ArtifactPodBuilder {
       ObjectMapper mapper,
       RecordRepository records,
       com.flinkweb.client.storage.S3StorageClient storage,
-      @Value("${platform.artifacts.downloader-image:flink-web-downloader:0.1.0}") String image,
+      @Value("${platform.artifacts.downloader-image:}") String image,
       @Value("${platform.artifacts.allowed-hosts:}") String hosts,
       @Value("${platform.s3.endpoint:}") String endpoint,
       @Value("${platform.s3.region:us-east-1}") String region,
@@ -37,12 +37,25 @@ public class ArtifactPodBuilder {
 
   /** 向 JM/TM PodTemplate 注入下载清单、初始化容器和共享卷，并设置主 JAR 地址。 */
   public void apply(ObjectNode spec, JsonNode ids) {
+    apply(spec, ids, "");
+  }
+
+  /** 优先使用镜像管理为当前运行镜像指定的下载器，仅回退到显式环境配置。 */
+  public void apply(ObjectNode spec, JsonNode ids, String selectedImage) {
+    String downloader = selectedImage.isBlank() ? image : selectedImage;
+    if (downloader.isBlank())
+      throw new com.flinkweb.exception.common.BusinessException(
+          org.springframework.http.HttpStatus.BAD_REQUEST,
+          "DOWNLOADER_IMAGE_REQUIRED",
+          "downloaderImage: 请在镜像管理中设置下载器镜像地址");
     ArrayNode manifest = mapper.createArrayNode(), env = mapper.createArrayNode();
     Set<String> filenames = new HashSet<>();
     int index = 0;
     for (JsonNode id : ids) {
-      var artifact = id.asText().startsWith("s3:") ? storage.describe(id.asText().substring(3))
-          : records.require("artifacts", id.asText());
+      var artifact =
+          id.asText().startsWith("s3:")
+              ? storage.describe(id.asText().substring(3))
+              : records.require("artifacts", id.asText());
       String filename = artifact.path("filename").asText();
       if (!filenames.add(filename))
         throw new com.flinkweb.exception.common.BusinessException(
@@ -87,7 +100,8 @@ public class ArtifactPodBuilder {
       ObjectNode volume = mapper.createObjectNode().put("name", "fw-artifacts");
       volume.putObject("emptyDir").put("sizeLimit", "2Gi");
       upsert(podSpec, "volumes", volume);
-      ObjectNode init = mapper.createObjectNode().put("name", "fw-download").put("image", image);
+      ObjectNode init =
+          mapper.createObjectNode().put("name", "fw-download").put("image", downloader);
       init.set("env", env.deepCopy());
       init.putArray("volumeMounts")
           .addObject()
@@ -127,12 +141,14 @@ public class ArtifactPodBuilder {
   /** 仅移除平台生成的下载器、挂载和卷，保留用户的其他模板字段。 */
   public void clearManaged(ObjectNode spec) {
     for (String component : List.of("", "jobManager", "taskManager")) {
-      JsonNode pod = (component.isEmpty() ? spec : spec.path(component)).path("podTemplate").path("spec");
+      JsonNode pod =
+          (component.isEmpty() ? spec : spec.path(component)).path("podTemplate").path("spec");
       if (!pod.isObject()) continue;
       removeNamed((ObjectNode) pod, "initContainers", "fw-download");
       removeNamed((ObjectNode) pod, "volumes", "fw-artifacts");
       for (JsonNode container : pod.path("containers"))
-        if (container.isObject()) removeNamed((ObjectNode) container, "volumeMounts", "fw-artifacts");
+        if (container.isObject())
+          removeNamed((ObjectNode) container, "volumeMounts", "fw-artifacts");
     }
   }
 

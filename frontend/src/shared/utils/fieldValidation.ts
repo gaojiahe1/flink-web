@@ -1,5 +1,6 @@
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
 const errors = new WeakMap<HTMLElement, HTMLElement>()
+const serverErrors = new Set<HTMLElement>()
 let sequence = 0
 let currentScope: ParentNode = document
 
@@ -15,6 +16,7 @@ export function setFieldError(element: HTMLElement, message: string) {
   if (!message) {
     previous?.remove()
     errors.delete(element)
+    serverErrors.delete(element)
     element.removeAttribute('aria-invalid')
     if (previous) {
       const ids = (element.getAttribute('aria-describedby') || '')
@@ -130,10 +132,12 @@ const aliases: Record<string, string[]> = {
 export function showValidationError(message: string, scope: ParentNode = currentScope): string {
   if (scope instanceof HTMLElement && !scope.isConnected) return message
   const fields = [...scope.querySelectorAll<HTMLElement>('[data-field]')]
-  const explicit = message
+  let explicit = message
     .match(/^([a-zA-Z][\w.]*)\s*:/)?.[1]
     ?.split('.')
     .pop()
+  if (explicit === 'downloaderImage' && !fields.some((field) => field.dataset.field === explicit))
+    explicit = 'imageId'
   for (const field of fields) {
     const key = field.dataset.field || ''
     if (
@@ -149,8 +153,19 @@ export function showValidationError(message: string, scope: ParentNode = current
         ) || field
     if (target instanceof HTMLInputElement && target.disabled) continue
     setFieldError(target, message)
+    serverErrors.add(target)
   }
   return message
+}
+export function clearValidationErrors(scope: ParentNode = document) {
+  for (const field of [...serverErrors]) {
+    if (
+      !field.isConnected ||
+      scope === document ||
+      (scope instanceof Node && scope.contains(field))
+    )
+      setFieldError(field, '')
+  }
 }
 export function installFieldValidation() {
   document.addEventListener(
@@ -190,6 +205,10 @@ export function installFieldValidation() {
     document.addEventListener(
       type,
       (event) => {
+        if (event.target instanceof HTMLElement)
+          clearValidationErrors(
+            event.target.closest('form, .sql-workbench, dialog') || currentScope,
+          )
         if (control(event.target)) {
           if (errors.has(event.target)) validateField(event.target)
         } else if (event.target instanceof HTMLElement) {

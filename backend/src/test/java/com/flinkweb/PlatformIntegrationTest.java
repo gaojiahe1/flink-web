@@ -13,6 +13,7 @@ import com.flinkweb.client.kubernetes.KubernetesClient;
 import com.flinkweb.dto.job.creation.DraftRequest;
 import com.flinkweb.dto.job.management.AdoptJobRequest;
 import com.flinkweb.dto.sql.SqlDraftRequest;
+import com.flinkweb.entity.job.JobDraft;
 import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.repository.metadata.RecordRepository;
 import com.flinkweb.service.catalog.CatalogService;
@@ -124,8 +125,10 @@ class PlatformIntegrationTest {
         .put("restart-strategy.type", "fixed-delay")
         .put("restart-strategy.fixed-delay.attempts", "4");
     var validated = yaml.validate(node, "sample");
-    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.num-retained").asText()).isEqualTo("7");
-    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.dir").asText()).isEqualTo("hdfs:///jobs/checkpoints");
+    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.num-retained").asText())
+        .isEqualTo("7");
+    assertThat(validated.at("/spec/flinkConfiguration/state.checkpoints.dir").asText())
+        .isEqualTo("hdfs:///jobs/checkpoints");
     String config = "parallel-" + UUID.randomUUID();
     catalogs.save(
         "configs", config, mapper.createObjectNode().put("kind", "plain").put("value", 3));
@@ -178,6 +181,57 @@ class PlatformIntegrationTest {
     assertThat(rendered.secrets()).hasSize(1);
     ((ObjectNode) node.get("spec")).put("image", "{{secret:" + id + "}}");
     assertThatThrownBy(() -> renderer.render(node)).isInstanceOf(BusinessException.class);
+  }
+
+  /** S3 配置引用在通用和角色模板中转换为密钥环境变量，预览不含明文。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void s3ReferencesBecomeSecretEnvironment() {
+    String accessId = "s3-access-" + UUID.randomUUID(), secretId = "s3-secret-" + UUID.randomUUID();
+    catalogs.save(
+        "configs",
+        accessId,
+        mapper.createObjectNode().put("kind", "secret").put("value", "fake-s3-access"));
+    catalogs.save(
+        "configs",
+        secretId,
+        mapper
+            .createObjectNode()
+            .put("kind", "secretRef")
+            .put("secretName", "workload-s3")
+            .put("secretKey", "secret-key"));
+    var source = yaml.parse(source("s3-test"));
+    var config = source.withObject("/spec/flinkConfiguration");
+    config
+        .put("s3.access-key", "{{secret:" + accessId + "}}")
+        .put("s3.secret-key", "{{secret:" + secretId + "}}")
+        .put("s3.endpoint", "https://s3.example.test");
+    for (String path :
+        java.util.List.of(
+            "/spec/podTemplate", "/spec/jobManager/podTemplate", "/spec/taskManager/podTemplate")) {
+      var containers = source.withObject(path + "/spec").putArray("containers");
+      containers.addObject().put("name", "sidecar").put("image", "test");
+      var env = containers.addObject().put("name", "flink-main-container").putArray("env");
+      env.addObject().put("name", "OTHER").put("value", "keep");
+      env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", "old-secret");
+    }
+    var rendered = renderer.render(source);
+    assertThat(rendered.deployment().toString())
+        .doesNotContain("fake-s3-access", "old-secret", "{{secret:")
+        .contains("workload-s3", "secretKeyRef", "sidecar", "OTHER");
+    assertThat(rendered.deployment().at("/spec/flinkConfiguration").has("s3.access-key")).isFalse();
+    assertThat(source.at("/spec/flinkConfiguration/s3.access-key").asText()).contains("{{secret:");
+    for (String path :
+        java.util.List.of(
+            "/spec/podTemplate", "/spec/jobManager/podTemplate", "/spec/taskManager/podTemplate")) {
+      var env = rendered.deployment().at(path + "/spec/containers/1/env");
+      assertThat(env).hasSize(3);
+      assertThat(env.get(2).at("/valueFrom/secretKeyRef/name").asText()).isEqualTo("workload-s3");
+    }
+    config.put("s3.secret-key", "literal-not-allowed");
+    assertThatThrownBy(() -> renderer.render(source))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("必须同时引用");
   }
 
   /** 验证只读权限及普通草稿列表查询不会访问 Kubernetes。 */
@@ -346,7 +400,12 @@ class PlatformIntegrationTest {
     var submitted = org.mockito.ArgumentCaptor.forClass(JsonNode.class);
     verify(kubernetes, times(1)).call(eq("POST"), eq("/cr"), submitted.capture());
     assertThat(submitted.getValue().at("/metadata/name").asText())
-        .isEqualTo("flink-" + mapper.readTree(created.getResponse().getContentAsString()).at("/data/jobNumber").asLong());
+        .isEqualTo(
+            JobDraft.numberedName(
+                mapper
+                    .readTree(created.getResponse().getContentAsString())
+                    .at("/data/jobNumber")
+                    .asLong()));
     verify(kubernetes, times(1))
         .call(eq("POST"), eq("/cr?dryRun=All&fieldValidation=Strict"), any());
   }
@@ -363,6 +422,7 @@ class PlatformIntegrationTest {
         mapper
             .createObjectNode()
             .put("repository", "registry.test/flink")
+            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
             .put("version", "1.20")
             .put("flinkVersion", "1.20"),
         0);
@@ -382,6 +442,15 @@ class PlatformIntegrationTest {
             .put("templateId", "application-pod")
             .put("imageId", imageId);
     input.putArray("artifactIds").add(artifactId);
+    var registeredImage = records.require("images", imageId);
+    registeredImage.remove("downloaderImage");
+    records.save("images", imageId, registeredImage, registeredImage.path("revision").asLong());
+    assertThatThrownBy(() -> forms.render(input))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("downloaderImage");
+    registeredImage = records.require("images", imageId);
+    registeredImage.put("downloaderImage", "registry.test/downloader:kylin-sp3");
+    records.save("images", imageId, registeredImage, registeredImage.path("revision").asLong());
     var output = forms.render(input);
     var deployment = yaml.validate(yaml.parse(output.path("yaml").asText()), "form-job");
     assertThat(deployment.at("/spec/image").asText()).isEqualTo("registry.test/flink:1.20");
@@ -391,6 +460,9 @@ class PlatformIntegrationTest {
       assertThat(
               deployment.at("/spec/" + role + "/podTemplate/spec/initContainers/0/name").asText())
           .isEqualTo("fw-download");
+      assertThat(
+              deployment.at("/spec/" + role + "/podTemplate/spec/initContainers/0/image").asText())
+          .isEqualTo("registry.test/downloader:kylin-sp3");
       assertThat(
               deployment.at("/spec/" + role + "/podTemplate/spec/containers/0/env/0/name").asText())
           .isEqualTo("TZ");
@@ -537,7 +609,8 @@ class PlatformIntegrationTest {
   void adoptedJobCanStopButReplacementUidCannotBeMutated() throws Exception {
     String name = "stop-" + UUID.randomUUID().toString().substring(0, 8);
     ObjectNode live = legacy(name);
-    live.withObject("/spec/flinkConfiguration").put("state.savepoints.dir", "s3://state/savepoints");
+    live.withObject("/spec/flinkConfiguration")
+        .put("state.savepoints.dir", "s3://state/savepoints");
     when(kubernetes.require(name)).thenReturn(live);
     var adopted = adoption.adopt(adoptionRequest(live));
     when(kubernetes.base()).thenReturn("/cr");
@@ -614,6 +687,7 @@ class PlatformIntegrationTest {
         mapper
             .createObjectNode()
             .put("repository", "registry.test/flink-sql")
+            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
             .put("version", "1.20")
             .put("flinkVersion", "1.20"),
         0);
@@ -790,49 +864,104 @@ class PlatformIntegrationTest {
                 .content("{}"))
         .andExpect(status().isForbidden());
   }
+
   /** 表单编辑以原 YAML 为底稿，保留自定义字段并允许清空状态配置。 */
   @Test
   void formRoundtripPreservesUnmanagedFieldsAndRemovesDisabledStateOptions() {
     String imageId = "roundtrip-" + UUID.randomUUID();
-    catalogs.save("images", imageId, mapper.createObjectNode().put("name", imageId)
-        .put("repository", "registry.test/flink").put("version", "1.20.5"));
+    catalogs.save(
+        "images",
+        imageId,
+        mapper
+            .createObjectNode()
+            .put("name", imageId)
+            .put("repository", "registry.test/flink")
+            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
+            .put("version", "1.20.5"));
     var original = yaml.parse(source("roundtrip"));
     original.withObject("/spec").put("restartNonce", 123);
     original.withObject("/spec/jobManager").put("replicas", 2);
     original.withObject("/spec/flinkConfiguration").put("state.checkpoints.dir", "s3://old/cp");
     original.withObject("/spec/job").put("initialSavepointPath", "s3://state/preserved");
-    var input = mapper.createObjectNode().put("name", "roundtrip").put("imageId", imageId)
-        .put("baseYaml", yaml.dump(original)).put("parallelism", 3).put("jmMemory", "2g");
+    var input =
+        mapper
+            .createObjectNode()
+            .put("name", "roundtrip")
+            .put("imageId", imageId)
+            .put("baseYaml", yaml.dump(original))
+            .put("parallelism", 3)
+            .put("jmMemory", "2g");
     input.putObject("flinkConfiguration").put("custom.option", "kept");
     var rendered = yaml.parse(forms.render(input).path("yaml").asText());
     assertThat(rendered.at("/spec/restartNonce").asInt()).isEqualTo(123);
     assertThat(rendered.at("/spec/jobManager/replicas").asInt()).isEqualTo(2);
     assertThat(rendered.at("/spec/jobManager/resource/memory").asText()).isEqualTo("2g");
-    assertThat(rendered.at("/spec/job/initialSavepointPath").asText()).isEqualTo("s3://state/preserved");
+    assertThat(rendered.at("/spec/job/initialSavepointPath").asText())
+        .isEqualTo("s3://state/preserved");
     assertThat(rendered.at("/spec/flinkConfiguration").has("state.checkpoints.dir")).isFalse();
-    assertThat(yaml.validate(rendered, "roundtrip").at("/spec/flinkConfiguration").has("execution.checkpointing.interval")).isFalse();
+    assertThat(
+            yaml.validate(rendered, "roundtrip")
+                .at("/spec/flinkConfiguration")
+                .has("execution.checkpointing.interval"))
+        .isFalse();
   }
 
   /** 旧资源确认不存在后，启动按平台编号创建并保留平台展示名称。 */
   @Test
   @WithMockUser(roles = "ADMIN")
   void legacyJobStartsWithNumberedResourceAfterDeletion() throws Exception {
-    String name = "migrate-" + UUID.randomUUID().toString().substring(0,8);
+    String name = "migrate-" + UUID.randomUUID().toString().substring(0, 8);
     ObjectNode old = legacy(name);
     old.withObject("/spec").remove("serviceAccount");
     when(kubernetes.require(name)).thenReturn(old);
     var job = adoption.adopt(adoptionRequest(old));
     when(kubernetes.base()).thenReturn("/cr");
-    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(com.fasterxml.jackson.databind.node.MissingNode.getInstance());
-    when(kubernetes.call(eq("POST"), anyString(), any())).thenAnswer(i -> ((ObjectNode)i.getArgument(2)).deepCopy());
-    mvc.perform(post("/api/jobs/" + job.id() + "/actions/start").with(csrf()).contentType(MediaType.APPLICATION_JSON)
-        .content(mapper.createObjectNode().put("revision", job.revision()).put("requestId", UUID.randomUUID().toString()).toString()))
-        .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("ACCEPTED"));
+    when(kubernetes.call(eq("GET"), anyString(), isNull()))
+        .thenReturn(com.fasterxml.jackson.databind.node.MissingNode.getInstance());
+    when(kubernetes.call(eq("POST"), anyString(), any()))
+        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+    mvc.perform(
+            post("/api/jobs/" + job.id() + "/actions/start")
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    mapper
+                        .createObjectNode()
+                        .put("revision", job.revision())
+                        .put("requestId", UUID.randomUUID().toString())
+                        .toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.state").value("ACCEPTED"));
     assertThat(jobRepository.findById(job.id()).orElseThrow().name()).isEqualTo(name);
-    assertThat(jobRepository.findById(job.id()).orElseThrow().deploymentName()).isEqualTo("flink-" + job.jobNumber());
-    verify(kubernetes).call(eq("POST"), eq("/cr"), argThat(body ->
-        body.at("/metadata/name").asText().equals("flink-" + job.jobNumber())
-        && body.at("/spec/job/state").asText().equals("running")));
+    assertThat(jobRepository.findById(job.id()).orElseThrow().deploymentName())
+        .isEqualTo(JobDraft.numberedName(job.jobNumber()));
+    verify(kubernetes)
+        .call(
+            eq("POST"),
+            eq("/cr"),
+            argThat(
+                body ->
+                    body.at("/metadata/name")
+                            .asText()
+                            .equals(JobDraft.numberedName(job.jobNumber()))
+                        && body.at("/spec/job/state").asText().equals("running")));
   }
 
+  /** last-state 必须同时配置 HA 类型与目录，避免仅配置类型通过校验。 */
+  @Test
+  void lastStateRequiresHaStorageDirectory() {
+    var node = yaml.parse(source("ha-test"));
+    node.withObject("/spec/job").put("upgradeMode", "last-state");
+    node.withObject("/spec/flinkConfiguration").put("high-availability.type", "kubernetes");
+    assertThatThrownBy(() -> yaml.validate(node, "ha-test"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("HA");
+    node.withObject("/spec/flinkConfiguration")
+        .put("high-availability.storageDir", "s3://state/ha");
+    assertThat(
+            yaml.validate(node, "ha-test")
+                .at("/spec/flinkConfiguration/high-availability.storageDir")
+                .asText())
+        .isEqualTo("s3://state/ha");
+  }
 }

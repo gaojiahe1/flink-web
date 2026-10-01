@@ -735,6 +735,16 @@ tbody tr:hover {
   border-radius: 6px 0 0 6px;
   min-width: 0;
 }
+.input-unit .unit-suffix {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 66px;
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-soft, #f5f8fc);
+}
 .input-unit select {
   margin: 0 !important;
   width: 66px;

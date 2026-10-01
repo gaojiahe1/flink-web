@@ -24,10 +24,13 @@ public class JdbcJobRepository implements JobRepository {
               rs.getString("yaml_text"),
               rs.getLong("revision"),
               Instant.parse(rs.getString("created_at")),
-              Instant.parse(rs.getString("updated_at")), rs.getLong("job_number"), rs.getString("deployment_name"));
+              Instant.parse(rs.getString("updated_at")),
+              rs.getLong("job_number"),
+              rs.getString("deployment_name"));
 
   private static final String SELECT =
-      "SELECT d.*,n.job_number,n.deployment_name FROM job_drafts d JOIN job_numbers n ON d.id=n.job_id";
+      "SELECT d.*,n.job_number,n.deployment_name FROM job_drafts d JOIN job_numbers n ON"
+          + " d.id=n.job_id";
 
   /** 注入 JDBC 模板，供草稿持久化操作使用。 */
   public JdbcJobRepository(JdbcTemplate jdbc, SchemaInitializer ignored) {
@@ -51,19 +54,31 @@ public class JdbcJobRepository implements JobRepository {
 
   /** 插入新的作业草稿；名称重复由数据库唯一约束拒绝。 */
   public void insert(JobDraft draft) {
-    jdbc.update("INSERT INTO job_numbers(job_id,deployment_name) VALUES (?,?)",
-        draft.id(), draft.deploymentName());
+    jdbc.update(
+        "INSERT INTO job_numbers(job_id,deployment_name) VALUES (?,?)",
+        draft.id(),
+        draft.deploymentName());
     if (draft.deploymentName() == null) {
-      long number = jdbc.queryForObject("SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
-      String deploymentName = "flink-" + number;
+      long number =
+          jdbc.queryForObject(
+              "SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
+      String deploymentName = JobDraft.numberedName(number);
       // 跳过老环境已经占用的资源名，保留历史身份。
-      while (jdbc.queryForObject("SELECT COUNT(*) FROM job_numbers WHERE deployment_name=?", Long.class, deploymentName) > 0) {
-        jdbc.update("UPDATE job_numbers SET job_id=? WHERE job_id=?", "reserved-" + number, draft.id());
+      while (jdbc.queryForObject(
+              "SELECT COUNT(*) FROM job_numbers WHERE deployment_name=?",
+              Long.class,
+              deploymentName)
+          > 0) {
+        jdbc.update(
+            "UPDATE job_numbers SET job_id=? WHERE job_id=?", "reserved-" + number, draft.id());
         jdbc.update("INSERT INTO job_numbers(job_id) VALUES (?)", draft.id());
-        number = jdbc.queryForObject("SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
-        deploymentName = "flink-" + number;
+        number =
+            jdbc.queryForObject(
+                "SELECT job_number FROM job_numbers WHERE job_id=?", Long.class, draft.id());
+        deploymentName = JobDraft.numberedName(number);
       }
-      jdbc.update("UPDATE job_numbers SET deployment_name=? WHERE job_id=?", deploymentName, draft.id());
+      jdbc.update(
+          "UPDATE job_numbers SET deployment_name=? WHERE job_id=?", deploymentName, draft.id());
     }
     jdbc.update(
         """
@@ -101,11 +116,20 @@ WHERE id=? AND revision=?
   /** 在旧资源确认不存在后持久化稳定的编号资源名。 */
   public void useNumberedName(String id) {
     var job = findById(id).orElseThrow();
-    if (jdbc.queryForObject("SELECT COUNT(*) FROM job_numbers WHERE deployment_name=? AND job_id<>?", Long.class,
-        "flink-" + job.jobNumber(), id) > 0)
-      throw new com.flinkweb.exception.common.BusinessException(org.springframework.http.HttpStatus.CONFLICT,
-          "DEPLOYMENT_NAME_CONFLICT", "编号资源名被历史资源占用，请先停止并迁移占用该名称的作业");
-    jdbc.update("UPDATE job_numbers SET deployment_name=? WHERE job_id=?", "flink-" + job.jobNumber(), id);
+    if (jdbc.queryForObject(
+            "SELECT COUNT(*) FROM job_numbers WHERE deployment_name=? AND job_id<>?",
+            Long.class,
+            JobDraft.numberedName(job.jobNumber()),
+            id)
+        > 0)
+      throw new com.flinkweb.exception.common.BusinessException(
+          org.springframework.http.HttpStatus.CONFLICT,
+          "DEPLOYMENT_NAME_CONFLICT",
+          "编号资源名被历史资源占用，请先停止并迁移占用该名称的作业");
+    jdbc.update(
+        "UPDATE job_numbers SET deployment_name=? WHERE job_id=?",
+        JobDraft.numberedName(job.jobNumber()),
+        id);
   }
 
   /** 仅在修订号匹配时删除草稿，返回是否成功。 */

@@ -123,13 +123,24 @@ public class YamlServiceImpl implements YamlService {
     for (String key : List.of("rest.port", "rest.bind-port"))
       if (config.has(key) && !config.path(key).asText().equals("8081"))
         fail("平台内部 Flink REST 端口固定为 8081");
-    for (String key : List.of("state.checkpoints.num-retained", "execution.checkpointing.num-retained"))
+    for (String key :
+        List.of("state.checkpoints.num-retained", "execution.checkpointing.num-retained"))
       if (config.has(key) && !config.path(key).asText().matches("[1-9][0-9]*"))
         fail("flinkConfiguration: " + key + " 必须为正整数");
-    for (String key : List.of("state.checkpoints.dir", "state.savepoints.dir",
-        "execution.checkpointing.dir", "execution.checkpointing.savepoint-dir"))
+    for (String key :
+        List.of(
+            "state.checkpoints.dir",
+            "state.savepoints.dir",
+            "execution.checkpointing.dir",
+            "execution.checkpointing.savepoint-dir"))
       if (config.has(key) && !config.path(key).asText().matches("[a-zA-Z][a-zA-Z0-9+.-]*:/.*"))
         fail("flinkConfiguration: " + key + " 必须是带协议的存储路径");
+    String retention =
+        config.path("execution.checkpointing.externalized-checkpoint-retention").asText();
+    if (!retention.isEmpty()
+        && !Set.of(
+                "RETAIN_ON_CANCELLATION", "DELETE_ON_CANCELLATION", "NO_EXTERNALIZED_CHECKPOINTS")
+            .contains(retention)) fail("flinkConfiguration: Checkpoint 存储策略无效");
     config
         .fields()
         .forEachRemaining(
@@ -150,8 +161,10 @@ public class YamlServiceImpl implements YamlService {
       }
     }
     if (job.path("upgradeMode").asText().equals("last-state")
-        && !config.has("high-availability.type")
-        && !config.has("high-availability")) fail("last-state 模式需要配置 Kubernetes HA 及 HA 存储目录");
+        && ((config.path("high-availability.type").asText("").isBlank()
+                && config.path("high-availability").asText("").isBlank())
+            || config.path("high-availability.storageDir").asText("").isBlank()))
+      fail("last-state 模式需要配置 Kubernetes HA 及 HA 存储目录");
     podTemplates.normalize(spec);
     for (String key : List.of("podTemplate")) if (spec.has(key)) validatePod(spec.get(key));
     for (String key : List.of("jobManager", "taskManager"))

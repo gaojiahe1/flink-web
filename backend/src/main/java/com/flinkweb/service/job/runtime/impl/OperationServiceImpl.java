@@ -175,7 +175,8 @@ public class OperationServiceImpl implements OperationService {
         if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
       }
       if (Set.of("start", "restore").contains(action)
-          && !job.deploymentName().equals("flink-" + job.jobNumber()))
+          && !job.deploymentName()
+              .equals(com.flinkweb.entity.job.JobDraft.numberedName(job.jobNumber())))
         fail("旧作业请先停止并删除原 FlinkDeployment；停止完成后启动会使用编号资源名");
       if (action.equals("delete") && !existing.isMissingNode()) {
         String state = existing.path("status").path("jobStatus").path("state").asText("UNKNOWN");
@@ -188,14 +189,18 @@ public class OperationServiceImpl implements OperationService {
       boolean terminal = Set.of("FAILED", "FINISHED", "CANCELED").contains(observed);
       boolean reconciling =
           existing.path("metadata").path("generation").asLong()
-              > existing.path("status").path("observedGeneration").asLong(Long.MAX_VALUE)
-          || Set.of("UPGRADING", "DEPLOYING", "ROLLING_BACK")
-              .contains(existing.path("status").path("lifecycleState").asText());
+                  > existing.path("status").path("observedGeneration").asLong(Long.MAX_VALUE)
+              || Set.of("UPGRADING", "DEPLOYING", "ROLLING_BACK")
+                  .contains(existing.path("status").path("lifecycleState").asText());
       if (existing.path("metadata").hasNonNull("deletionTimestamp")) fail("资源正在删除，不能操作");
       if (action.equals("start") && "running".equals(desired) && (!terminal || reconciling))
         fail("作业已启动或正在启动，请勿重复启动");
       if ((action.equals("savepoint") || action.equals("checkpoint"))
-          && (!"RUNNING".equals(observed) || !"running".equals(desired) || reconciling))
+          && (!"RUNNING".equals(observed)
+              || !"running".equals(desired)
+              || reconciling
+              || "ERROR".equals(existing.path("status").path("jobManagerDeploymentStatus").asText())
+              || !existing.path("status").path("error").asText().isBlank()))
         fail("快照需要实际正常运行且未在启停或升级中的作业");
       JsonNode response;
       if (action.equals("delete")) {
@@ -218,32 +223,47 @@ public class OperationServiceImpl implements OperationService {
       } else {
         ObjectNode resource;
         RenderedDeployment rendered = null;
-        if (action.equals("deploy") || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
+        if (action.equals("deploy")
+            || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
           ObjectNode stoppedResource = action.equals("deploy") ? null : stops.restartResource(id);
           if (stoppedResource != null) {
             resource = stoppedResource;
             resource.withObject("/metadata").put("name", job.deploymentName());
             resource.withObject("/spec/flinkConfiguration").remove("kubernetes.cluster-id");
           } else {
-            if (auth == null || auth.getAuthorities().stream().noneMatch(a ->
-                a.getAuthority().equals("ROLE_ADMIN") || a.getAuthority().equals("ROLE_DEVELOPER")))
+            if (auth == null
+                || auth.getAuthorities().stream()
+                    .noneMatch(
+                        a ->
+                            a.getAuthority().equals("ROLE_ADMIN")
+                                || a.getAuthority().equals("ROLE_DEVELOPER")))
               fail("首次部署或没有停止前配置时，需要开发者执行部署");
             access.require(id, "edit");
             rendered = variables.render(yaml.parse(job.yaml()));
             rendered.deployment().withObject("/metadata").put("name", job.deploymentName());
-            rendered.deployment().withObject("/spec").withObject("/flinkConfiguration").remove("kubernetes.cluster-id");
+            rendered
+                .deployment()
+                .withObject("/spec")
+                .withObject("/flinkConfiguration")
+                .remove("kubernetes.cluster-id");
             resource = yaml.validate(rendered.deployment(), job.deploymentName());
           }
           if (!action.equals("deploy")) {
             resource.withObject("/spec").withObject("/job").put("state", "running");
-            String path = action.equals("restore") ? request.path("savepointPath").asText() : stops.restorePath(id);
+            String path =
+                action.equals("restore")
+                    ? request.path("savepointPath").asText()
+                    : stops.restorePath(id);
             if (!path.isBlank()) {
-              if (action.equals("restore") && !storage.checkSnapshot(path).path("exists").asBoolean()) fail("恢复快照元数据不存在，请检查状态存储");
+              if (action.equals("restore")
+                  && !storage.checkSnapshot(path).path("exists").asBoolean())
+                fail("恢复快照元数据不存在，请检查状态存储");
               resource.withObject("/spec").withObject("/job").put("initialSavepointPath", path);
             } else resource.withObject("/spec").withObject("/job").remove("initialSavepointPath");
           }
-          if (stoppedResource == null && !("v" + job.flinkVersion().replaceAll("^(\\d+\\.\\d+).*", "$1").replace('.', '_'))
-              .equals(resource.path("spec").path("flinkVersion").asText()))
+          if (stoppedResource == null
+              && !("v" + job.flinkVersion().replaceAll("^(\\d+\\.\\d+).*", "$1").replace('.', '_'))
+                  .equals(resource.path("spec").path("flinkVersion").asText()))
             fail("草稿 Flink 版本与 YAML 不一致");
         } else {
           if (existing.isMissingNode())

@@ -21,7 +21,7 @@ const props = defineProps<{
   remaining: number
 }>()
 const emit = defineEmits<{ restored: [JobDraft] }>()
-const tab = ref('releases'),
+const tab = ref('history'),
   releases = ref<Release[]>([]),
   snapshots = ref<Snapshot[]>([]),
   acl = ref<JobAccess>({
@@ -80,7 +80,7 @@ watch(
     diagnostic.value = null
     log.value = ''
     pod.value = ''
-    tab.value = 'releases'
+    tab.value = 'history'
     void load()
   },
   { immediate: true },
@@ -187,6 +187,10 @@ async function saveAccess() {
     await load()
   })
 }
+watch(tab, () => {
+  error.value = ''
+  message.value = ''
+})
 const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN') : '—')
 </script>
 <template>
@@ -194,6 +198,7 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
     <nav class="workbench-tabs" aria-label="作业详情">
       <button
         v-for="item in [
+          ['history', '操作记录'],
           ['releases', '发布版本'],
           ['diagnostics', '诊断与日志'],
           ['snapshots', '快照台账'],
@@ -211,6 +216,7 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
     </nav>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
+    <div v-if="tab === 'history'"><slot name="history" :records="operations" /></div>
     <div class="workbench-body" v-if="tab === 'releases'">
       <div v-if="releases.length" class="toolbar-actions release-controls">
         <label

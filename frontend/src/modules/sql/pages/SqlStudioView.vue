@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { showValidationError } from '../../../shared/utils/fieldValidation'
+import { showValidationError, clearValidationErrors } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
@@ -18,7 +18,7 @@ import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../../permission/stores/auth'
@@ -158,6 +158,17 @@ const check = ref<{
   insertCount: number
   message: string
 } | null>(null)
+watch(
+  [() => form.sql, () => form.name, () => form.description, runtime, config, pod, podTemplateId],
+  () => {
+    clearValidationErrors()
+    error.value = ''
+    message.value = ''
+    preview.value = ''
+    check.value = null
+  },
+  { deep: true },
+)
 const editable = computed(() =>
   currentUser.value?.roles.some((r) => r === 'ROLE_ADMIN' || r === 'ROLE_DEVELOPER'),
 )

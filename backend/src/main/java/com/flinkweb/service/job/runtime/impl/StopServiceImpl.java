@@ -22,8 +22,12 @@ public class StopServiceImpl implements StopService {
   private final ObjectMapper mapper;
 
   /** 注入集群客户端和持久化仓库，不启动后台轮询。 */
-  public StopServiceImpl(KubernetesClient client, RecordRepository records, JobRepository jobs,
-      JobOwnershipService ownership, ObjectMapper mapper) {
+  public StopServiceImpl(
+      KubernetesClient client,
+      RecordRepository records,
+      JobRepository jobs,
+      JobOwnershipService ownership,
+      ObjectMapper mapper) {
     this.client = client;
     this.records = records;
     this.jobs = jobs;
@@ -53,6 +57,8 @@ public class StopServiceImpl implements StopService {
     if ("savepoint".equals(mode)) {
       if (!"RUNNING".equals(resource.path("status").path("jobStatus").path("state").asText())
           || !"running".equals(resource.path("spec").path("job").path("state").asText())
+          || "ERROR".equals(resource.path("status").path("jobManagerDeploymentStatus").asText())
+          || !resource.path("status").path("error").asText("").isBlank()
           || resource.path("metadata").hasNonNull("deletionTimestamp"))
         fail("Savepoint 后删除要求作业正常运行；启动中或异常作业请选择立即删除");
       var conf = resource.path("spec").path("flinkConfiguration");
@@ -60,17 +66,34 @@ public class StopServiceImpl implements StopService {
           && conf.path("execution.checkpointing.savepoint-dir").asText().isBlank())
         fail("请先配置 Savepoint 存储目录，或选择立即删除");
     }
-    var intent = mapper.createObjectNode().put("jobId", id)
-        .put("name", resource.path("metadata").path("name").asText())
-        .put("uid", resource.path("metadata").path("uid").asText())
-        .put("mode", mode).put("phase", "REQUESTED")
-        .put("baseline", location(resource)).put("message", "正在提交停止");
+    var intent =
+        mapper
+            .createObjectNode()
+            .put("jobId", id)
+            .put("name", resource.path("metadata").path("name").asText())
+            .put("uid", resource.path("metadata").path("uid").asText())
+            .put("mode", mode)
+            .put("phase", "REQUESTED")
+            .put("baseline", location(resource))
+            .put("message", "正在提交停止");
     ObjectNode deployment = ((ObjectNode) resource).deepCopy();
     deployment.remove("status");
-    deployment.withObject("/metadata").remove(java.util.List.of("uid", "resourceVersion", "generation",
-        "managedFields", "creationTimestamp", "deletionTimestamp", "ownerReferences", "finalizers"));
+    deployment
+        .withObject("/metadata")
+        .remove(
+            java.util.List.of(
+                "uid",
+                "resourceVersion",
+                "generation",
+                "managedFields",
+                "creationTimestamp",
+                "deletionTimestamp",
+                "ownerReferences",
+                "finalizers"));
     intent.set("deployment", deployment);
-    intent = records.save("stop-intents", id, intent, pending == null ? 0 : pending.path("revision").asLong());
+    intent =
+        records.save(
+            "stop-intents", id, intent, pending == null ? 0 : pending.path("revision").asLong());
     return proceed(id, intent, resource).path("message").asText();
   }
 
@@ -97,18 +120,27 @@ public class StopServiceImpl implements StopService {
       return save(id, intent.put("phase", "DELETING").put("message", "正在删除 FlinkDeployment，请刷新确认"));
     boolean immediate = "stateless".equals(intent.path("mode").asText());
     String point = location(live);
-    boolean saved = !point.isBlank() && !point.equals(intent.path("baseline").asText())
-        && "suspended".equals(live.path("spec").path("job").path("state").asText())
-        && Set.of("CANCELED", "FINISHED", "SUSPENDED").contains(
-            live.path("status").path("jobStatus").path("state").asText())
-        && "SUSPENDED".equals(live.path("status").path("lifecycleState").asText());
+    boolean saved =
+        !point.isBlank()
+            && !point.equals(intent.path("baseline").asText())
+            && "suspended".equals(live.path("spec").path("job").path("state").asText())
+            && Set.of("CANCELED", "FINISHED", "SUSPENDED")
+                .contains(live.path("status").path("jobStatus").path("state").asText())
+            && "SUSPENDED".equals(live.path("status").path("lifecycleState").asText());
     if (immediate || saved || "DELETING".equals(intent.path("phase").asText())) {
       if (saved) intent.put("savepointPath", point);
       // 先落盘恢复路径，避免删除成功后进程退出导致路径丢失。
-      intent = save(id, intent.put("phase", "DELETING").put("message", "正在删除 FlinkDeployment，请刷新确认"));
-      ObjectNode options = mapper.createObjectNode().put("apiVersion", "v1")
-          .put("kind", "DeleteOptions").put("propagationPolicy", "Foreground");
-      options.putObject("preconditions").put("uid", live.path("metadata").path("uid").asText())
+      intent =
+          save(id, intent.put("phase", "DELETING").put("message", "正在删除 FlinkDeployment，请刷新确认"));
+      ObjectNode options =
+          mapper
+              .createObjectNode()
+              .put("apiVersion", "v1")
+              .put("kind", "DeleteOptions")
+              .put("propagationPolicy", "Foreground");
+      options
+          .putObject("preconditions")
+          .put("uid", live.path("metadata").path("uid").asText())
           .put("resourceVersion", live.path("metadata").path("resourceVersion").asText());
       client.call("DELETE", client.base() + "/" + intent.path("name").asText(), options);
       return intent;
@@ -117,8 +149,14 @@ public class StopServiceImpl implements StopService {
       ObjectNode changed = ((ObjectNode) live).deepCopy();
       changed.remove("status");
       changed.withObject("/metadata").remove("managedFields");
-      changed.withObject("/spec").withObject("/job").put("state", "suspended").put("upgradeMode", "savepoint");
-      changed.withObject("/spec").withObject("/flinkConfiguration")
+      changed
+          .withObject("/spec")
+          .withObject("/job")
+          .put("state", "suspended")
+          .put("upgradeMode", "savepoint");
+      changed
+          .withObject("/spec")
+          .withObject("/flinkConfiguration")
           .put("kubernetes.operator.job.upgrade.last-state-fallback.enabled", "false");
       String path = client.base() + "/" + intent.path("name").asText();
       var checked = client.call("PUT", path + "?dryRun=All&fieldValidation=Strict", changed);
@@ -131,8 +169,13 @@ public class StopServiceImpl implements StopService {
 
   /** 读取 Operator 已完成的最新 Savepoint 路径。 */
   private String location(JsonNode resource) {
-    return resource.path("status").path("jobStatus").path("savepointInfo")
-        .path("lastSavepoint").path("location").asText();
+    return resource
+        .path("status")
+        .path("jobStatus")
+        .path("savepointInfo")
+        .path("lastSavepoint")
+        .path("location")
+        .asText();
   }
 
   /** 使用记录修订号保存停止进度。 */
@@ -150,7 +193,8 @@ public class StopServiceImpl implements StopService {
   public ObjectNode restartResource(String id) {
     var intent = records.find("stop-intents", id);
     return intent != null && intent.path("deployment").isObject()
-        ? ((ObjectNode) intent.get("deployment")).deepCopy() : null;
+        ? ((ObjectNode) intent.get("deployment")).deepCopy()
+        : null;
   }
 
   /** 判断持久化停止流程是否已完成。 */
