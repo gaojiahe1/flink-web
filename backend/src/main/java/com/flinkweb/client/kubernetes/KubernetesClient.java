@@ -18,6 +18,8 @@ import org.springframework.stereotype.Component;
 /** 封装目标 Namespace 的 Kubernetes REST 请求、ServiceAccount 认证和 TLS 校验；不持有作业缓存。 */
 @Component
 public class KubernetesClient {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(KubernetesClient.class);
   private final ObjectMapper mapper;
   private final HttpClient client;
   private final String endpoint, tokenFile, namespace;
@@ -74,6 +76,7 @@ public class KubernetesClient {
 
   /** 发送带超时和认证的请求，区分资源不存在与写入失败并转换 API 错误。 */
   public JsonNode call(String method, String path, JsonNode body) {
+    long started = System.nanoTime();
     try {
       if (!Files.isReadable(Path.of(tokenFile)))
         throw new BusinessException(
@@ -92,6 +95,12 @@ public class KubernetesClient {
               ? HttpRequest.BodyPublishers.noBody()
               : HttpRequest.BodyPublishers.ofString(body.toString()));
       var response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+      log.debug(
+          "Kubernetes response method={} resource={} status={} elapsedMs={}",
+          method,
+          path.split("\\?", 2)[0],
+          response.statusCode(),
+          (System.nanoTime() - started) / 1_000_000);
       if (response.statusCode() == 404 && method.equals("GET")) return MissingNode.getInstance();
       if (response.statusCode() < 200 || response.statusCode() >= 300) {
         String code = response.statusCode() == 409 ? "KUBERNETES_CONFLICT" : "KUBERNETES_REJECTED";
@@ -103,11 +112,16 @@ public class KubernetesClient {
       }
       return mapper.readTree(response.body());
     } catch (BusinessException ex) {
+      log.warn("Kubernetes request failed method={} code={}", method, ex.code());
       throw ex;
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
       throw unavailable();
     } catch (Exception ex) {
+      log.warn(
+          "Kubernetes transport failed method={} errorType={}",
+          method,
+          ex.getClass().getSimpleName());
       throw unavailable();
     }
   }

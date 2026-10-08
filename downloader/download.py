@@ -1,5 +1,4 @@
 """Finite init-container downloader. No daemon, retries or background polling."""
-import hashlib
 import ipaddress
 import json
 import os
@@ -11,6 +10,8 @@ import boto3
 from botocore.config import Config
 
 ROOT = pathlib.Path("/artifacts")
+PLUGIN_ROOT = pathlib.Path("/s3-plugin")
+BOOTSTRAP_ROOT = pathlib.Path("/flink-bootstrap")
 LIMIT = int(os.getenv("ARTIFACT_MAX_BYTES", str(1024 * 1024 * 1024)))
 ALLOWED = {h.strip().lower() for h in os.getenv("ARTIFACT_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
@@ -41,13 +42,31 @@ def open_source(item):
     return opener.open(urllib.request.Request(item["uri"], headers=headers), timeout=60)
 
 def main():
-    ROOT.mkdir(parents=True, exist_ok=True)
+    if os.getenv("FLINK_PLUGIN_BOOTSTRAP") == "true":
+        root = BOOTSTRAP_ROOT
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / "start-flink.sh"
+        target.write_bytes(pathlib.Path(__file__).with_name("flink-bootstrap.sh").read_text(encoding="utf-8").encode("utf-8"))
+        target.chmod(0o755)
+        print("Prepared runtime S3 plugin bootstrap", flush=True)
+    seen = set()
     for item in json.loads(os.environ["ARTIFACT_MANIFEST"]):
         filename = item["filename"]
         if pathlib.PurePath(filename).name != filename or filename in (".", ".."):
             raise ValueError("Invalid artifact filename")
-        target, temporary = ROOT / filename, ROOT / (filename + ".part")
-        digest, size = hashlib.sha256(), 0
+        destination = item.get("target", "artifacts")
+        if destination not in ("artifacts", "s3-plugin"):
+            raise ValueError("Invalid download target")
+        root = PLUGIN_ROOT if destination == "s3-plugin" else ROOT
+        if destination == "s3-plugin" and not (filename.startswith("flink-s3-fs-presto-") and filename.endswith(".jar")):
+            raise ValueError("Invalid S3 plugin filename")
+        if (destination, filename) in seen:
+            raise ValueError("Duplicate download target")
+        seen.add((destination, filename))
+        root.mkdir(parents=True, exist_ok=True)
+        target, temporary = root / filename, root / (filename + ".part")
+        size = 0
+        print("Download started: " + repr(filename), flush=True)
         try:
             with open_source(item) as source, temporary.open("wb") as output:
                 while True:
@@ -57,12 +76,10 @@ def main():
                     size += len(block)
                     if size > LIMIT:
                         raise ValueError("Artifact exceeds download size limit")
-                    digest.update(block)
                     output.write(block)
-            if digest.hexdigest().lower() != item["sha256"].lower():
-                raise ValueError("Artifact checksum mismatch")
+            temporary.chmod(0o644)
             temporary.replace(target)
-            print("Downloaded and verified: " + filename, flush=True)
+            print("Downloaded: " + repr(filename), flush=True)
         finally:
             temporary.unlink(missing_ok=True)
 

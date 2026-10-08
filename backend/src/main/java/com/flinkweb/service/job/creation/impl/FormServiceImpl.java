@@ -17,6 +17,7 @@ public class FormServiceImpl implements FormService {
   private final ObjectMapper mapper;
   private final PlatformProperties properties;
   private final ArtifactPodBuilder artifacts;
+  private final com.flinkweb.service.job.creation.support.S3PluginPodBuilder s3Plugin;
 
   /** 注入模板、镜像及制品渲染依赖，并读取工作负载默认参数。 */
   public FormServiceImpl(
@@ -24,7 +25,9 @@ public class FormServiceImpl implements FormService {
       RecordRepository records,
       ObjectMapper mapper,
       PlatformProperties properties,
-      ArtifactPodBuilder artifacts) {
+      ArtifactPodBuilder artifacts,
+      com.flinkweb.service.job.creation.support.S3PluginPodBuilder s3Plugin) {
+    this.s3Plugin = s3Plugin;
     this.yaml = yaml;
     this.records = records;
     this.mapper = mapper;
@@ -42,6 +45,7 @@ public class FormServiceImpl implements FormService {
                 ? mapper.createObjectNode()
                 : yaml.parse(records.require("templates", template).path("yaml").asText())
             : yaml.parse(input.path("baseYaml").asText());
+    com.flinkweb.service.job.creation.support.JobEditorPolicy.mark(resource, true);
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
     ObjectNode spec = resource.withObject("/spec");
@@ -60,7 +64,7 @@ public class FormServiceImpl implements FormService {
     if (input.path("args").isArray()) job.set("args", input.get("args"));
     spec.withObject("/jobManager")
         .withObject("/resource")
-        .put("memory", input.path("jmMemory").asText("1024m"))
+        .put("memory", input.path("jmMemory").asText("2048m"))
         .put("cpu", input.path("jmCpu").asDouble(1));
     spec.withObject("/taskManager")
         .withObject("/resource")
@@ -70,6 +74,10 @@ public class FormServiceImpl implements FormService {
       spec.set("flinkConfiguration", input.get("flinkConfiguration").deepCopy());
     spec.withObject("/flinkConfiguration")
         .put("taskmanager.numberOfTaskSlots", input.path("slots").asText("1"));
+    if (input.path("baseYaml").asText().isBlank() && template.isEmpty())
+      spec.withObject("/flinkConfiguration")
+          .putIfAbsent("jobmanager.memory.jvm-metaspace.size", TextNode.valueOf("512m"));
+
     if (input.path("podTemplate").isObject())
       spec.set("podTemplate", input.get("podTemplate").deepCopy());
     if (!image.path("pullSecret").asText("").isEmpty())
@@ -86,11 +94,12 @@ public class FormServiceImpl implements FormService {
           && !input.has("artifactIds")
           && originalJar.startsWith("local:///opt/flink/usrlib/"))
         yaml.fail("附加依赖会挂载 /opt/flink/usrlib；请同时选择主 JAR，或将镜像内主 JAR 放到该目录之外");
-      artifacts.apply(spec, downloads, image.path("downloaderImage").asText());
+      artifacts.apply(spec, downloads);
       // 只有附加依赖时保留镜像内主 JAR，避免把连接器误当成程序入口。
       if (input.path("mainArtifactId").asText().isBlank() && !input.has("artifactIds"))
         job.put("jarURI", originalJar);
     }
+    s3Plugin.apply(spec);
     // 保留模板变量引用，在用户提交部署时解析当前配置。
     return mapper
         .createObjectNode()

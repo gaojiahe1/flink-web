@@ -22,6 +22,8 @@ import org.springframework.stereotype.Service;
 /** 编排作业部署、启停和快照操作，执行身份校验、幂等控制及 Kubernetes dry-run。 */
 @Service
 public class OperationServiceImpl implements OperationService {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(OperationServiceImpl.class);
   private final JobService jobs;
   private final com.flinkweb.repository.job.JobRepository jobRepository;
   private final com.flinkweb.service.job.runtime.StopService stops;
@@ -139,6 +141,12 @@ public class OperationServiceImpl implements OperationService {
     if (previous != null) {
       if (!fingerprint.equals(previous.path("fingerprint").asText()))
         throw new BusinessException(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", "请求标识已用于其他操作");
+      log.debug(
+          "Reusing operation jobId={} action={} requestId={} state={}",
+          id,
+          action,
+          key,
+          previous.path("state").asText());
       return previous;
     }
     var job = jobs.get(id);
@@ -154,6 +162,12 @@ public class OperationServiceImpl implements OperationService {
             .put("fingerprint", fingerprint)
             .put("state", "SUBMITTING");
     operation = store.save("operations", key, operation, 0);
+    log.info(
+        "Operation submitting jobId={} action={} requestId={} revision={}",
+        id,
+        action,
+        key,
+        job.revision());
     try {
       JsonNode existing = client.call("GET", client.base() + "/" + job.deploymentName(), null);
       if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
@@ -161,6 +175,7 @@ public class OperationServiceImpl implements OperationService {
         String progress = stops.stop(id, request.path("upgradeMode").asText("savepoint"), existing);
         operation.put("state", "ACCEPTED").put("message", progress);
         audit.record("JOB_STOP", id, "ACCEPTED");
+        log.info("Stop accepted jobId={} requestId={}", id, key);
         return store.save("operations", key, operation, 1);
       }
       if (stops.pending(id)) {
@@ -227,7 +242,8 @@ public class OperationServiceImpl implements OperationService {
             || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
           ObjectNode stoppedResource = action.equals("deploy") ? null : stops.restartResource(id);
           if (stoppedResource != null) {
-            resource = stoppedResource;
+            rendered = variables.render(stoppedResource);
+            resource = rendered.deployment();
             resource.withObject("/metadata").put("name", job.deploymentName());
             resource.withObject("/spec/flinkConfiguration").remove("kubernetes.cluster-id");
           } else {
@@ -280,7 +296,6 @@ public class OperationServiceImpl implements OperationService {
           specJob.put("upgradeMode", mode);
           switch (action) {
             case "start" -> specJob.put("state", "running");
-            case "stop", "suspend" -> specJob.put("state", "suspended");
             case "restart" ->
                 spec.put("restartNonce", Math.max(nonce, spec.path("restartNonce").asLong() + 1));
             case "savepoint", "checkpoint" -> {
@@ -305,6 +320,10 @@ public class OperationServiceImpl implements OperationService {
                   .put("state", "running");
             }
           }
+        }
+        if (rendered == null && Set.of("start", "restore").contains(action)) {
+          rendered = variables.render(resource);
+          resource = rendered.deployment();
         }
         ObjectNode metadata = (ObjectNode) resource.get("metadata");
         metadata
@@ -341,12 +360,27 @@ public class OperationServiceImpl implements OperationService {
           .put("message", "API 已接受，请手动刷新确认实际运行状态")
           .put("resourceVersion", response.path("metadata").path("resourceVersion").asText());
       audit.record("JOB_" + action.toUpperCase(), id, "ACCEPTED");
+      log.info("Operation accepted jobId={} action={} requestId={}", id, action, key);
     } catch (BusinessException ex) {
+      log.warn(
+          "Operation rejected jobId={} action={} requestId={} code={}", id, action, key, ex.code());
       operation
           .put("state", ex.code().equals("KUBERNETES_UNAVAILABLE") ? "UNKNOWN" : "REJECTED")
           .put("message", ex.getMessage())
           .put("errorCode", ex.code());
       audit.record("JOB_" + action.toUpperCase(), id, operation.path("state").asText());
+    } catch (RuntimeException ex) {
+      log.error(
+          "Operation outcome unknown jobId={} action={} requestId={} errorType={}",
+          id,
+          action,
+          key,
+          ex.getClass().getSimpleName());
+      operation
+          .put("state", "UNKNOWN")
+          .put("errorCode", "OPERATION_FAILED")
+          .put("message", "操作结果不确定，请刷新集群状态后再决定是否重试");
+      audit.record("JOB_" + action.toUpperCase(), id, "UNKNOWN");
     }
     return store.save("operations", key, operation, 1);
   }

@@ -83,6 +83,7 @@ public class JobAdoptionServiceImpl implements JobAdoptionService {
       fail("RESOURCE_CHANGED", "作业已变化，请刷新后确认当前版本再纳管");
     ObjectNode source = live.deepCopy();
     source.remove("status");
+    com.flinkweb.service.job.creation.support.JobEditorPolicy.mark(source, false);
     ((ObjectNode) source.get("metadata"))
         .remove(
             List.of(

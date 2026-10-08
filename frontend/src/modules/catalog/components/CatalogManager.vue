@@ -20,14 +20,9 @@ const rows = ref<Row[]>([]),
 const showSecret = ref(false),
   query = ref(''),
   jsonValue = ref(false),
-  category = ref(''),
-  objectQuery = ref(''),
   page = ref(1)
 const pageSize = 10
 const admin = computed(() => currentUser.value?.roles.some((r) => r.endsWith('ADMIN')))
-const developer = computed(
-  () => admin.value || currentUser.value?.roles.some((r) => r.endsWith('DEVELOPER')),
-)
 const api = computed(() =>
   type.value === 'users'
     ? '/api/users'
@@ -45,11 +40,7 @@ const fields = computed(() =>
   ),
 )
 const filtered = computed(() =>
-  rows.value.filter(
-    (r) =>
-      JSON.stringify(r).toLowerCase().includes(query.value.toLowerCase()) &&
-      (!category.value || (r.category || 'shared') === category.value),
-  ),
+  rows.value.filter((r) => JSON.stringify(r).toLowerCase().includes(query.value.toLowerCase())),
 )
 const sorted = computed(() =>
   type.value === 'audit'
@@ -63,7 +54,7 @@ const visible = computed(() =>
     Math.min(page.value, pages.value) * pageSize,
   ),
 )
-watch([query, category, type], () => (page.value = 1))
+watch([query, type], () => (page.value = 1))
 async function load() {
   error.value = ''
   const path = api.value
@@ -100,7 +91,6 @@ function edit(row?: Row) {
     row || {
       id: '',
       revision: 0,
-      category: 'main',
       kind: 'plain',
       enabled: true,
       role: 'VIEWER',
@@ -138,12 +128,7 @@ async function save() {
   }
 }
 async function remove(row: Row) {
-  if (
-    !(await confirmDialog(
-      '删除记录 ' + row.id + '？制品登记删除不会清理 S3 对象，配置删除可能影响后续提交。',
-    ))
-  )
-    return
+  if (!(await confirmDialog('删除记录 ' + row.id + '？配置删除可能影响后续提交。'))) return
   try {
     await request(api.value + '/' + encodeURIComponent(row.id) + '?revision=' + row.revision, {
       method: 'DELETE',
@@ -153,58 +138,8 @@ async function remove(row: Row) {
     error.value = showValidationError((e as Error).message)
   }
 }
-const listing = ref<{
-  bucket: string
-  prefix: string
-  directories: string[]
-  objects: { key: string; size: number; modifiedAt: string }[]
-  nextToken: string
-} | null>(null)
-const prefix = ref(''),
-  tokens = ref<string[]>([])
-async function browse(path = prefix.value, token = '') {
-  busy.value = true
-  error.value = ''
-  try {
-    listing.value = await request(
-      '/api/artifacts/objects?' + new URLSearchParams({ prefix: path, token }),
-    )
-    prefix.value = listing.value!.prefix
-    if (token) tokens.value.push(token)
-  } catch (e) {
-    error.value = showValidationError((e as Error).message)
-  } finally {
-    busy.value = false
-  }
-}
-async function upload(event: Event) {
-  const input = event.target as HTMLInputElement,
-    files = Array.from(input.files || [])
-  if (!files.length) return
-  busy.value = true
-  error.value = ''
-  let succeeded = 0
-  try {
-    for (const file of files) {
-      const data = new FormData()
-      data.append('file', file)
-      data.append('category', category.value || 'shared')
-      const saved = await request<Row>('/api/artifacts/upload', { method: 'POST', body: data })
-      rows.value = [...rows.value.filter((r) => r.id !== saved.id), saved]
-      succeeded++
-    }
-    message.value = '已上传 ' + succeeded + ' 个文件，所有作业均可引用。'
-  } catch (e) {
-    error.value = '已上传 ' + succeeded + ' 个文件；' + (e as Error).message
-  } finally {
-    busy.value = false
-    input.value = ''
-  }
-}
-
 function resetFilters() {
   query.value = ''
-  category.value = ''
 }
 </script>
 <template>
@@ -223,78 +158,6 @@ function resetFilters() {
   >
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice">{{ message }}</div>
-  <section v-if="type === 'artifacts'" class="panel form-panel">
-    <div class="panel-toolbar">
-      <h3>S3 对象目录</h3>
-      <label v-if="developer" class="button upload-button"
-        >{{ busy ? '上传中…' : '上传文件'
-        }}<input type="file" multiple aria-label="上传文件" :disabled="busy" @change="upload"
-      /></label>
-    </div>
-    <div class="toolbar-actions">
-      <select data-field="category" v-model="category" aria-label="上传文件目录">
-        <option value="">公共目录</option>
-        <option value="main">主 JAR</option>
-        <option value="dependency">依赖与配置</option></select
-      ><input
-        data-field="prefix"
-        v-model="prefix"
-        placeholder="留空使用配置的根目录"
-      /><ManualRefreshButton :action="() => browse()" :disabled="busy" label="列出目录" />
-    </div>
-    <div v-if="listing">
-      <input
-        data-field="objectQuery"
-        v-model="objectQuery"
-        class="search"
-        placeholder="筛选当前页对象 / 目录"
-      />
-      <p class="muted">s3://{{ listing.bucket }}/{{ listing.prefix }}</p>
-      <button
-        v-for="dir in listing.directories.filter((d) =>
-          d.toLowerCase().includes(objectQuery.toLowerCase()),
-        )"
-        :key="dir"
-        class="text-button"
-        @click="browse(dir)"
-      >
-        ▣ {{ dir }}
-      </button>
-      <table>
-        <thead>
-          <tr>
-            <th>对象</th>
-            <th>大小</th>
-            <th>修改时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="item in listing.objects.filter((o) =>
-              o.key.toLowerCase().includes(objectQuery.toLowerCase()),
-            )"
-            :key="item.key"
-          >
-            <td>
-              <a :href="'/api/artifacts/download?key=' + encodeURIComponent(item.key)">{{
-                item.key
-              }}</a>
-            </td>
-            <td>{{ (item.size / 1024).toFixed(1) }} KB</td>
-            <td>{{ new Date(item.modifiedAt).toLocaleString() }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <button
-        v-if="listing.nextToken"
-        class="button"
-        :disabled="busy"
-        @click="browse(prefix, listing.nextToken)"
-      >
-        下一页
-      </button>
-    </div>
-  </section>
   <section v-if="editing" class="panel form-panel detail-panel">
     <h3>{{ form.revision ? '编辑记录' : '新增记录' }}</h3>
     <form @submit.prevent="save">
@@ -342,13 +205,11 @@ function resetFilters() {
                 ? 'password'
                 : 'text'
             "
-            :required="['repository', 'version', 'uri', 'sha256', 'filename'].includes(field.key)"
+            :required="['repository', 'version'].includes(field.key)"
             :pattern="
               field.key === 'version' && type === 'images'
                 ? '(1\\.(16|17|18|19|20)|2\\.[0-3])(\\.[0-9]+)?([\\-_].*)?'
-                : field.key === 'sha256'
-                  ? '[a-fA-F0-9]{64}'
-                  : undefined
+                : undefined
             "
             autocomplete="off"
           />
@@ -375,19 +236,13 @@ function resetFilters() {
   </section>
   <section class="panel detail-panel">
     <div class="panel-toolbar">
-      <h3>{{ type === 'artifacts' ? '制品登记' : '记录列表' }}</h3>
+      <h3>记录列表</h3>
       <div class="toolbar-actions">
-        <input data-field="query" v-model="query" placeholder="搜索记录" /><select
-          data-field="category"
-          v-if="type === 'artifacts'"
-          v-model="category"
-          aria-label="制品目录筛选"
+        <input data-field="query" v-model="query" placeholder="搜索记录" /><button
+          class="text-button"
+          @click="resetFilters"
         >
-          <option value="">全部目录</option>
-          <option value="main">主 JAR</option>
-          <option value="dependency">依赖与配置</option>
-          <option value="shared">公共制品</option></select
-        ><button class="text-button" @click="resetFilters">重置</button
+          重置</button
         ><ManualRefreshButton :action="load" label="刷新列表" />
       </div>
     </div>
@@ -435,10 +290,7 @@ function resetFilters() {
                     : row.kind === 'secretRef'
                       ? row.secretName + '/' + row.secretKey
                       : row.value
-                  : row.version ||
-                    row.filename ||
-                    row.description ||
-                    (row.enabled === false ? '禁用' : '—')
+                  : row.version || row.description || (row.enabled === false ? '禁用' : '—')
               }}
             </td>
             <td>{{ row.revision }}</td>

@@ -15,7 +15,7 @@ RUN yum install -y openssl-libs bzip2-libs libffi zlib xz-libs ca-certificates s
     && yum clean all && rm -rf /var/cache/dnf /var/cache/yum \
     && useradd --uid 9999 --create-home downloader
 COPY --from=python-build /opt/python /opt/python
-COPY download.py /app/download.py
+COPY download.py flink-bootstrap.sh /app/
 RUN /opt/python/bin/python3 -c "import ssl, boto3; print(ssl.OPENSSL_VERSION)"
 USER 9999
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

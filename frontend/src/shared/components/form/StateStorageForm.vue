@@ -257,7 +257,8 @@ watch(
         启用状态存储与 Checkpoint
       </label>
       <p class="muted">
-        启用后默认使用 S3，存储路径和连接参数自动写入下方 Flink 配置；已有作业保留原配置。
+        启用后默认使用 S3，存储路径和连接参数自动生成。启动时自动使用当前 Flink 镜像内的 Presto S3
+        插件，无需上传插件文件。
       </p>
       <p v-if="configuring" class="muted" role="status">正在生成 S3 状态配置…</p>
       <p v-if="error" class="field-error" role="alert">{{ error }}</p>

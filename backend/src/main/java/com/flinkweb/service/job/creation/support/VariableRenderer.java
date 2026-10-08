@@ -20,6 +20,8 @@ public class VariableRenderer {
   private static final Pattern TOKEN =
       Pattern.compile("^\\{\\{(config|secret):([a-z0-9][a-z0-9_.-]{0,100})}}$");
   private final RecordRepository store;
+  private final S3PluginPodBuilder s3Plugin;
+  private final com.flinkweb.service.artifact.support.ArtifactPodBuilder artifacts;
   private final SecretCipher cipher;
   private final ObjectMapper mapper;
   private final PlatformProperties properties;
@@ -29,8 +31,12 @@ public class VariableRenderer {
       RecordRepository store,
       SecretCipher cipher,
       ObjectMapper mapper,
-      PlatformProperties properties) {
+      PlatformProperties properties,
+      com.flinkweb.service.artifact.support.ArtifactPodBuilder artifacts,
+      S3PluginPodBuilder s3Plugin) {
+    this.s3Plugin = s3Plugin;
     this.store = store;
+    this.artifacts = artifacts;
     this.cipher = cipher;
     this.mapper = mapper;
     this.properties = properties;
@@ -40,8 +46,11 @@ public class VariableRenderer {
   public RenderedDeployment render(ObjectNode source) {
     List<ObjectNode> secrets = new ArrayList<>();
     ObjectNode deployment = source.deepCopy();
+    artifacts.prepare(deployment.withObject("/spec"));
+    s3Plugin.apply(deployment.withObject("/spec"));
     bindS3Credentials(deployment);
-    return new RenderedDeployment((ObjectNode) walk(deployment, secrets, ""), secrets);
+    ObjectNode rendered = (ObjectNode) walk(deployment, secrets, "");
+    return new RenderedDeployment(rendered, secrets);
   }
 
   /** 将 S3 密钥变量映射为 Flink 主容器凭据，避免密钥明文进入 CR 和历史。 */
@@ -59,9 +68,6 @@ public class VariableRenderer {
     }
     ObjectNode spec = deployment.withObject("/spec");
     injectS3Environment(spec.withObject("/podTemplate"), access, secret);
-    for (String role : List.of("jobManager", "taskManager"))
-      if (spec.path(role).path("podTemplate").isObject())
-        injectS3Environment(spec.withObject("/" + role).withObject("/podTemplate"), access, secret);
     ((ObjectNode) config).remove(List.of("s3.access-key", "s3.secret-key"));
   }
 
@@ -88,6 +94,7 @@ public class VariableRenderer {
       if (parent.equals("env") && object.has("name") && object.path("value").isTextual()) {
         var match = TOKEN.matcher(object.path("value").asText());
         if (match.matches() && match.group(1).equals("secret")) {
+          if (store.find("configs", match.group(2)) == null) fail("请先在配置管理中配置密钥：" + match.group(2));
           var config = store.require("configs", match.group(2));
           String name, key;
           if (config.path("kind").asText().equals("secretRef")) {
@@ -122,7 +129,12 @@ public class VariableRenderer {
                             cipher
                                 .decrypt(match.group(2), config.path("encryptedValue").asText())
                                 .getBytes(StandardCharsets.UTF_8)));
-            secrets.add(secret);
+            if (secrets.stream()
+                .noneMatch(
+                    item ->
+                        item.path("metadata")
+                            .path("name")
+                            .equals(secret.path("metadata").path("name")))) secrets.add(secret);
           } else {
             fail("secret 引用必须指向密钥配置");
             return null;

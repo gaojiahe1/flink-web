@@ -23,4 +23,4 @@ export interface JobDraft {
 export type DraftInput = Pick<
   JobDraft,
   'name' | 'description' | 'flinkVersion' | 'yaml' | 'revision'
-> & { workspaceId?: string }
+> & { workspaceId?: string; allowFormRewrite?: boolean }

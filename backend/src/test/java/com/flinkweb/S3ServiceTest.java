@@ -123,20 +123,155 @@ class S3ServiceTest {
           .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
     }
   }
+
   /** 固定作业目录上传和直接选择无需登记，目录边界仍由后端执行。 */
   @Test
   void directObjectReferencesStayInsideConfiguredRoot() {
-    var file = new org.springframework.mock.web.MockMultipartFile("file", "job.jar",
-        "application/java-archive", "data".getBytes(StandardCharsets.UTF_8));
+    var file =
+        new org.springframework.mock.web.MockMultipartFile(
+            "file", "job.jar", "application/java-archive", "data".getBytes(StandardCharsets.UTF_8));
     var uploaded = service.upload(file, "artifacts/jobs/one/");
     assertThat(uploaded.path("id").asText()).isEqualTo("s3:artifacts/jobs/one/job.jar");
-    assertThat(uploaded.path("uri").asText()).isEqualTo("s3://test-bucket/artifacts/jobs/one/job.jar");
+    assertThat(uploaded.path("uri").asText())
+        .isEqualTo("s3://test-bucket/artifacts/jobs/one/job.jar");
     var reference = service.describe("artifacts/jobs/one/job.jar");
-    assertThat(reference.path("sha256").asText()).isEqualTo("3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7");
-    assertThatThrownBy(() -> service.describe("outside/job.jar")).isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
-    assertThatThrownBy(() -> service.delete("artifacts/jobs/")).isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+    assertThat(reference.has("sha256")).isFalse();
+    assertThatThrownBy(() -> service.describe("outside/job.jar"))
+        .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+    assertThatThrownBy(() -> service.delete("artifacts/jobs/"))
+        .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
     assertThat(service.defaults().toString()).doesNotContain("local-test-only");
     assertThat(service.list("", null).path("rootPrefix").asText()).isEqualTo("artifacts/");
   }
 
+  /** 替换网络客户端，验证批量删除和复制协议的边界及分页行为。 */
+  private software.amazon.awssdk.services.s3.S3Client mockStorage() {
+    service.close();
+    var client = mock(software.amazon.awssdk.services.s3.S3Client.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "client", client);
+    return client;
+  }
+
+  /** 删除仅扫描作业专属前缀，处理多批次并保留共享目录及相邻 UUID。 */
+  @Test
+  void deletesAllBatchesWithinExactJobPrefixes() {
+    var client = mockStorage();
+    String id = java.util.UUID.randomUUID().toString(), prefix = service.jobPrefix(id);
+    var objects = new java.util.LinkedHashSet<String>();
+    for (int i = 0; i < 1001; i++) objects.add("test-bucket/" + prefix + "file-" + i);
+    objects.add("test-bucket/artifacts/shared/shared.jar");
+    objects.add("test-bucket/" + prefix.substring(0, prefix.length() - 1) + "-other/file");
+    objects.add("state-bucket/checkpoints/" + id + "/ha/data");
+    when(client.listObjectsV2(
+            any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+        .thenAnswer(
+            inv -> {
+              var request =
+                  (software.amazon.awssdk.services.s3.model.ListObjectsV2Request)
+                      inv.getArgument(0);
+              var found =
+                  objects.stream()
+                      .filter(k -> k.startsWith(request.bucket() + "/" + request.prefix()))
+                      .limit(1000)
+                      .map(
+                          k ->
+                              software.amazon.awssdk.services.s3.model.S3Object.builder()
+                                  .key(k.substring(request.bucket().length() + 1))
+                                  .build())
+                      .toList();
+              return software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                  .contents(found)
+                  .build();
+            });
+    when(client.deleteObjects(
+            any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class)))
+        .thenAnswer(
+            inv -> {
+              var request =
+                  (software.amazon.awssdk.services.s3.model.DeleteObjectsRequest)
+                      inv.getArgument(0);
+              for (var item : request.delete().objects())
+                objects.remove(request.bucket() + "/" + item.key());
+              return software.amazon.awssdk.services.s3.model.DeleteObjectsResponse.builder()
+                  .build();
+            });
+    service.deleteJobStorage(id, true);
+    assertThat(objects).hasSize(2).contains("test-bucket/artifacts/shared/shared.jar");
+    verify(client, times(3))
+        .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
+    service.deleteJobStorage(id, true);
+    verify(client, times(3))
+        .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
+    assertThatThrownBy(() -> service.deleteJobStorage("../shared", true))
+        .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+  }
+
+  /** 批量删除 HTTP 成功但含单项失败时必须报错，不误报完成。 */
+  @Test
+  void partialDeleteErrorsAreNotReportedAsSuccess() {
+    var client = mockStorage();
+    String id = java.util.UUID.randomUUID().toString();
+    when(client.listObjectsV2(
+            any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+        .thenReturn(
+            software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                .contents(
+                    software.amazon.awssdk.services.s3.model.S3Object.builder()
+                        .key(service.jobPrefix(id) + "main.jar")
+                        .build())
+                .build());
+    when(client.deleteObjects(
+            any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class)))
+        .thenReturn(
+            software.amazon.awssdk.services.s3.model.DeleteObjectsResponse.builder()
+                .errors(
+                    software.amazon.awssdk.services.s3.model.S3Error.builder()
+                        .code("AccessDenied")
+                        .build())
+                .build());
+    assertThatThrownBy(() -> service.deleteJobStorage(id, true))
+        .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+  }
+
+  /** 服务端复制作业依赖支持分页，包含源 ETag 校验，目标只使用新 UUID。 */
+  @Test
+  void copiesPaginatedFilesToIndependentDirectory() {
+    var client = mockStorage();
+    String from = java.util.UUID.randomUUID().toString(),
+        to = java.util.UUID.randomUUID().toString();
+    var first =
+        software.amazon.awssdk.services.s3.model.S3Object.builder()
+            .key(service.jobPrefix(from) + "one.jar")
+            .eTag("etag-one")
+            .build();
+    var second =
+        software.amazon.awssdk.services.s3.model.S3Object.builder()
+            .key(service.jobPrefix(from) + "nested/two.jar")
+            .eTag("etag-two")
+            .build();
+    when(client.listObjectsV2(
+            any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+        .thenReturn(
+            software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                .contents(first)
+                .isTruncated(true)
+                .nextContinuationToken("next")
+                .build(),
+            software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                .contents(second)
+                .isTruncated(false)
+                .build());
+    service.copyJobFiles(from, to, true);
+    var captured =
+        org.mockito.ArgumentCaptor.forClass(
+            software.amazon.awssdk.services.s3.model.CopyObjectRequest.class);
+    verify(client, times(2)).copyObject(captured.capture());
+    assertThat(captured.getAllValues())
+        .allSatisfy(
+            r -> {
+              assertThat(r.destinationKey()).startsWith(service.jobPrefix(to));
+              assertThat(r.copySource()).contains(from);
+              assertThat(r.copySourceIfMatch()).startsWith("etag-");
+            });
+  }
 }

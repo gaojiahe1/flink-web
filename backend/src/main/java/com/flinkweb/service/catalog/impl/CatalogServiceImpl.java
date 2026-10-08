@@ -133,14 +133,6 @@ public class CatalogServiceImpl implements CatalogService {
             .put("version", version)
             .put("flinkVersion", flinkVersion)
             .put("javaVersion", input.path("javaVersion").asText());
-        String downloader =
-            input
-                .path("downloaderImage")
-                .asText(old == null ? "" : old.path("downloaderImage").asText())
-                .trim();
-        if (!downloader.isEmpty() && !downloader.matches("[a-zA-Z0-9][a-zA-Z0-9.:/_@-]*"))
-          fail("downloaderImage: 下载器镜像地址无效");
-        node.put("downloaderImage", downloader);
         // 编辑旧记录时保留既有拉取凭据；新表单不再要求填写。
         if (old != null && old.has("pullSecret")) node.set("pullSecret", old.get("pullSecret"));
       }

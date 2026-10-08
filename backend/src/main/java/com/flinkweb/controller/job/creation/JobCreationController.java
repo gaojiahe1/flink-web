@@ -19,12 +19,18 @@ public class JobCreationController {
   private final JobService jobs;
   private final OperationService operations;
   private final FormService forms;
+  private final com.flinkweb.service.job.creation.YamlService yaml;
 
   /** 注入本模块接口依赖，不在控制器内执行持久化逻辑。 */
-  public JobCreationController(JobService jobs, OperationService operations, FormService forms) {
+  public JobCreationController(
+      JobService jobs,
+      OperationService operations,
+      FormService forms,
+      com.flinkweb.service.job.creation.YamlService yaml) {
     this.jobs = jobs;
     this.operations = operations;
     this.forms = forms;
+    this.yaml = yaml;
   }
 
   /** 执行本地 YAML 校验，并按请求选择 Kubernetes dry-run。 */
@@ -50,6 +56,13 @@ public class JobCreationController {
   @PostMapping("/render-form")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
   public ApiResponse<ObjectNode> render(@RequestBody ObjectNode input) {
+    String jobId = input.path("jobId").asText();
+    if (!jobId.isBlank()) {
+      var saved = jobs.get(jobId);
+      var tree = yaml.parse(saved.yaml());
+      if (!input.path("allowFormRewrite").asBoolean())
+        com.flinkweb.service.job.creation.support.JobEditorPolicy.requireForm(tree);
+    }
     return ApiResponse.ok(forms.render(input));
   }
 
@@ -59,6 +72,16 @@ public class JobCreationController {
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
   public ApiResponse<JobDraft> create(@Valid @RequestBody DraftRequest input) {
     return ApiResponse.ok(jobs.create(input));
+  }
+
+  /** 同步复制一个独立的新作业，不触发集群部署。 */
+  @PostMapping("/{id}/copy")
+  @ResponseStatus(HttpStatus.CREATED)
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<JobDraft> copy(
+      @PathVariable String id,
+      @Valid @RequestBody com.flinkweb.dto.job.creation.CopyJobRequest input) {
+    return ApiResponse.ok(jobs.copy(id, input));
   }
 
   /** 按修订号更新草稿，避免覆盖其他人的修改。 */

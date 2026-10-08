@@ -8,6 +8,7 @@ import com.flinkweb.repository.job.JobRepository;
 import com.flinkweb.service.audit.AuditService;
 import com.flinkweb.service.job.creation.JobService;
 import com.flinkweb.service.job.creation.YamlService;
+import com.flinkweb.service.job.creation.support.JobEditorPolicy;
 import com.flinkweb.service.permission.AccessService;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +24,7 @@ public class JobServiceImpl implements JobService {
   private final JobBindingRepository bindings;
   private final AuditService audit;
   private final AccessService access;
+  private final com.flinkweb.client.storage.S3StorageClient storage;
 
   /** 注入草稿仓库、YAML 校验器、绑定仓库和审计服务。 */
   public JobServiceImpl(
@@ -30,7 +32,9 @@ public class JobServiceImpl implements JobService {
       AuditService audit,
       YamlService yaml,
       JobBindingRepository bindings,
-      AccessService access) {
+      AccessService access,
+      com.flinkweb.client.storage.S3StorageClient storage) {
+    this.storage = storage;
     this.repository = repository;
     this.audit = audit;
     this.yaml = yaml;
@@ -60,8 +64,13 @@ public class JobServiceImpl implements JobService {
   /** 校验 YAML 语法，在同一事务内新增草稿和审计记录。 */
   @org.springframework.transaction.annotation.Transactional
   public JobDraft create(DraftRequest request) {
-    yaml.parse(request.yaml());
-    if (request.workspaceId() != null && !request.workspaceId().matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+    var source = yaml.parse(request.yaml());
+    if (source.at("/metadata/labels").has(JobEditorPolicy.LABEL))
+      JobEditorPolicy.mark(source, JobEditorPolicy.allowsForm(source));
+    if (request.workspaceId() != null
+        && !request
+            .workspaceId()
+            .matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_WORKSPACE", "文件目录标识无效");
     if (request.workspaceId() != null && repository.findById(request.workspaceId()).isPresent())
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_ID_EXISTS", "作业目录标识已存在，请重新创建");
@@ -70,14 +79,18 @@ public class JobServiceImpl implements JobService {
     var now = Instant.now();
     var draft =
         new JobDraft(
-            request.workspaceId() == null ? UUID.randomUUID().toString() : UUID.fromString(request.workspaceId()).toString(),
+            request.workspaceId() == null
+                ? UUID.randomUUID().toString()
+                : UUID.fromString(request.workspaceId()).toString(),
             request.name(),
             request.description(),
             request.flinkVersion(),
-            request.yaml(),
+            source.equals(yaml.parse(request.yaml())) ? request.yaml() : yaml.dump(source),
             0,
             now,
-            now, 0, null);
+            now,
+            0,
+            null);
     repository.insert(draft);
     access.initialize(draft.id());
     audit.record("DRAFT_CREATE", draft.id(), "SUCCESS");
@@ -91,19 +104,27 @@ public class JobServiceImpl implements JobService {
     var existing = get(id);
     if (!existing.name().equals(request.name()))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "IMMUTABLE_NAME", "作业名称创建后不可修改");
-    yaml.parse(request.yaml());
+    var source = yaml.parse(request.yaml());
+    var previous = yaml.parse(existing.yaml());
+    if (request.allowFormRewrite()
+        || previous.at("/metadata/labels").has(JobEditorPolicy.LABEL)
+        || source.at("/metadata/labels").has(JobEditorPolicy.LABEL))
+      JobEditorPolicy.mark(
+          source, JobEditorPolicy.allowsForm(previous) || request.allowFormRewrite());
     var updated =
         new JobDraft(
             id,
             request.name(),
             request.description(),
             request.flinkVersion(),
-            request.yaml(),
+            source.equals(yaml.parse(request.yaml())) ? request.yaml() : yaml.dump(source),
             request.revision() + 1,
             existing.createdAt(),
-            Instant.now(), existing.jobNumber(), existing.deploymentName());
+            Instant.now(),
+            existing.jobNumber(),
+            existing.deploymentName());
     if (!repository.update(updated, request.revision())) throw conflict();
-    audit.record("DRAFT_UPDATE", id, "SUCCESS");
+    audit.record(request.allowFormRewrite() ? "DRAFT_FORM_CONVERT" : "DRAFT_UPDATE", id, "SUCCESS");
     return updated;
   }
 
@@ -111,10 +132,96 @@ public class JobServiceImpl implements JobService {
   @org.springframework.transaction.annotation.Transactional
   public void delete(String id, long revision) {
     access.require(id, "edit");
-    get(id);
+    var existing = get(id);
     if (!repository.delete(id, revision)) throw conflict();
+    storage.deleteJobStorage(id, existing.yaml().contains("s3://"));
     bindings.delete(id);
     audit.record("DRAFT_DELETE", id, "SUCCESS");
+  }
+
+  /** 复制源配置为独立草稿；新编号、文件目录和状态目录不与源作业共用。 */
+  @org.springframework.transaction.annotation.Transactional
+  public JobDraft copy(String id, com.flinkweb.dto.job.creation.CopyJobRequest request) {
+    access.require(id, "edit");
+    var source = get(id);
+    if (source.revision() != request.revision()) throw conflict();
+    String target = UUID.randomUUID().toString();
+    var node = yaml.parse(source.yaml());
+    node.remove("status");
+    var metadata = node.withObject("/metadata");
+    metadata.remove(
+        List.of(
+            "uid",
+            "resourceVersion",
+            "generation",
+            "managedFields",
+            "creationTimestamp",
+            "deletionTimestamp",
+            "ownerReferences",
+            "finalizers"));
+    for (String field : List.of("labels", "annotations"))
+      if (metadata.path(field).isObject()) {
+        var names = new java.util.ArrayList<String>();
+        metadata.path(field).fieldNames().forEachRemaining(names::add);
+        for (String key : names)
+          if (key.startsWith("flink-web/") || key.equals("app.kubernetes.io/managed-by"))
+            ((com.fasterxml.jackson.databind.node.ObjectNode) metadata.get(field)).remove(key);
+      }
+    JobEditorPolicy.mark(
+        node, request.allowFormRewrite() || JobEditorPolicy.allowsForm(yaml.parse(source.yaml())));
+    metadata.put("name", request.name());
+    var spec = node.withObject("/spec");
+    spec.remove(List.of("restartNonce"));
+    var job = spec.withObject("/job");
+    job.put("state", "running");
+    job.remove(
+        List.of(
+            "initialSavepointPath",
+            "savepointTriggerNonce",
+            "checkpointTriggerNonce",
+            "savepointRedeployNonce"));
+    var config = spec.withObject("/flinkConfiguration");
+    config.remove(
+        List.of(
+            "kubernetes.cluster-id", "high-availability.cluster-id", "execution.savepoint.path"));
+    for (String key :
+        List.of(
+            "state.checkpoints.dir",
+            "execution.checkpointing.dir",
+            "state.savepoints.dir",
+            "execution.checkpointing.savepoint-dir",
+            "high-availability.storageDir")) {
+      if (config.has(key)) {
+        String suffix =
+            key.contains("savepoint")
+                ? "savepoints"
+                : key.equals("high-availability.storageDir") ? "ha" : "checkpoints";
+        config.put(key, storage.jobStateRoot(target) + suffix);
+      }
+    }
+    String content = yaml.dump(node);
+    String bucket = storage.defaults().path("bucket").asText();
+    String sourceUri = "s3://" + bucket + "/" + storage.jobPrefix(id);
+    String targetUri = "s3://" + bucket + "/" + storage.jobPrefix(target);
+    content = content.replace(sourceUri, targetUri);
+    var created =
+        create(
+            new DraftRequest(
+                request.name(), source.description(), source.flinkVersion(), content, 0, target));
+    node = yaml.parse(created.yaml());
+    node.withObject("/metadata").put("name", created.deploymentName());
+    var result =
+        update(
+            created.id(),
+            new DraftRequest(
+                created.name(),
+                created.description(),
+                created.flinkVersion(),
+                yaml.dump(node),
+                created.revision()));
+    audit.record("DRAFT_COPY", target, "SUCCESS");
+    storage.copyJobFiles(id, target, source.yaml().contains(sourceUri));
+    return result;
   }
 
   /** 创建草稿被并发修改的冲突异常。 */

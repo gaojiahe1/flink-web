@@ -53,6 +53,7 @@ class PlatformIntegrationTest {
   /** 为集成测试提供独立 SQLite 文件及测试专用管理员和主密钥。 */
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry registry) {
+    registry.add("platform.artifacts.downloader-image", () -> "registry.test/downloader:kylin-sp3");
     registry.add("platform.storage.type", () -> "local");
     registry.add("platform.storage.local-path", () -> DATABASE.toString());
     registry.add("platform.storage.initialize", () -> true);
@@ -221,9 +222,7 @@ class PlatformIntegrationTest {
         .contains("workload-s3", "secretKeyRef", "sidecar", "OTHER");
     assertThat(rendered.deployment().at("/spec/flinkConfiguration").has("s3.access-key")).isFalse();
     assertThat(source.at("/spec/flinkConfiguration/s3.access-key").asText()).contains("{{secret:");
-    for (String path :
-        java.util.List.of(
-            "/spec/podTemplate", "/spec/jobManager/podTemplate", "/spec/taskManager/podTemplate")) {
+    for (String path : java.util.List.of("/spec/podTemplate")) {
       var env = rendered.deployment().at(path + "/spec/containers/1/env");
       assertThat(env).hasSize(3);
       assertThat(env.get(2).at("/valueFrom/secretKeyRef/name").asText()).isEqualTo("workload-s3");
@@ -422,7 +421,7 @@ class PlatformIntegrationTest {
         mapper
             .createObjectNode()
             .put("repository", "registry.test/flink")
-            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
+            .put("downloaderImage", "legacy/downloader:ignored")
             .put("version", "1.20")
             .put("flinkVersion", "1.20"),
         0);
@@ -442,32 +441,21 @@ class PlatformIntegrationTest {
             .put("templateId", "application-pod")
             .put("imageId", imageId);
     input.putArray("artifactIds").add(artifactId);
-    var registeredImage = records.require("images", imageId);
-    registeredImage.remove("downloaderImage");
-    records.save("images", imageId, registeredImage, registeredImage.path("revision").asLong());
-    assertThatThrownBy(() -> forms.render(input))
-        .isInstanceOf(BusinessException.class)
-        .hasMessageContaining("downloaderImage");
-    registeredImage = records.require("images", imageId);
-    registeredImage.put("downloaderImage", "registry.test/downloader:kylin-sp3");
-    records.save("images", imageId, registeredImage, registeredImage.path("revision").asLong());
     var output = forms.render(input);
     var deployment = yaml.validate(yaml.parse(output.path("yaml").asText()), "form-job");
     assertThat(deployment.at("/spec/image").asText()).isEqualTo("registry.test/flink:1.20");
     assertThat(deployment.at("/spec/job/jarURI").asText())
         .isEqualTo("local:///opt/flink/usrlib/job.jar");
-    for (String role : java.util.List.of("jobManager", "taskManager")) {
-      assertThat(
-              deployment.at("/spec/" + role + "/podTemplate/spec/initContainers/0/name").asText())
-          .isEqualTo("fw-download");
-      assertThat(
-              deployment.at("/spec/" + role + "/podTemplate/spec/initContainers/0/image").asText())
-          .isEqualTo("registry.test/downloader:kylin-sp3");
-      assertThat(
-              deployment.at("/spec/" + role + "/podTemplate/spec/containers/0/env/0/name").asText())
-          .isEqualTo("TZ");
-    }
-    assertThat(deployment.path("spec").has("podTemplate")).isFalse();
+    assertThat(deployment.at("/spec/podTemplate/spec/initContainers/0/image").asText())
+        .isEqualTo("registry.test/downloader:kylin-sp3");
+    assertThat(deployment.at("/spec/podTemplate/spec/containers/0/env/0/name").asText())
+        .isEqualTo("TZ");
+    assertThat(deployment.at("/spec/jobManager/podTemplate").isMissingNode()).isTrue();
+    assertThat(deployment.at("/spec/taskManager/podTemplate").isMissingNode()).isTrue();
+    String env = deployment.at("/spec/podTemplate/spec/initContainers/0/env").toString();
+    assertThat(env)
+        .contains("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "{{secret:s3-access-key}}");
+    assertThat(env).doesNotContain("sha256", "AWS_DEFAULT_REGION", "AWS_REGION");
   }
 
   /** 验证账号修订变化会使已有会话失效。 */
@@ -687,7 +675,7 @@ class PlatformIntegrationTest {
         mapper
             .createObjectNode()
             .put("repository", "registry.test/flink-sql")
-            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
+            .put("downloaderImage", "legacy/downloader:ignored")
             .put("version", "1.20")
             .put("flinkVersion", "1.20"),
         0);
@@ -876,7 +864,7 @@ class PlatformIntegrationTest {
             .createObjectNode()
             .put("name", imageId)
             .put("repository", "registry.test/flink")
-            .put("downloaderImage", "registry.test/downloader:kylin-sp3")
+            .put("downloaderImage", "legacy/downloader:ignored")
             .put("version", "1.20.5"));
     var original = yaml.parse(source("roundtrip"));
     original.withObject("/spec").put("restartNonce", 123);
@@ -963,5 +951,154 @@ class PlatformIntegrationTest {
                 .at("/spec/flinkConfiguration/high-availability.storageDir")
                 .asText())
         .isEqualTo("s3://state/ha");
+  }
+
+  /** 下载器为独立单例设置，拒绝旧修订覆盖且不改变 Flink 镜像记录。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void downloaderBindingIsSingletonAndRevisionProtected() throws Exception {
+    try {
+      mvc.perform(
+              put("/api/system/downloader")
+                  .with(csrf())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"image\":\"registry.test/downloader:new\",\"revision\":0}"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.data.revision").value(1));
+      mvc.perform(
+              put("/api/system/downloader")
+                  .with(csrf())
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"image\":\"registry.test/downloader:stale\",\"revision\":0}"))
+          .andExpect(status().isConflict());
+      mvc.perform(get("/api/system/downloader"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.data.image").value("registry.test/downloader:new"));
+    } finally {
+      var saved = records.find("settings", "downloader");
+      if (saved != null) records.delete("settings", "downloader", saved.path("revision").asLong());
+    }
+  }
+
+  /** 普通开发者可以读取统一配置，但不能修改下载器绑定。 */
+  @Test
+  @WithMockUser(roles = "DEVELOPER")
+  void downloaderBindingRequiresAdministrator() throws Exception {
+    mvc.perform(get("/api/system/downloader")).andExpect(status().isOk());
+    mvc.perform(
+            put("/api/system/downloader")
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"image\":\"registry.test/downloader:new\",\"revision\":0}"))
+        .andExpect(status().isForbidden());
+  }
+
+  /** 历史双角色下载器重渲染统一镜像并注入 S3 Secret，去除校验和及区域变量。 */
+  @Test
+  void legacyDownloadersNormalizeAndResolveCredentialsWithoutStateStorage() {
+    for (String id : java.util.List.of("s3-access-key", "s3-secret-key")) {
+      var old = records.find("configs", id);
+      records.save(
+          "configs",
+          id,
+          mapper
+              .createObjectNode()
+              .put("kind", "secretRef")
+              .put("secretName", "download-s3")
+              .put("secretKey", id),
+          old == null ? 0 : old.path("revision").asLong());
+    }
+    var source = yaml.parse(source("legacy-download"));
+    String manifest =
+        "[{\"uri\":\"s3://bucket/job.jar\",\"filename\":\"job.jar\",\"sha256\":\"old\"}]";
+    for (String role : java.util.List.of("jobManager", "taskManager")) {
+      var init =
+          source
+              .withObject("/spec/" + role + "/podTemplate/spec")
+              .putArray("initContainers")
+              .addObject()
+              .put("name", "fw-download")
+              .put("image", "old-" + role + ":tag");
+      var env = init.putArray("env");
+      env.addObject().put("name", "ARTIFACT_MANIFEST").put("value", manifest);
+      env.addObject().put("name", "AWS_DEFAULT_REGION").put("value", "us-east-1");
+      env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", "obsolete-literal");
+    }
+    var result = renderer.render(source).deployment();
+    assertThat(result.at("/spec/podTemplate/spec/initContainers/0/image").asText())
+        .isEqualTo("registry.test/downloader:kylin-sp3");
+    assertThat(result.at("/spec/jobManager/podTemplate").isMissingNode()).isTrue();
+    assertThat(result.at("/spec/taskManager/podTemplate").isMissingNode()).isTrue();
+    assertThat(result.at("/spec/flinkConfiguration").isMissingNode()).isTrue();
+    assertThat(result.toString())
+        .contains("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "download-s3", "secretKeyRef")
+        .doesNotContain("sha256", "AWS_DEFAULT_REGION", "obsolete-literal", "{{secret:");
+    assertThat(source.toString()).contains("old-jobManager", "sha256");
+  }
+
+  /** 不同角色的自定义配置不能被静默删除或扩散到另一角色。 */
+  @Test
+  void incompatibleRoleTemplatesAreRejectedWithoutMutatingSource() {
+    var source = yaml.parse(source("custom-pods"));
+    source
+        .withObject("/spec/jobManager/podTemplate/spec")
+        .putObject("nodeSelector")
+        .put("role", "jm");
+    var copy = source.deepCopy();
+    assertThatThrownBy(() -> renderer.render(source))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("无法无损合并");
+    assertThat(source).isEqualTo(copy);
+  }
+
+  /** 已有或纳管资源始终仅限 YAML，新表单来源标签由后端保存且复制时继承。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void editorOriginCannotBeUpgradedByEditingYaml() throws Exception {
+    String name = "origin-" + UUID.randomUUID().toString().substring(0, 8);
+    var draft = jobs.create(new DraftRequest(name, "", "1.20.5", source(name), 0));
+    var changed = yaml.parse(draft.yaml());
+    com.flinkweb.service.job.creation.support.JobEditorPolicy.mark(changed, true);
+    var saved =
+        jobs.update(draft.id(), new DraftRequest(name, "", "1.20.5", yaml.dump(changed), 0));
+    assertThat(
+            com.flinkweb.service.job.creation.support.JobEditorPolicy.allowsForm(
+                yaml.parse(saved.yaml())))
+        .isFalse();
+    var copied =
+        jobs.copy(
+            saved.id(),
+            new com.flinkweb.dto.job.creation.CopyJobRequest(name + "-copy", saved.revision()));
+    assertThat(
+            com.flinkweb.service.job.creation.support.JobEditorPolicy.allowsForm(
+                yaml.parse(copied.yaml())))
+        .isFalse();
+    String imageId = "origin-image-" + UUID.randomUUID();
+    catalogs.save(
+        "images",
+        imageId,
+        mapper
+            .createObjectNode()
+            .put("name", imageId)
+            .put("repository", "flink")
+            .put("version", "1.20.5"));
+    var form =
+        forms.render(mapper.createObjectNode().put("name", name + "-form").put("imageId", imageId));
+    assertThat(
+            com.flinkweb.service.job.creation.support.JobEditorPolicy.allowsForm(
+                yaml.parse(form.path("yaml").asText())))
+        .isTrue();
+    mvc.perform(
+            post("/api/jobs/render-form")
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    mapper
+                        .createObjectNode()
+                        .put("jobId", draft.id())
+                        .put("baseYaml", yaml.dump(changed))
+                        .toString()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("YAML_ONLY_JOB"));
   }
 }

@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-01。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-08。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -88,9 +88,9 @@ npm run format:check
 | FLINK_WEB_S3_PREFIX | 允许浏览的制品根前缀，默认 artifacts/ |
 | AWS_REGION | 默认 us-east-1 |
 | AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY | 平台 S3 SDK 默认凭证链可读取；启动时成对加密导入配置管理 s3-access-key / s3-secret-key，仅初始化缺失项，不覆盖已保存值 |
-| FLINK_WEB_DOWNLOADER_IMAGE | 可选全局下载器镜像兜底，默认空；镜像管理中的“文件下载器镜像”优先 |
+| FLINK_WEB_DOWNLOADER_IMAGE | 统一下载器绑定的初始值，默认空；系统设置保存的单例绑定优先 |
 | FLINK_WEB_ARTIFACT_HOSTS | HTTP(S) 制品地址白名单，逗号分隔 host 或 host:port |
-| FLINK_WEB_ARTIFACT_CREDENTIALS_SECRET | 下载器 S3 凭据 Secret，使用 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 键 |
+| FLINK_WEB_ARTIFACT_CREDENTIALS_SECRET | 可选已有下载器 S3 Secret，使用 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 键；未配置则引用配置管理的 s3-access-key / s3-secret-key |
 | FLINK_WEB_SQL_VALIDATOR_DIR | Parser 根目录；本地默认 ./sql-validators，后端镜像内 /opt/sql-validators |
 
 主密钥不能随重启重新生成；数据库中只有加密值，丢失主密钥无法恢复原密钥配置。
@@ -109,11 +109,22 @@ docker build -t YOUR/flink-web-frontend:0.1.0 frontend
 docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 ~~~
 
-2026-10-01 本地验证：Docker Desktop linux/amd64 下四个最终 Kylin 镜像构建通过；前端 Nginx 配置检查和 HTTP 200、后端临时 SQLite 启动及健康检查 UP、下载器 Python/SSL/boto3 导入、SQL Runner 启动入口与 Flink 1.20.5 版本命令通过。SQL Runner 此次使用本地已有的 Flink 1.20.5 分发镜像测试；默认 1.20.3 分发镜像和其他架构未在本次重新验证。本次没有推送镜像或应用实际 Kubernetes 清单。
+2026-10-05 发布验证：Docker Desktop linux/amd64 下 app、web、downloader 三个 Kylin SP3 镜像已重新构建并推送到 192.168.68.1:5000/flink-web，按用户要求覆盖 0.0.4 标签，不更新 latest，仓库摘要与本地一致。后端使用临时 SQLite 健康检查 UP，前端 HTTP 200、Nginx 配置及接口代理通过；下载器以非 root、只读根文件系统准备启动脚本；实际 Flink 1.20.5 主容器从自身镜像复制 Presto 插件并启动，/overview 返回 200。本地 MinIO 整目录复制与删除验证通过。已清理本次临时验证容器和网络，推送后清空 Docker 构建缓存，回收 2.505 GB，保留已标记镜像。未应用实际 Kubernetes 清单或修改运行作业；现场 Metaspace 故障需按下方说明调整作业内存并重新部署。SQL Runner 本次未发布。
+
+2026-10-08 发布更新：Savepoint 后停止修复已重新构建并覆盖推送 app:0.0.4（linux/amd64、Kylin SP3），仓库摘要与本地一致；web/downloader 沿用 2026-10-05 镜像，已复核仓库摘要。后端 120 项回归通过，1 项可选 MinIO 用例跳过；镜像以非 root、只读根文件系统和临时 SQLite 启动，健康接口返回 UP。临时验证容器已删除，构建缓存清空并回收 570 MB。未更新 Kubernetes 工作负载，已有 Pod 需重新创建才会拉取新镜像。
+
+| 镜像（标签 0.0.4） | 仓库摘要 |
+| --- | --- |
+| 192.168.68.1:5000/flink-web/app | sha256:bb214b02a2d316712bfb86acadf3ed9e6001a7810755b3bfda8c15637c90b7e6 |
+| 192.168.68.1:5000/flink-web/downloader | sha256:7140951cc61de1dd2951155940d91f8d099e398b65b52c5ba37e516eb070a687 |
+| 192.168.68.1:5000/flink-web/web | sha256:8d85c76a317ff160dc32048d5907eab1c0131c99e34d9e8ea640708869a41557 |
+
+
+本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:7140951cc61de1dd2951155940d91f8d099e398b65b52c5ba37e516eb070a687`。已有运行中的作业不会随仓库标签更新自动变更。
 
 部署步骤：
 
-1. 修改 [application.yaml](../deploy/kubernetes/application.yaml) 中的 namespace、后端/前端镜像、PVC 存储类及容量、状态目录、Operator 查询目标；在镜像管理中为使用外部文件的运行镜像填写已推送的“文件下载器镜像”完整地址；FLINK_WEB_DOWNLOADER_IMAGE 仅作为可选全局兜底。
+1. 修改 [application.yaml](../deploy/kubernetes/application.yaml) 中的 namespace、后端/前端镜像、PVC 存储类及容量、状态目录、Operator 查询目标；在系统设置中统一绑定已推送的下载器镜像完整地址；首次未保存时使用 FLINK_WEB_DOWNLOADER_IMAGE，清单初始值为 192.168.68.1:5000/flink-web/downloader:0.0.4。
 2. 填写 application.yaml 中已合并的 flink-web-secrets（管理员密码与主密钥）。已有环境必须填回原主密钥；MinIO 凭据复用同 namespace 的 minio-secret。
 3. 核对 application.yaml 所选 ServiceAccount 的 RBAC 后直接应用该文件；数据库不存在时自动创建，已有文件保留，无需额外初始化补丁或部署后的开关切换。当前文件使用已有 flink-operator 身份；若改用平台独立 flink-web 身份，先应用 [rbac.yaml](../deploy/kubernetes/rbac.yaml)。
 4. Operator 在其他 namespace 时，修改并应用 [operator-rbac.yaml](../deploy/kubernetes/operator-rbac.yaml)；设置对应 FLINK_WEB_OPERATOR_NAMESPACE。Deployment 名变更时同步修改 Role 的 resourceNames。
@@ -291,15 +302,19 @@ $env:FLINK_WEB_SQL_VALIDATOR_DIR = (Resolve-Path sql-validators).Path
 | initContainer 下载器 | 启动前获取制品，使用工作负载凭据或指定的下载器 Secret |
 | Flink 作业 | checkpoint/savepoint、Catalog/文件系统访问，使用运行镜像的插件与 PodTemplate/工作负载身份 |
 
-2026-09-30：平台启动时将显式环境变量 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 加密导入配置管理（s3-access-key / s3-secret-key），不读取其他凭据链来源来持久化。已有记录不覆盖；凭据轮换请在配置管理中更新。启用状态存储时，源配置的 s3.access-key / s3.secret-key 自动引用这两个变量，部署时转为主容器 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 的 Kubernetes Secret 引用，并从实际 flinkConfiguration 中移除这两个占位值。JM/TM 角色模板也合并引用；预览、发布历史不包含密钥明文。镜像 S3 插件必须支持默认 AWS 环境凭据链；不再自动生成 s3.region。平台 S3 SDK 自身仍使用 AWS_REGION。无环境凭据时，可由管理员手动建立同名密钥配置或已有 Secret 引用；其他工作负载身份可自行在 YAML 中配置。Secret、镜像拉取凭据和挂载配置必须位于作业可访问的位置。
+2026-09-30：平台启动时将显式环境变量 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 加密导入配置管理（s3-access-key / s3-secret-key），不读取其他凭据链来源来持久化。已有记录不覆盖；凭据轮换请在配置管理中更新。启用状态存储时，源配置的 s3.access-key / s3.secret-key 自动引用这两个变量，部署时转为主容器 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 的 Kubernetes Secret 引用，并从实际 flinkConfiguration 中移除这两个占位值。凭据放在共享 spec.podTemplate；预览、发布历史不包含密钥明文。镜像 S3 插件必须支持默认 AWS 环境凭据链；不再自动生成 s3.region。平台 S3 SDK 自身仍使用 AWS_REGION。无环境凭据时，可由管理员手动建立同名密钥配置或已有 Secret 引用；其他工作负载身份可自行在 YAML 中配置。Secret、镜像拉取凭据和挂载配置必须位于作业可访问的位置。
 
-initContainer 在 JM/TM 分别下载 HTTP(S)/S3 文件并校验 SHA-256；超时、大小超限或校验失败阻止启动。HTTP(S) 需在白名单内，禁止重定向，Bearer Token 必须走 HTTPS。
+2026-10-01：initContainer 在共享 spec.podTemplate 中定义一次，由 Operator 应用于 JM/TM；不再校验下载文件 SHA-256，超时、大小超限或下载失败阻止启动。HTTP(S) 需在白名单内，禁止重定向，Bearer Token 必须走 HTTPS。
 
-制品卷挂载 /opt/flink/usrlib，会遮蔽镜像原目录。依赖下载启用时，把所需用户 JAR 全部列入下载清单；预置主 JAR 可放在未被遮蔽的路径。Flink 核心、Planner、S3 插件保留在运行镜像，不当作普通用户依赖替换。
+2026-10-01：S3 文件下载按需生成 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 的 secretKeyRef，不需要 AWS_DEFAULT_REGION。即使作业关闭状态存储，S3 制品仍需要下载凭据；纯 HTTP 下载不添加 S3 变量。配置管理密钥会物化为同 namespace 的不可变 Secret；引用已有 Secret 时不创建副本。修改全局镜像后，预览及提交会更新旧 fw-download 镜像、清理历史校验字段和区域变量；运行中资源不自动更新。共享模板结构参考 [Operator 官方示例](https://github.com/apache/flink-kubernetes-operator/blob/main/examples/basic-checkpoint-ha.yaml)。
 
-状态存储在 JAR/SQL 页面显式开启；启用后默认使用 S3，页面用 FLINK_WEB_STATE_ROOT 和作业 UUID 自动生成 checkpoint/savepoint 路径并写入 Flink 配置，同时写入连接参数和配置管理中的密钥引用；这些字段不再单独展示为表单输入，必要时可在 Flink 配置中调整。后台不再强制周期、保留数量或目录。Checkpoint 外部存储保留策略由页面选择：默认保留，也可选择取消后删除、不保留外部 Checkpoint 或 Flink 默认。立即删除 FlinkDeployment 可能来不及正常执行取消清理，需检查残留对象；Savepoint 的保留不受该策略影响。关闭存储会移除表单管理的 Checkpoint 相关配置。Flink 镜像必须包含对应文件系统插件并获得工作负载凭据；平台 S3 SDK 可访问不表示 Flink 可以访问。last-state 仅保留为升级策略，需要 Kubernetes HA 与 HA 存储，不再作为停止选项。指定路径的手动快照检查仍使用平台 S3 endpoint/凭据并限制到配置的桶，不证明恢复兼容性。
+制品卷挂载 /opt/flink/usrlib，会遮蔽镜像原目录。依赖下载启用时，把所需用户 JAR 全部列入下载清单；预置主 JAR 可放在未被遮蔽的路径。Flink 核心、Planner 保留在运行镜像。Presto S3 插件由主容器启动脚本从自身镜像 opt 目录复制到独立插件卷，不作为普通 usrlib 依赖；不能同时手动将同一插件放入 lib/usrlib。
 
-对象浏览器限定在 FLINK_WEB_S3_PREFIX 下，依赖默认位于 jobs/{作业 UUID}/，可选择 shared/。上传直接写入 S3，拒绝同名覆盖；不需要制品登记。可创建目录标记、浏览、下载和删除具体文件，不做递归清理。S3 身份除 List/Get/Put 外，删除文件需要 DeleteObject 权限；条件写入需要对象存储支持 If-None-Match。外部上传没有 sha256 元数据的文件在引用时流式计算校验和，大文件会增加预览等待时间，最大 1 GiB。保留旧登记记录用于已有下载清单兼容。
+状态存储在 JAR/SQL 页面显式开启；启用后默认使用 S3，页面用 FLINK_WEB_STATE_ROOT 和作业 UUID 自动生成 checkpoint/savepoint 路径并写入 Flink 配置，同时写入连接参数和配置管理中的密钥引用；这些字段不再单独展示为表单输入，必要时可在 Flink 配置中调整。后台不再强制周期、保留数量或目录。Checkpoint 外部存储保留策略由页面选择：默认保留，也可选择取消后删除、不保留外部 Checkpoint 或 Flink 默认。立即删除 FlinkDeployment 可能来不及正常执行取消清理，需检查残留对象；Savepoint 的保留不受该策略影响。关闭存储会移除表单管理的 Checkpoint 相关配置。2026-10-04 起仅使用一个 downloader initContainer 下载程序并准备 /flink-bootstrap/start-flink.sh。主容器的 kubernetes.entry.path 指向此脚本，启动时从本镜像 /opt/flink/opt 自动发现唯一 flink-s3-fs-presto-*.jar，复制到可写 emptyDir（/opt/flink/plugins/s3-fs-presto/），再执行原入口并透传参数。无需在 S3 保存插件，也不依赖镜像 tag 中的补丁版本。镜像须提供 sh、cp、mkdir、rm 和默认 /docker-entrypoint.sh；自定义 kubernetes.entry.path 会保存在 FLINK_WEB_ORIGINAL_ENTRYPOINT 并继续调用，禁用后恢复。仅启用插件时不会遮蔽 /opt/flink/usrlib；主容器需要插件卷写权限。缺失/多个插件会在启动日志中明确报错。所有 S3 程序下载仍需工作负载 Secret 凭据；平台 S3 SDK 可访问不表示 Flink 可以访问。入口配置依据 [Flink 1.20 Kubernetes 配置](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/config/#kubernetes-entry-path)。last-state 仅保留为升级策略，需要 Kubernetes HA 与 HA 存储，不再作为停止选项。指定路径的手动快照检查仍使用平台 S3 endpoint/凭据并限制到配置的桶，不证明恢复兼容性。
+
+2026-10-02：删除平台作业会递归清理 FLINK_WEB_S3_PREFIX/jobs/{UUID}/ 与 FLINK_WEB_STATE_ROOT/{UUID}/；只对平台分配的 UUID 前缀执行删除，要求对象存储身份具备两个桶相应前缀的 ListBucket / DeleteObject 权限。未配置 S3 且草稿无 S3 引用时无需清理；有 S3 引用但未配置时拒绝删除。共享、自定义外部目录不自动删除。版本化桶的历史版本由生命周期策略管理。复制使用同桶 CopyObject（源 GetObject、目标 PutObject），带源 ETag 条件校验，分页复制专属文件，不复制状态数据。清理失败保留平台记录供重试，但已成功删除的对象无法恢复。
+
+对象浏览器限定在 FLINK_WEB_S3_PREFIX 下，依赖默认位于 jobs/{作业 UUID}/，可选择 shared/。上传直接写入 S3，拒绝同名覆盖；不需要制品登记。可创建目录标记、浏览、下载和删除具体文件，不做递归清理。S3 身份除 List/Get/Put 外，删除文件需要 DeleteObject 权限；条件写入需要对象存储支持 If-None-Match。引用对象时仅 HEAD 查询存在性和大小，最大 1 GiB；不再为预览下载文件计算校验和。上传仍可记录内容摘要元数据，但不用于 initContainer 校验。保留旧登记记录用于已有下载清单兼容。
 
 ## 8. 排障与验收
 
@@ -316,7 +331,7 @@ initContainer 在 JM/TM 分别下载 HTTP(S)/S3 文件并校验 SHA-256；超时
 | Kubernetes 拒绝或字段被裁剪 | CRD/Operator 版本、RBAC、字段支持、工作负载 SA；dry-run 成功也不代表作业运行成功 |
 | SQL 只有 BASIC 检查 | 精确 flinkVersion 与 Parser 目录是否匹配 |
 | SQL 运行失败 | Runner、Planner、Connector、Catalog 插件、字段语义和远端服务；从诊断页按需读取日志 |
-| initContainer / S3 失败 | 白名单、URI、SHA-256、文件名、工作负载凭据、插件与卷遮蔽 |
+| initContainer / S3 失败 | 统一下载器绑定、白名单、URI、文件名、Secret 引用、插件与卷遮蔽 |
 | Flink UI 不可用 | 作业权限、REST Service 名和 8081 端口、代理前缀及版本兼容性 |
 | 操作结果 UNKNOWN | 先手动查询，确认集群是否已接受请求，避免用新 requestId 盲目重复提交 |
 
@@ -356,3 +371,18 @@ npm run test:e2e
 浏览器默认访问 127.0.0.1:5173；可设 E2E_BASE_URL、E2E_BROWSER。端口诊断测试可用 E2E_API_PORT 指定后端监听端口；纳管用例需要 E2E_K8S_FIXTURE 指向 [本地 Kubernetes 替身](../scripts/mock_kubernetes.py)。不要以生产数据库/集群作为自动化测试目标。
 
 功能、参数或行为变化时直接更新这两份文档，不另建按轮次命名的升级报告、聊天缓存或截图记录。版本筛选数据及出处维护在 [operator-compatibility.json](../backend/src/main/resources/operator-compatibility.json)，数据库结构以增量 SQL 为准。
+
+2026-10-02：S3 插件初始化结构依据 [Flink S3 文件系统说明](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/filesystems/s3/)。本地 Flink 1.20.5 镜像已验证非 root 读取和复制实际插件 JAR；共享 PodTemplate、重复渲染、关闭清理和挂载冲突通过自动化测试，尚未在实际 Kubernetes 集群验收本次新增功能。
+
+
+2026-10-04 编辑来源保护：新 JAR 表单写入 flink-web/editor=jar-v1；纳管作业标记 yaml，未标记旧作业默认 YAML 编辑。用户可在确认配置可能改变后尝试切换 JAR 表单，复制时也可选择编辑方式。解析失败保留 YAML；普通改标签不会解除限制。此标记用于防止误覆盖，不作为 Kubernetes 权限认证。
+
+2026-10-04 故障说明：提供的部署快照显示 flink-main-container CrashLoopBackOff，同时旧清单曾把 S3 插件下载到 usrlib 并额外初始化到 plugins。本次消除双重插件加载路径和两个托管 initContainer；仅凭 CR 状态不能确定主容器退出根因，实际问题仍需结合 Pod 上一实例日志、退出码、Secret 与卷事件排查。插件目录要求依据 [Flink 1.20 S3 文档](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/filesystems/s3/)。
+
+
+2026-10-04 Flink UI：现场 Pod 内直连 /overview 返回 Internal server error: Metaspace，已确认故障来自 JobManager 类元数据内存，而非平台代理。建议先把 jobmanager.memory.jvm-metaspace.size 调为 512m，JobManager 总内存调为 2048m，按状态保留策略重新部署；仅增加总内存不会自动提高 Metaspace 上限。JAR 表单显示 JM/TM Metaspace 并回填旧值；新建无模板作业默认 JM 总内存 2048m、Metaspace 512m，已有 YAML/模板显式值不覆盖。仍失败需排查类加载器和实际内存需求。代理保留原路径及错误状态；入口遇到明确 Metaspace 响应展示修复说明，其他上游 4xx/5xx 记录作业 ID、部署名、路径和状态码，连接错误记录异常类型，不记录凭据或查询参数。依据 [Flink 内存排障](https://nightlies.apache.org/flink/flink-docs-release-1.20/zh/docs/deployment/memory/mem_trouble/)。
+
+
+2026-10-08 Savepoint 停止排查：先确认作业正常 RUNNING、Savepoint 目录及访问权限可用，且没有升级中的配置。平台提交 savepoint 挂起并禁用 last-state 回退；Operator 完成后，手动刷新推进删除。新版 Operator 使用 FlinkStateSnapshot 时，平台需具有既有 RBAC 中的 flinkstatesnapshots 查询权限，且快照需完成并标记 UPGRADE、路径匹配；仅出现 upgradeSavepointPath 不能证明是 Savepoint，因为终态 Checkpoint 观测也会写入该字段。参考 [Operator SnapshotObserver](https://github.com/apache/flink-kubernetes-operator/blob/release-1.13/flink-kubernetes-operator/src/main/java/org/apache/flink/kubernetes/operator/observer/SnapshotObserver.java) 与 [FlinkStateSnapshotUtils](https://github.com/apache/flink-kubernetes-operator/blob/release-1.13/flink-kubernetes-operator/src/main/java/org/apache/flink/kubernetes/operator/utils/FlinkStateSnapshotUtils.java)。出现“未确认保存点”时检查快照状态及 Operator 日志；排查前不要删除保存点目录。代码回归使用 Kubernetes 替身，仍需实际集群验收保存点生成、删除和再次启动恢复。
+
+2026-10-08 容器检查说明：SQLite JDBC 需要从临时目录加载本地库。使用只读根文件系统时需提供可写且允许加载本地库的临时目录；本地 Docker 检查使用 /tmp 的 tmpfs，并显式设置 exec。noexec 挂载会导致本地库加载失败，此限制与 Savepoint 修复无关。

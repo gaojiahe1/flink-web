@@ -67,13 +67,15 @@ export function hydrateJar(
       throw new Error('JM/TM 下载配置不一致')
     manifest = value
   }
-  const references = (manifest || []).map((item) => {
-    const match = /^s3:\/\/[^/]+\/(.+)$/.exec(item.uri)
-    if (!match) throw new Error('对象地址无法解析')
-    if (!storage || !item.uri.startsWith('s3://' + storage.bucket + '/' + storage.rootPrefix))
-      throw new Error('历史文件不在当前对象存储范围内，请使用 YAML 修改')
-    return { id: 's3:' + match[1], filename: item.filename, uri: item.uri }
-  })
+  const references = (manifest || [])
+    .filter((item) => !item.managedPlugin)
+    .map((item) => {
+      const match = /^s3:\/\/[^/]+\/(.+)$/.exec(item.uri)
+      if (!match) throw new Error('对象地址无法解析')
+      if (!storage || !item.uri.startsWith('s3://' + storage.bucket + '/' + storage.rootPrefix))
+        throw new Error('历史文件不在当前对象存储范围内，请使用 YAML 修改')
+      return { id: 's3:' + match[1], filename: item.filename, uri: item.uri }
+    })
   const main = references.find(
     (item) => job.jarURI === 'local:///opt/flink/usrlib/' + item.filename,
   )

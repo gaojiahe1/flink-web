@@ -22,16 +22,24 @@ download = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(download)
 
 class DownloadTest(unittest.TestCase):
-    def test_verified_download_is_atomic(self):
-        manifest = '[{"uri":"s3://bucket/job.jar","filename":"job.jar","sha256":"3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7"}]'
+    def test_plugin_bootstrap_needs_no_download(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(download, "BOOTSTRAP_ROOT", pathlib.Path(folder)), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": "[]", "FLINK_PLUGIN_BOOTSTRAP": "true"}), patch.object(download, "open_source") as transport:
+            download.main()
+            script = (pathlib.Path(folder) / "start-flink.sh").read_text()
+            self.assertIn("/opt/flink/opt/flink-s3-fs-presto-*.jar", script)
+            self.assertIn('exec "$entrypoint" "$@"', script)
+            transport.assert_not_called()
+
+    def test_download_without_checksum_is_atomic(self):
+        manifest = '[{"uri":"s3://bucket/job.jar","filename":"job.jar"}]'
         with tempfile.TemporaryDirectory() as folder, patch.object(download, "ROOT", pathlib.Path(folder)), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": manifest}), patch.object(download, "open_source", return_value=io.BytesIO(b"data")):
             download.main()
             self.assertEqual((pathlib.Path(folder) / "job.jar").read_bytes(), b"data")
             self.assertFalse((pathlib.Path(folder) / "job.jar.part").exists())
 
-    def test_bad_checksum_removes_partial(self):
+    def test_size_limit_removes_partial(self):
         manifest = '[{"uri":"s3://bucket/job.jar","filename":"job.jar","sha256":"' + "0" * 64 + '"}]'
-        with tempfile.TemporaryDirectory() as folder, patch.object(download, "ROOT", pathlib.Path(folder)), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": manifest}), patch.object(download, "open_source", return_value=io.BytesIO(b"data")):
+        with patch.object(download, "LIMIT", 2), tempfile.TemporaryDirectory() as folder, patch.object(download, "ROOT", pathlib.Path(folder)), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": manifest}), patch.object(download, "open_source", return_value=io.BytesIO(b"data")):
             with self.assertRaises(ValueError):
                 download.main()
             self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
@@ -50,6 +58,21 @@ class DownloadTest(unittest.TestCase):
                 download.main()
         with self.assertRaises(ValueError):
             download.NoRedirect().redirect_request(None,None,302,None,None,"https://elsewhere.example")
+
+    def test_plugin_and_job_are_downloaded_to_separate_roots(self):
+        manifest = '[{"uri":"s3://b/main.jar","filename":"main.jar"},{"uri":"s3://b/plugin.jar","filename":"flink-s3-fs-presto-1.20.5.jar","target":"s3-plugin"}]'
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            with patch.object(download, "ROOT", root / "user"), patch.object(download, "PLUGIN_ROOT", root / "plugin"), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": manifest}), patch.object(download, "open_source", side_effect=lambda item: io.BytesIO(b"content")):
+                download.main()
+            self.assertEqual([p.name for p in (root / "user").iterdir()], ["main.jar"])
+            self.assertEqual([p.name for p in (root / "plugin").iterdir()], ["flink-s3-fs-presto-1.20.5.jar"])
+
+    def test_unknown_destination_is_rejected_before_network_request(self):
+        with patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": '[{"uri":"s3://b/j","filename":"j.jar","target":"../../opt"}]'}), patch.object(download, "open_source") as transport:
+            with self.assertRaises(ValueError):
+                download.main()
+            transport.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import com.flinkweb.config.platform.PlatformProperties;
 import com.flinkweb.exception.common.BusinessException;
-import com.flinkweb.service.artifact.support.ArtifactPodBuilder;
 import com.flinkweb.service.job.creation.YamlService;
+import com.flinkweb.service.job.creation.support.PodTemplates;
 import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -18,15 +18,14 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 public class YamlServiceImpl implements YamlService {
   private final ObjectMapper mapper;
   private final String namespace, serviceAccount;
-  private final ArtifactPodBuilder podTemplates;
+  private final PodTemplates podTemplates;
 
-  /** 注入 JSON 映射器并读取 Namespace、工作负载账号和状态存储根目录。 */
+  /** 注入 JSON 映射器并读取 Namespace 和工作负载账号。 */
   public YamlServiceImpl(
       ObjectMapper mapper,
       PlatformProperties properties,
-      ArtifactPodBuilder podTemplates,
-      @Value("${platform.workload.service-account:flink}") String serviceAccount,
-      @Value("${platform.workload.state-root:s3://flink-state}") String stateRoot) {
+      PodTemplates podTemplates,
+      @Value("${platform.workload.service-account:flink}") String serviceAccount) {
     this.mapper = mapper;
     this.podTemplates = podTemplates;
     this.namespace = properties.namespace();

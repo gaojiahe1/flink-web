@@ -21,6 +21,9 @@ public interface JobService {
   /** 保持作业名称不变，校验 YAML 后以修订号更新草稿及审计。 */
   JobDraft update(String id, DraftRequest request);
 
+  /** 将配置和专属依赖复制为新编号草稿，不复制运行状态与权限。 */
+  JobDraft copy(String id, com.flinkweb.dto.job.creation.CopyJobRequest request);
+
   /** 以修订号删除草稿及资源绑定，并在同一事务内记录审计。 */
   void delete(String id, long revision);
 }

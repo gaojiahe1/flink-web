@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { Copy, Check, X, Files, FolderClosed, ArrowRight } from '@lucide/vue'
+import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import { copyText } from '../../../shared/utils/clipboard'
 import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import JobWorkbench from '../components/JobWorkbench.vue'
 import PodStatusDrawer from '../components/PodStatusDrawer.vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
 import { requestId } from '../../../shared/utils/requestId'
 import { jobsApi } from '../api/jobs'
@@ -60,11 +64,27 @@ const loading = ref(true),
 const podJob = ref<JobDraft | null>(null)
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
+const yamlOpen = ref(false)
+const yamlCopyState = ref('')
+const yamlCopying = ref(false)
+async function copyYaml() {
+  yamlCopying.value = true
+  try {
+    await copyText(selectedYaml.value, yamlDialog.value)
+    yamlCopyState.value = '已复制'
+  } catch (e) {
+    yamlCopyState.value = (e as Error).message
+  } finally {
+    yamlCopying.value = false
+  }
+}
 const selectedYaml = computed(
   () => runtime.value.find((item) => item.name === yamlName.value)?.yaml || '',
 )
 function showYaml(name: string) {
   yamlName.value = name
+  yamlCopyState.value = ''
+  yamlOpen.value = true
   yamlDialog.value?.showModal()
 }
 const detailEpoch = ref(0)
@@ -208,18 +228,7 @@ async function confirmAction() {
         .map((r) => r.name + '：' + r.message)
         .join('；')
     }
-    message.value =
-      '已提交 ' +
-      results.value.filter((r) => r.state === 'ACCEPTED').length +
-      ' / ' +
-      targets.value.length +
-      ' 个操作；运行结果请手动刷新。' +
-      (pendingAction.value === 'stop'
-        ? results.value
-            .filter((r) => r.state === 'ACCEPTED')
-            .map((r) => r.name + '：' + r.message)
-            .join('；')
-        : '')
+    message.value = ''
   } finally {
     acting.value = false
   }
@@ -266,12 +275,6 @@ const {
     stopProgress.value = result.stopProgress || {}
     submittedActions.value = {}
     queriedAt.value = result.queriedAt
-    const completed = Object.entries(stopProgress.value).filter(([, p]) => p.phase === 'DONE')
-    message.value = completed.length
-      ? completed
-          .map(([id]) => (drafts.value.find((j) => j.id === id)?.name || id) + '：已停止')
-          .join('；')
-      : ''
     await load()
   } catch (e) {
     if ((e as Error).name !== 'AbortError') {
@@ -372,6 +375,24 @@ function accepted(job: JobDraft, action: string) {
   }
 }
 const submittedActions = ref<Record<string, string>>({})
+const ongoing = computed(() =>
+  drafts.value.flatMap((job) => {
+    const stop = stopProgress.value[job.id]
+    const submitted = submittedActions.value[job.id]
+    let text = ''
+    if (stop && !['DONE', 'ERROR'].includes(stop.phase)) text = stop.message
+    else if (submitted) text = ['stop', 'suspend'].includes(submitted) ? '正在停止' : '正在启动'
+    else if (state(job)?.deleting) text = '正在删除'
+    else if (
+      state(job)?.healthState !== 'ERROR' &&
+      ['UPGRADING', 'DEPLOYING', 'ROLLING_BACK'].includes(state(job)?.lifecycleState || '')
+    )
+      text = '正在协调'
+    if (!text) return []
+    return [{ id: job.id, name: job.name, text }]
+  }),
+)
+
 function desired(job: JobDraft) {
   if (
     ['stop', 'suspend'].includes(submittedActions.value[job.id] || '') ||
@@ -457,7 +478,13 @@ async function restored(job: JobDraft) {
   await load()
 }
 async function remove(job: JobDraft) {
-  if (!(await confirmDialog('删除平台草稿「' + job.name + '」？已部署作业需要先删除集群资源。')))
+  if (
+    !(await confirmDialog(
+      '删除作业「' +
+        job.name +
+        '」及其专属文件、Checkpoint / Savepoint / HA 目录？删除后无法恢复；共享目录保留。已部署作业需先停止并确认资源删除。',
+    ))
+  )
     return
   try {
     await jobsApi.remove(job)
@@ -465,6 +492,61 @@ async function remove(job: JobDraft) {
     selected.value = null
   } catch (e) {
     error.value = showValidationError((e as Error).message)
+  }
+}
+
+const router = useRouter()
+const copyDialog = ref<HTMLDialogElement>()
+const copySource = ref<JobDraft>()
+const copyEditor = ref('yaml')
+const copyName = ref(''),
+  copyError = ref(''),
+  copying = ref(false)
+watch(copyName, () => {
+  copyError.value = ''
+})
+async function openCopy(job: JobDraft) {
+  copySource.value = job
+  copyEditor.value = 'yaml'
+  copyName.value = job.name.slice(0, 53).replace(/-+$/, '') + '-copy'
+  copyError.value = ''
+  await nextTick()
+  copyDialog.value?.showModal()
+}
+async function checkCopyName() {
+  if (!copyName.value.trim()) return
+  const name = copyName.value
+  try {
+    const result = await request<{ available: boolean }>(
+      '/api/jobs/name-availability?' + new URLSearchParams({ name }),
+    )
+    if (name === copyName.value)
+      copyError.value = result.available ? '' : '作业名称已存在，请使用其他名称'
+  } catch (e) {
+    if (name === copyName.value) copyError.value = (e as Error).message
+  }
+}
+async function copyJob() {
+  if (!copySource.value || copying.value) return
+  copying.value = true
+  copyError.value = ''
+  try {
+    const job = await request<JobDraft>('/api/jobs/' + copySource.value.id + '/copy', {
+      method: 'POST',
+      ...jsonBody({
+        name: copyName.value,
+        revision: copySource.value.revision,
+        allowFormRewrite: copyEditor.value === 'jar',
+      }),
+    })
+    copyDialog.value?.close()
+    await router.push(
+      '/jobs/' + job.id + '/edit' + (copyEditor.value === 'jar' ? '?editor=jar' : ''),
+    )
+  } catch (e) {
+    copyError.value = (e as Error).message
+  } finally {
+    copying.value = false
   }
 }
 
@@ -509,6 +591,18 @@ function resetFilters() {
   </div>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice">{{ message }}</div>
+  <div
+    v-if="ongoing.length"
+    class="notice ongoing-jobs"
+    role="status"
+    aria-label="进行中的作业"
+    tabindex="0"
+  >
+    <span v-for="item in ongoing" :key="item.id"
+      ><strong>{{ item.name }}</strong
+      >：{{ item.text }}</span
+    >
+  </div>
 
   <section class="panel jobs-panel">
     <div class="panel-toolbar">
@@ -662,6 +756,13 @@ function resetFilters() {
                 >
                   停止
                 </button></template
+              ><button
+                v-if="mayEdit(job)"
+                class="text-button"
+                :disabled="copying"
+                @click="openCopy(job)"
+              >
+                复制</button
               ><RouterLink v-if="mayEdit(job)" class="text-button" :to="'/jobs/' + job.id + '/edit'"
                 >编辑</RouterLink
               ><button
@@ -701,6 +802,98 @@ function resetFilters() {
       </div>
     </div>
   </section>
+
+  <dialog
+    ref="copyDialog"
+    class="copy-job-dialog"
+    aria-labelledby="copy-job-title"
+    @cancel="copying && $event.preventDefault()"
+  >
+    <form @submit.prevent="copyJob">
+      <header class="copy-job-header">
+        <span class="copy-job-icon"><Files :size="22" /></span>
+        <div>
+          <h3 id="copy-job-title">复制作业</h3>
+          <p>以现有配置创建一个独立的新作业</p>
+        </div>
+        <button
+          type="button"
+          class="button icon-button"
+          aria-label="关闭复制弹窗"
+          :disabled="copying"
+          @click="copyDialog?.close()"
+        >
+          <X :size="18" />
+        </button>
+      </header>
+      <div class="copy-job-body">
+        <div class="copy-source">
+          <span>源作业</span><strong :title="copySource?.name">{{ copySource?.name }}</strong
+          ><span class="tag">{{ copySource?.deploymentName }}</span>
+        </div>
+        <label for="copy-job-name">新作业名称 <span class="required-mark">*</span></label>
+        <input
+          id="copy-job-name"
+          v-model="copyName"
+          required
+          autofocus
+          maxlength="63"
+          pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+          data-field="copyName"
+          :aria-invalid="!!copyError"
+          aria-describedby="copy-name-help"
+          :disabled="copying"
+          @blur="checkCopyName"
+        />
+        <p v-if="copyError" class="field-error" role="alert">{{ copyError }}</p>
+        <p v-else id="copy-name-help" class="copy-name-help">
+          使用小写字母、数字或连字符，名称不能重复。
+        </p>
+        <fieldset class="copy-editor-choice">
+          <legend>复制后编辑方式</legend>
+          <label
+            ><input v-model="copyEditor" type="radio" value="yaml" :disabled="copying" />YAML
+            编辑</label
+          >
+          <label
+            ><input v-model="copyEditor" type="radio" value="jar" :disabled="copying" />JAR
+            表单</label
+          >
+          <p v-if="copyEditor === 'jar'" class="copy-convert-warning">
+            表单可能重新生成并改变原 YAML。确认复制即同意尝试转换；解析失败会保留
+            YAML，请在保存前检查配置。
+          </p>
+        </fieldset>
+        <div class="copy-summary">
+          <div>
+            <FolderClosed :size="18" />
+            <p>
+              <strong>配置与专属文件一并复制</strong
+              ><span>自动分配新编号和独立目录，共享文件继续引用。</span>
+            </p>
+          </div>
+          <div>
+            <ArrowRight :size="18" />
+            <p>
+              <strong>复制后进入编辑页</strong
+              ><span>新作业保持草稿，运行状态与历史快照不会复制。</span>
+            </p>
+          </div>
+        </div>
+      </div>
+      <footer class="copy-job-footer">
+        <span role="status">{{ copying ? '正在复制，请稍候…' : '完成后可检查配置再部署' }}</span>
+        <div>
+          <button type="button" class="button" :disabled="copying" @click="copyDialog?.close()">
+            取消
+          </button>
+          <button class="button primary" :disabled="copying || !!copyError">
+            <Copy :size="15" />{{ copying ? '正在复制文件…' : '确认复制' }}
+          </button>
+        </div>
+      </footer>
+    </form>
+  </dialog>
   <dialog
     ref="operationDialog"
     class="operation-dialog"
@@ -880,18 +1073,37 @@ function resetFilters() {
     </div>
   </section>
   <PodStatusDrawer v-if="podJob" :key="podJob.id" :job="podJob" @close="podJob = null" />
-  <dialog ref="yamlDialog" class="yaml-snapshot-dialog">
+  <dialog
+    ref="yamlDialog"
+    class="yaml-snapshot-dialog"
+    aria-labelledby="yaml-snapshot-title"
+    @close="yamlOpen = false"
+  >
     <div class="panel-toolbar">
-      <h3>{{ yamlName }} · 当前 FlinkDeployment YAML</h3>
-      <button class="text-button" @click="yamlDialog?.close()">关闭</button>
+      <h3 id="yaml-snapshot-title">{{ yamlName }} · 当前 FlinkDeployment YAML</h3>
+      <div class="yaml-snapshot-actions">
+        <span v-if="yamlCopyState" role="status" class="muted">{{ yamlCopyState }}</span>
+        <button class="button" :disabled="!selectedYaml || yamlCopying" @click="copyYaml">
+          <Check v-if="yamlCopyState === '已复制'" :size="16" /><Copy v-else :size="16" />复制 YAML
+        </button>
+        <button class="button icon-button" aria-label="关闭 YAML" @click="yamlDialog?.close()">
+          <X :size="18" />
+        </button>
+      </div>
     </div>
-    <p class="muted">
-      最近刷新：{{ queriedAt ? new Date(queriedAt).toLocaleString() : '尚未查询' }}。spec
-      中的敏感配置已隐藏，status 保留原始内容。此快照仅供查询，打开不会再次请求集群。
+    <p class="muted yaml-snapshot-note">
+      最近刷新：{{ queriedAt ? new Date(queriedAt).toLocaleString() : '尚未查询' }} · spec
+      敏感配置已隐藏，status 保留原始内容。复制内容与当前显示一致。
     </p>
-    <pre class="yaml-snapshot-content">{{
-      selectedYaml || '当前没有可用快照，请关闭后刷新列表。'
-    }}</pre>
+    <div class="yaml-snapshot-content">
+      <CodeEditor
+        v-if="yamlOpen && selectedYaml"
+        :model-value="selectedYaml"
+        readonly
+        label="当前 FlinkDeployment YAML"
+      />
+      <p v-else class="muted">当前没有可用快照，请关闭后刷新列表。</p>
+    </div>
   </dialog>
   <section v-if="selected" class="panel detail-panel">
     <div class="panel-toolbar">

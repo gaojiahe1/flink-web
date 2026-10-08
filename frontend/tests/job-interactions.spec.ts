@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 
-const source = ['apiVersion: flink.apache.org/v1beta1', 'kind: FlinkDeployment', 'metadata:', '  name: orders', 'spec:', '  image: registry.test/flink:1.20.5', '  flinkVersion: v1_20', '  job:', '    jarURI: local:///opt/flink/usrlib/job.jar', '    parallelism: 1', '    state: running', ''].join('\n')
+const source = ['apiVersion: flink.apache.org/v1beta1', 'kind: FlinkDeployment', 'metadata:', '  name: orders', '  labels:', '    flink-web/editor: jar-v1', 'spec:', '  image: registry.test/flink:1.20.5', '  flinkVersion: v1_20', '  job:', '    jarURI: local:///opt/flink/usrlib/job.jar', '    parallelism: 1', '    state: running', ''].join('\n')
 const draft = { id: 'job-one', jobNumber: 1, deploymentName: 'flink-0000001', name: 'orders', description: '', flinkVersion: '1.20.5', revision: 0, yaml: source }
 async function fixture(page: Page, editYaml = source) {
   const renders: any[] = []
@@ -76,7 +76,7 @@ test('当前 YAML 只展示本次查询，详情不再出现快捷操作区', as
   await page.getByRole('button', { name: '当前 YAML', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('original error')
   expect(f.yamlReads()).toBe(1)
-  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '关闭 YAML', exact: true }).click()
   await page.getByRole('button', { name: 'orders', exact: true }).click()
   await expect(page.getByText('最近快照信息', { exact: true })).toHaveCount(0)
   await expect(page.getByText('状态升级策略', { exact: true })).toHaveCount(0)
@@ -121,7 +121,7 @@ test('不能映射历史镜像时仍留在 YAML 模式', async ({ page }) => {
   await fixture(page, source.replace('registry.test/flink:1.20.5', 'unknown/legacy:old'))
   await page.goto('/#/jobs/job-one/edit')
   await page.getByRole('button', { name: 'JAR 表单', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('只能在 YAML 页面修改')
+  await expect(page.getByRole('alert')).toContainText('原 YAML 已保留')
   await expect(page.locator('input[data-field="parallelism"]')).toHaveCount(0)
 })
 
@@ -199,11 +199,10 @@ test('主包与依赖直接从当前作业 S3 目录选择，不请求制品登�
   await page.goto('/#/jobs/jar/new')
   await page.locator('input[data-field="name"]').fill('direct-s3')
   await page.getByLabel('镜像版本',{exact:true}).selectOption('image')
-  const main = page.getByRole('combobox',{name:'主 JAR 文件',exact:true})
-  await expect(main.locator('option').filter({hasText:'main.jar'})).toHaveCount(1)
-  const reference = await main.locator('option').filter({hasText:'main.jar'}).getAttribute('value')
+  const main = page.locator('.artifact-picker').first().getByRole('radio', { name: 'main.jar', exact: true })
+  await main.check()
+  const reference = 's3:' + (await page.locator('.artifact-picker').first().locator('.picker-path').textContent())!.trim().replace('s3://flink-web/', '') + 'main.jar'
   expect(reference).toMatch(new RegExp('^s3:artifacts/jobs/[0-9a-f-]+/main.jar$'))
-  await main.selectOption(reference!)
   const picker = page.locator('.artifact-picker').first()
   const heading = await picker.locator('strong').boundingBox()
   const refresh = await picker.getByRole('button', {name:'刷新文件'}).boundingBox()
@@ -211,7 +210,7 @@ test('主包与依赖直接从当前作业 S3 目录选择，不请求制品登�
   expect(refresh!.x).toBeGreaterThan(heading!.x + heading!.width)
   expect(Math.abs(refresh!.y - upload!.y)).toBeLessThan(3)
   await picker.screenshot({path: 'test-results/artifact-picker.png'})
-  await page.locator('.object-choices').getByLabel('connector.jar',{exact:true}).check()
+  await page.locator('.artifact-picker').nth(1).getByRole('checkbox', { name: 'connector.jar', exact: true }).check()
   await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
   await expect.poll(() => f.renders.length).toBe(1)
   expect(f.renders[0].mainArtifactId).toBe(reference)
@@ -275,7 +274,7 @@ test('停止期望立即更新，刷新清除旧提示，重新启动不残留�
   await expect(page.getByRole('button',{name:/刷新状态/})).toBeEnabled({timeout:6000})
   await page.getByRole('button',{name:/刷新状态/}).click()
   await expect(row).toContainText('已停止')
-  await expect(page.locator('.notice').first()).not.toContainText('已提交')
+  await expect(page.locator('.ongoing-jobs')).toHaveCount(0)
   await row.getByRole('button',{name:'启动',exact:true}).click()
   await page.getByRole('button',{name:'确认启动',exact:true}).click()
   await expect(row.getByRole('cell').nth(3)).not.toContainText('已停止')
@@ -304,11 +303,150 @@ test('大量子目录在限高区域中筛选，不撑长 JAR 表单', async ({p
   })
   await page.goto('/#/jobs/jar/new')
   const picker=page.locator('.artifact-picker').first()
-  await picker.locator('summary').click()
-  const list=picker.locator('.folder-list')
+  const list=picker.locator('.browser-entries')
   await expect(list.getByRole('button')).toHaveCount(100)
-  expect((await list.boundingBox())!.height).toBeLessThanOrEqual(222)
-  await picker.getByPlaceholder('查找子目录').fill('folder-099')
+  expect((await list.boundingBox())!.height).toBeLessThanOrEqual(225)
+  await picker.getByPlaceholder('搜索当前目录中的文件或文件夹').fill('folder-099')
   await expect(list.getByRole('button')).toHaveCount(1)
   await picker.screenshot({path:'test-results/folder-picker.png'})
+})
+
+test('下载器在系统设置独立绑定，镜像登记不再包含该字段', async ({ page }) => {
+  await fixture(page)
+  let saved: any
+  await page.route('**/api/system/downloader', async route => {
+    if (route.request().method() === 'PUT') saved = route.request().postDataJSON()
+    await route.fulfill({ json: { data: saved ? { ...saved, revision: 3 } : { image: 'registry.test/downloader:old', revision: 2 } } })
+  })
+  await page.goto('/#/settings')
+  const input = page.getByLabel('文件下载器镜像', { exact: true })
+  await expect(input).toHaveValue('registry.test/downloader:old')
+  await input.fill('192.168.68.1:5000/flink-web/downloader:0.0.5')
+  await page.getByRole('button', { name: '保存下载器绑定' }).click()
+  await expect(page.locator('.downloader-settings')).toContainText('已更新')
+  expect(saved).toEqual({ image: '192.168.68.1:5000/flink-web/downloader:0.0.5', revision: 2 })
+  await page.screenshot({ path: 'test-results/downloader-settings.png' })
+  await page.goto('/#/images')
+  await page.getByRole('button', { name: '新增' }).click()
+  await expect(page.locator('[data-field="downloaderImage"]')).toHaveCount(0)
+})
+
+test('进度条仅显示进行中的任务，多个任务保持单行并可横向滚动', async ({ page }) => {
+  await fixture(page)
+  const jobs = Array.from({ length: 30 }, (_, i) => ({ ...draft, id: 'pending-' + i, name: '等待停止的作业-' + i, deploymentName: 'flink-' + i }))
+  await page.route('**/api/jobs', route => route.fulfill({ json: { data: jobs } }))
+  await page.route('**/api/jobs/refresh', route => route.fulfill({ json: { data: {
+    items: [], queriedAt: new Date().toISOString(),
+    stopProgress: Object.fromEntries(jobs.map((job, i) => [job.id, { phase: i === 0 ? 'DONE' : i === 1 ? 'ERROR' : 'DELETING', message: i < 2 ? '结束状态' : '正在删除资源' }]))
+  } } }))
+  await page.goto('/#/jobs')
+  const progress = page.getByRole('status', { name: '进行中的作业' })
+  await expect(progress.locator('span')).toHaveCount(28)
+  await expect(progress).not.toContainText('结束状态')
+  expect(await progress.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+  await progress.evaluate(el => { el.scrollLeft = 300 })
+  await expect.poll(() => progress.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
+  await page.screenshot({ path: 'test-results/ongoing-jobs.png' })
+})
+
+test('复制生成独立草稿并进入编辑，不启动源作业或新作业', async ({ page }) => {
+  const f = await fixture(page)
+  let payload: any
+  await page.route('**/api/jobs/job-one/copy', async route => {
+    payload = route.request().postDataJSON()
+    await route.fulfill({ status: 201, json: { data: { ...draft, id: 'copy-job', name: payload.name, revision: 1 } } })
+  })
+  await page.route('**/api/jobs/copy-job', route => route.fulfill({ json: { data: { ...draft, id: 'copy-job', name: 'orders-copy' } } }))
+  await page.goto('/#/jobs')
+  await page.getByRole('button', { name: '复制', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('运行状态与历史快照不会复制')
+  const name = page.getByLabel('新作业名称')
+  await name.fill('orders'); await name.blur()
+  await expect(name).toHaveAttribute('aria-invalid', 'true')
+  await name.fill('orders-copy'); await name.blur()
+  await expect(name).not.toHaveAttribute('aria-invalid', 'true')
+  await page.screenshot({path:'test-results/copy-dialog.png'})
+  await page.setViewportSize({width:390,height:844})
+  const box = await page.getByRole('dialog').boundingBox()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390)
+  await expect(page.getByRole('button', {name:'确认复制'})).toBeInViewport()
+  await page.screenshot({path:'test-results/copy-dialog-mobile.png'})
+  await page.getByRole('button', { name: '确认复制' }).click()
+  await expect(page).toHaveURL(/copy-job\/edit/)
+  expect(payload).toEqual({ name: 'orders-copy', revision: 0, allowFormRewrite: false })
+  expect(f.actions).toEqual([])
+})
+
+test('旧资源需确认转换，取消保留 YAML，确认后允许表单', async ({page}) => {
+  const legacy = source.replace('    flink-web/editor: jar-v1', '    flink-web/editor: yaml')
+  await fixture(page, legacy)
+  await page.goto('/#/jobs/job-one/edit')
+  const form = page.getByRole('button', {name:'JAR 表单', exact:true})
+  await expect(form).toBeEnabled()
+  await form.click()
+  await expect(page.getByRole('dialog')).toContainText('YAML')
+  await page.getByRole('dialog').getByRole('button', {name:'取消',exact:true}).click()
+  await expect(page.getByRole('textbox', {name:'YAML 编辑器',exact:true})).toContainText('flink-web/editor: yaml')
+  await form.click()
+  await page.getByRole('dialog').getByRole('button', {name:'确定',exact:true}).click()
+  await expect(page.getByLabel('入口类')).toBeVisible()
+})
+
+test('YAML 快照高亮与复制，复制内容和页面快照一致', async ({page}) => {
+  await fixture(page)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {value: undefined, configurable: true})
+    document.execCommand = (command: string) => {
+      if (command !== 'copy') return false
+      ;(window as any).copiedYaml = (document.activeElement as HTMLTextAreaElement).value
+      return true
+    }
+  })
+  await page.goto('/#/jobs')
+  await page.getByRole('button', {name:'当前 YAML', exact:true}).click()
+  const dialog = page.getByRole('dialog', {name:/当前 FlinkDeployment YAML/})
+  await expect(dialog.locator('.cm-content')).toContainText('apiVersion')
+  await expect(dialog.locator('.cm-content span').first()).toBeVisible()
+  await dialog.getByRole('button', {name:'复制 YAML'}).click()
+  await expect(dialog.getByRole('status')).toHaveText('已复制')
+  expect(await page.evaluate(() => (window as any).copiedYaml)).toBe(source + 'status:\n  error: original error\n')
+  await page.screenshot({path:'test-results/yaml-viewer.png'})
+})
+
+test('旧作业复制可选择 JAR 表单，解析失败保留副本 YAML', async ({page}) => {
+  const legacy = source.replace('    flink-web/editor: jar-v1', '    flink-web/editor: yaml').replace('registry.test/flink:1.20.5', 'unknown/legacy:old')
+  await fixture(page, legacy)
+  let payload: any
+  const copied = {...draft, id: 'copy-job', name: 'orders-copy', yaml: legacy.replace('flink-web/editor: yaml', 'flink-web/editor: jar-v1')}
+  await page.route('**/api/jobs/job-one/copy', async route => {
+    payload = route.request().postDataJSON()
+    await route.fulfill({status:201,json:{data:copied}})
+  })
+  await page.route('**/api/jobs/copy-job', route => route.fulfill({json:{data:copied}}))
+  await page.goto('/#/jobs')
+  await page.getByRole('button', {name:'复制',exact:true}).click()
+  await page.getByRole('radio', {name:'JAR 表单'}).check()
+  await expect(page.getByRole('dialog')).toContainText('表单可能重新生成并改变原 YAML')
+  await page.getByRole('button', {name:'确认复制'}).click()
+  await expect(page).toHaveURL(/copy-job\/edit\?editor=jar/)
+  expect(payload.allowFormRewrite).toBe(true)
+  await expect(page.getByRole('alert')).toContainText('原 YAML 已保留')
+  await expect(page.getByRole('textbox', {name:'YAML 编辑器',exact:true})).toContainText('unknown/legacy:old')
+})
+
+test('历史 Metaspace 回填且调整后进入 Flink 配置', async ({page}) => {
+  const legacy = source.replace('  job:', '  flinkConfiguration:\n    jobmanager.memory.jvm-metaspace.size: 32m\n  job:')
+  const calls = await fixture(page, legacy)
+  await page.goto('/#/jobs/job-one/edit')
+  await page.getByRole('button', {name:'JAR 表单',exact:true}).click()
+  const metaspace = page.getByRole('spinbutton', {name:'JobManager Metaspace',exact:true})
+  await expect(metaspace).toHaveValue('32')
+  await metaspace.fill('512')
+  await page.getByRole('spinbutton', {name:'JobManager 内存',exact:true}).fill('2048')
+  await page.getByRole('button', {name:'本地验证与预览'}).click()
+  await expect.poll(() => calls.renders.at(-1)?.flinkConfiguration?.['jobmanager.memory.jvm-metaspace.size']).toBe('512m')
+  expect(calls.renders.at(-1)?.jmMemory).toBe('2048m')
+  await metaspace.scrollIntoViewIfNeeded()
+  await page.screenshot({path:'test-results/metaspace-form.png'})
 })

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
+import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { hydrateJar } from '../jarForm'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
@@ -48,13 +49,16 @@ const options = reactive({
   parallelism: 1,
   slots: 1,
   upgradeMode: 'savepoint',
-  jmMemory: '1024m',
+  jmMemory: '2048m',
   tmMemory: '2048m',
   jmCpu: 1,
   tmCpu: 1,
 })
 const workspaceId = ref(requestId())
 const baseYaml = ref('')
+const yamlOnly = ref(false)
+const formRewriteConfirmed = ref(false)
+const switchingMethod = ref(false)
 const deploymentName = ref('')
 const nameInput = ref<HTMLInputElement>()
 let nameCheck = 0
@@ -97,8 +101,22 @@ const currentYamlImage = computed(() => {
   }
 })
 const args = ref(''),
-  config = ref<Record<string, string>>({}),
+  config = ref<Record<string, string>>(
+    id.value ? {} : { 'jobmanager.memory.jvm-metaspace.size': '512m' },
+  ),
   method = ref(route.path.includes('/jar/') ? 'form' : 'yaml')
+const jmMetaspace = computed({
+  get: () => config.value['jobmanager.memory.jvm-metaspace.size'] || '256m',
+  set: (value: string) => {
+    config.value = { ...config.value, 'jobmanager.memory.jvm-metaspace.size': value }
+  },
+})
+const tmMetaspace = computed({
+  get: () => config.value['taskmanager.memory.jvm-metaspace.size'] || '256m',
+  set: (value: string) => {
+    config.value = { ...config.value, 'taskmanager.memory.jvm-metaspace.size': value }
+  },
+})
 const templates = ref<Catalog[]>([]),
   images = ref<Catalog[]>([]),
   artifacts = ref<Artifact[]>([])
@@ -123,6 +141,8 @@ onMounted(async () => {
       workspaceId.value = saved.id
       method.value = 'yaml'
       Object.assign(form, saved)
+      yamlOnly.value =
+        parseDocument(saved.yaml).getIn(['metadata', 'labels', 'flink-web/editor']) !== 'jar-v1'
       options.imageId =
         images.value.find((i) => imageAddress(i) === currentYamlImage.value)?.id || ''
     }
@@ -131,34 +151,54 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  if (route.query.editor === 'jar' && !error.value) await switchMethod('form')
 })
 async function switchMethod(next: string) {
-  if (busy.value || stateConfigBusy.value || loading.value || method.value === next) return
+  if (
+    busy.value ||
+    stateConfigBusy.value ||
+    loading.value ||
+    switchingMethod.value ||
+    method.value === next
+  )
+    return
+  switchingMethod.value = true
   error.value = ''
-  if (next === 'form' && form.yaml.trim()) {
-    try {
-      const storage = await request<{ bucket: string; rootPrefix: string }>(
-        '/api/artifacts/defaults',
-      ).catch(() => undefined)
-      const mapped = hydrateJar(form.yaml, images.value, storage)
-      Object.assign(options, mapped.options)
-      args.value = mapped.args
-      config.value = mapped.config
-      baseYaml.value = form.yaml
-    } catch (e) {
-      error.value = '此作业只能在 YAML 页面修改：' + (e as Error).message
+  try {
+    const legacy = next === 'form' && yamlOnly.value && !formRewriteConfirmed.value
+    if (
+      legacy &&
+      !(await confirmDialog(
+        '此作业来自旧资源。JAR 表单会重新生成部分 YAML，可能改变原有配置和格式。请在保存前检查生成的 YAML；解析失败将保留当前 YAML。是否继续？',
+        '切换到 JAR 表单',
+      ))
+    )
       return
-    }
-  } else if (next === 'yaml' && method.value === 'form' && options.imageId && form.name) {
-    try {
+    if (next === 'form' && form.yaml.trim()) {
+      try {
+        const storage = await request<{ bucket: string; rootPrefix: string }>(
+          '/api/artifacts/defaults',
+        ).catch(() => undefined)
+        const mapped = hydrateJar(form.yaml, images.value, storage)
+        Object.assign(options, mapped.options)
+        args.value = mapped.args
+        config.value = mapped.config
+        baseYaml.value = form.yaml
+        if (legacy) formRewriteConfirmed.value = true
+      } catch (e) {
+        error.value = '暂时无法切换到 JAR 表单，原 YAML 已保留：' + (e as Error).message
+        return
+      }
+    } else if (next === 'yaml' && method.value === 'form' && options.imageId && form.name)
       await render()
-    } catch (e) {
-      error.value = (e as Error).message
-      return
-    }
+    method.value = next
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    switchingMethod.value = false
   }
-  method.value = next
 }
+
 function syncYaml() {
   if (!form.yaml.trim()) return
   const doc = parseDocument(form.yaml)
@@ -261,6 +301,8 @@ async function render() {
     ...jsonBody({
       ...options,
       baseYaml: baseYaml.value,
+      jobId: id.value,
+      allowFormRewrite: formRewriteConfirmed.value,
       name: deploymentName.value || form.name,
       args: args.value ? args.value.replace(/\r/g, '').split('\n') : [],
       flinkConfiguration: config.value,
@@ -312,7 +354,7 @@ async function save(deploy = false) {
       ...jsonBody({ yaml: form.yaml, name: deploymentName.value || form.name, dryRun: false }),
     })
     const saved = id.value
-      ? await jobsApi.update(id.value, form)
+      ? await jobsApi.update(id.value, { ...form, allowFormRewrite: formRewriteConfirmed.value })
       : await jobsApi.create({ ...form, workspaceId: workspaceId.value })
     Object.assign(form, saved)
     deploymentName.value = saved.deploymentName
@@ -341,7 +383,13 @@ async function save(deploy = false) {
     ><template #description>配置主程序与运行参数，验证后保存或发布到当前工作空间。</template
     ><template #actions
       ><div class="segmented">
-        <button type="button" :class="{ active: method === 'form' }" @click="switchMethod('form')">
+        <button
+          type="button"
+          :class="{ active: method === 'form' }"
+          :disabled="loading || switchingMethod"
+          :title="yamlOnly ? '切换前需确认可能改变原 YAML' : ''"
+          @click="switchMethod('form')"
+        >
           JAR 表单</button
         ><button type="button" :class="{ active: method === 'yaml' }" @click="switchMethod('yaml')">
           YAML 编辑
@@ -351,6 +399,9 @@ async function save(deploy = false) {
   >
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice" role="status">{{ message }}</div>
+  <p v-if="yamlOnly" class="notice" role="status">
+    此作业来自既有资源。可切换到 JAR 表单，但生成内容可能改变原 YAML；保存前请检查配置。
+  </p>
   <form
     ref="formElement"
     class="job-editor-form"
@@ -500,6 +551,14 @@ async function save(deploy = false) {
                 label="TaskManager 内存"
               />
             </div>
+            <div class="resource-pair resource-memory">
+              <MemoryInput v-model="jmMetaspace" label="JobManager Metaspace" />
+              <MemoryInput v-model="tmMetaspace" label="TaskManager Metaspace" />
+            </div>
+            <p class="muted">
+              总内存包含堆、Metaspace 和其他开销。Flink UI 报 Metaspace 错误时，可先将 JobManager
+              Metaspace 调至 512 MB、总内存调至 2 GB，保存并重新部署。
+            </p>
             <div class="resource-pair resource-cpu">
               <label
                 >JobManager CPU<input

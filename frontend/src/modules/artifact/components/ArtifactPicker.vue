@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { Folder, FileArchive, File, ChevronRight, ArrowUp } from '@lucide/vue'
 import { request } from '../../../shared/api/http'
 export type Artifact = {
   id: string
@@ -7,6 +8,7 @@ export type Artifact = {
   filename?: string
   category?: string
   uri?: string
+  size?: number
   sha256?: string
 }
 const props = defineProps<{
@@ -33,10 +35,9 @@ const root = ref(''),
   dirs = ref<string[]>([]),
   files = ref<Artifact[]>([]),
   nextToken = ref('')
-const folderQuery = ref('')
 const visibleDirs = computed(() =>
   dirs.value.filter((d) =>
-    d.slice(prefix.value.length).toLowerCase().includes(folderQuery.value.toLowerCase()),
+    d.slice(prefix.value.length).toLowerCase().includes(query.value.toLowerCase()),
   ),
 )
 const label = computed(() => (props.category === 'main' ? '主 JAR 文件' : '附加依赖与配置文件'))
@@ -63,6 +64,26 @@ const choices = computed(() =>
       a.name.toLowerCase().includes(query.value.toLowerCase()),
   ),
 )
+
+const breadcrumbs = computed(() => {
+  const relative = prefix.value.startsWith(base.value) ? prefix.value.slice(base.value.length) : ''
+  const parts = relative.split('/').filter(Boolean)
+  return [
+    { name: scope.value === 'job' ? '作业文件' : '共享文件', path: base.value },
+    ...parts.map((name, i) => ({ name, path: base.value + parts.slice(0, i + 1).join('/') + '/' })),
+  ]
+})
+function navigate(path: string) {
+  query.value = ''
+  void load(path)
+}
+function fileSize(size?: number) {
+  if (size === undefined) return ''
+  return size >= 1024 * 1024
+    ? (size / (1024 * 1024)).toFixed(1) + ' MB'
+    : Math.max(1, Math.ceil(size / 1024)) + ' KB'
+}
+
 let epoch = 0
 async function load(path = base.value, append = false) {
   const serial = ++epoch
@@ -80,7 +101,7 @@ async function load(path = base.value, append = false) {
     }
     const data = await request<{
       directories: string[]
-      objects: { key: string }[]
+      objects: { key: string; size?: number }[]
       nextToken?: string
     }>(
       '/api/artifacts/objects?' +
@@ -96,6 +117,7 @@ async function load(path = base.value, append = false) {
       .filter((o) => !o.key.endsWith('/'))
       .map((o) => ({
         id: 's3:' + o.key,
+        size: o.size,
         name: o.key.split('/').pop()!,
         filename: o.key.split('/').pop()!,
         uri: 's3://' + bucket.value + '/' + o.key,
@@ -186,7 +208,7 @@ async function upload(event: Event) {
         </button>
         <label
           class="button upload-button"
-          :class="{ 'is-disabled': disabled || uploading || !root }"
+          :class="{ 'is-disabled': disabled || uploading || busy || !!error || !root }"
         >
           <svg
             viewBox="0 0 24 24"
@@ -205,90 +227,128 @@ async function upload(event: Event) {
             :aria-label="category === 'main' ? '上传主 JAR' : '上传依赖文件'"
             :accept="category === 'main' ? '.jar' : undefined"
             :multiple="category === 'dependency'"
-            :disabled="disabled || uploading || !root"
+            :disabled="disabled || uploading || busy || !!error || !root"
             @change="upload"
           />
         </label>
       </div>
     </div>
-    <div class="picker-browser">
-      <select v-model="scope" aria-label="文件目录">
-        <option value="job">当前作业目录</option>
-        <option value="shared">共享目录</option>
-      </select>
-      <small class="picker-path">s3://{{ bucket }}/{{ prefix || base }}</small>
-      <div class="picker-navigation">
+
+    <div class="picker-browser" :aria-busy="busy">
+      <div class="browser-toolbar">
+        <select v-model="scope" aria-label="文件目录" :disabled="disabled || uploading || busy">
+          <option value="job">当前作业目录</option>
+          <option value="shared">共享目录</option>
+        </select>
+        <span class="browser-count">{{ dirs.length }} 个目录 · {{ files.length }} 个文件</span>
+      </div>
+      <nav class="picker-breadcrumbs" :aria-label="label + '路径'">
         <button
           type="button"
-          class="button"
-          :disabled="prefix === base || busy"
-          @click="load(prefix.slice(0, -1).slice(0, prefix.slice(0, -1).lastIndexOf('/') + 1))"
+          class="parent-folder"
+          :disabled="prefix === base || busy || disabled"
+          aria-label="上一级"
+          title="返回上一级目录"
+          @click="navigate(prefix.slice(0, -1).slice(0, prefix.slice(0, -1).lastIndexOf('/') + 1))"
         >
-          ← 上一级
+          <ArrowUp :size="15" />
         </button>
-        <details v-if="dirs.length" class="folder-menu">
-          <summary>
-            子目录 <span class="count">{{ dirs.length }}</span
-            ><span>▾</span>
-          </summary>
-          <div class="folder-popover">
-            <input v-model="folderQuery" placeholder="查找子目录" aria-label="查找子目录" />
-            <div class="folder-list" role="list">
-              <button
-                v-for="dir in visibleDirs"
-                :key="dir"
-                type="button"
-                :title="dir"
-                :disabled="busy"
-                @click="
-                  load(dir)
-                  ;($event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
-                  folderQuery = ''
-                "
-              >
-                ▣ {{ dir.slice(prefix.length).replace(/\/$/, '') }}
-              </button>
-              <small v-if="!visibleDirs.length">没有匹配的目录</small>
-            </div>
-          </div>
-        </details>
-      </div>
-      <input v-model="query" :aria-label="'筛选' + label" placeholder="按文件名筛选当前目录" />
-      <select
-        v-if="category === 'main'"
-        :value="modelValue"
-        aria-label="主 JAR 文件"
-        :disabled="disabled || uploading"
-        @change="choose(($event.target as HTMLSelectElement).value)"
-      >
-        <option value="">使用镜像内 JAR 路径</option>
-        <option
-          v-for="a in selected.filter((a) => !choices.some((c) => c.id === a.id))"
-          :key="a.id"
-          :value="a.id"
+        <template v-for="(crumb, index) in breadcrumbs" :key="crumb.path">
+          <ChevronRight v-if="index" :size="13" aria-hidden="true" />
+          <button
+            type="button"
+            :title="crumb.name"
+            :disabled="busy || disabled || index === breadcrumbs.length - 1"
+            @click="navigate(crumb.path)"
+          >
+            {{ crumb.name }}
+          </button>
+        </template>
+      </nav>
+      <input
+        v-model="query"
+        :aria-label="'筛选' + label"
+        placeholder="搜索当前目录中的文件或文件夹"
+      />
+      <div class="browser-entries" role="group" :aria-label="label + '目录内容'">
+        <button
+          v-for="dir in visibleDirs"
+          :key="dir"
+          type="button"
+          class="folder-entry"
+          :title="dir.slice(prefix.length).replace(/\/$/, '')"
+          :disabled="busy || disabled || uploading"
+          @click="navigate(dir)"
         >
-          {{ a.name }}（已选）
-        </option>
-        <option v-for="a in choices" :key="a.id" :value="a.id">{{ a.name }}</option>
-      </select>
-      <div v-else class="object-choices">
-        <label v-for="a in choices" :key="a.id"
-          ><input
-            type="checkbox"
+          <Folder :size="19" aria-hidden="true" />
+          <span>{{ dir.slice(prefix.length).replace(/\/$/, '') }}</span>
+          <ChevronRight :size="15" aria-hidden="true" />
+        </button>
+        <label
+          v-for="a in choices"
+          :key="a.id"
+          class="file-entry"
+          :class="{ chosen: selectedIds.includes(a.id) }"
+          :title="a.name"
+        >
+          <input
+            :type="category === 'main' ? 'radio' : 'checkbox'"
+            :name="category === 'main' ? 'main-jar-' + scopeId : undefined"
             :checked="selectedIds.includes(a.id)"
-            :disabled="disabled || uploading"
+            :disabled="disabled || uploading || busy"
             @change="choose(a.id)"
-          />{{ a.name }}</label
-        ><small v-if="!choices.length">当前目录没有文件</small>
+          />
+          <component
+            :is="a.filename?.endsWith('.jar') ? FileArchive : File"
+            :size="18"
+            aria-hidden="true"
+          />
+          <span>{{ a.name }}</span
+          ><small>{{ fileSize(a.size) }}</small>
+        </label>
+        <div v-if="!visibleDirs.length && !choices.length" class="browser-empty">
+          <Folder :size="26" aria-hidden="true" />
+          <span>{{
+            busy ? '正在读取目录…' : query ? '没有匹配的文件或目录' : '当前目录暂无可选文件'
+          }}</span>
+          <small v-if="!busy && !query"
+            >可上传{{
+              category === 'main' ? ' JAR 文件' : '依赖或配置文件'
+            }}，或切换到共享目录</small
+          >
+        </div>
       </div>
+      <div class="browser-footer">
+        <small class="picker-path" :title="'s3://' + bucket + '/' + (prefix || base)"
+          >s3://{{ bucket }}/{{ prefix || base }}</small
+        >
+        <button
+          v-if="nextToken"
+          type="button"
+          class="text-button"
+          :disabled="busy"
+          @click="load(prefix, true)"
+        >
+          加载更多
+        </button>
+      </div>
+    </div>
+    <div class="picker-selection">
+      <small>{{
+        selected.length
+          ? '已选择 ' + selected.length + ' 个文件'
+          : category === 'main'
+            ? '当前使用镜像内 JAR 路径'
+            : '尚未选择附加文件'
+      }}</small>
       <button
-        v-if="nextToken"
+        v-if="category === 'main' && selected.length"
         type="button"
         class="text-button"
-        :disabled="busy"
-        @click="load(prefix, true)"
+        :disabled="disabled || uploading"
+        @click="emit('update:modelValue', '')"
       >
-        加载更多
+        改用镜像内 JAR
       </button>
     </div>
     <div class="file-chips">
@@ -329,93 +389,158 @@ async function upload(event: Event) {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
 .picker-browser {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
   padding: 12px;
-  background: var(--surface-soft, #f7f9fc);
-  border: 1px solid var(--line, #e1e7ef);
+  background: var(--color-surface);
+  border: 1px solid var(--line);
   border-radius: 8px;
 }
-.picker-browser input,
-.picker-browser select {
+.browser-toolbar,
+.picker-breadcrumbs,
+.browser-footer,
+.picker-selection {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.browser-toolbar select {
+  width: 180px;
   margin: 0;
-  background: white;
 }
-.picker-path {
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-.picker-browser .toolbar-actions:has(button:only-child:disabled) {
-  display: none;
-}
-
-.picker-navigation {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.folder-menu {
-  position: relative;
-  min-width: 160px;
-}
-.folder-menu summary {
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 10px;
-  background: white;
-  font-size: 12px;
-}
-.folder-menu summary > span:last-child {
+.browser-count {
   margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
-.folder-popover {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 5px);
-  left: 0;
-  width: min(360px, 65vw);
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: white;
-  box-shadow: 0 8px 24px #172b4d20;
+.picker-breadcrumbs {
+  overflow-x: auto;
+  padding: 4px 0;
 }
-.folder-list {
-  max-height: 220px;
-  overflow: auto;
-  display: grid;
-  margin-top: 8px;
-}
-.folder-list button {
+.picker-breadcrumbs button {
   border: 0;
   background: transparent;
-  padding: 9px 6px;
-  color: var(--text);
-  text-align: left;
-  white-space: nowrap;
+  padding: 4px;
+  color: var(--blue);
+  cursor: pointer;
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.folder-list button:hover {
-  background: var(--surface-soft, #f5f8ff);
-  color: var(--primary);
+.picker-breadcrumbs button:disabled {
+  color: var(--muted);
+  cursor: default;
 }
-.object-choices {
-  max-height: 160px;
-  overflow: auto;
-}
-.object-choices label {
+.picker-breadcrumbs .parent-folder {
   display: flex;
-  gap: 8px;
-  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-right: 4px;
 }
-.object-choices input {
-  width: auto;
+.picker-browser > input {
+  margin: 0;
+  background: var(--color-background);
+}
+.browser-entries {
+  max-height: 224px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+.folder-entry,
+.file-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.folder-entry svg {
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+.folder-entry svg:last-child {
+  color: var(--muted);
+  margin-left: auto;
+}
+.file-entry svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.file-entry input {
+  width: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--blue);
+}
+.folder-entry span,
+.file-entry span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.file-entry small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.folder-entry:hover,
+.file-entry:hover,
+.file-entry.chosen {
+  background: #eef5ff;
+}
+.browser-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 22px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.browser-empty small {
+  font-size: 12px;
+}
+.browser-footer {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.picker-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.picker-selection {
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .browser-toolbar {
+    flex-wrap: wrap;
+  }
+  .browser-count {
+    margin-left: 0;
+  }
 }
 </style>

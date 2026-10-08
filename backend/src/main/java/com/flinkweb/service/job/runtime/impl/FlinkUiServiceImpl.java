@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 public class FlinkUiServiceImpl implements FlinkUiService {
   private final com.fasterxml.jackson.databind.ObjectMapper mapper =
       new com.fasterxml.jackson.databind.ObjectMapper();
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(FlinkUiServiceImpl.class);
   private final JobService jobs;
   private final String namespace;
   private final HttpClient client =
@@ -53,7 +55,9 @@ public class FlinkUiServiceImpl implements FlinkUiService {
     // 目标地址仅由已登记作业名和固定 Namespace 生成，不接受外部目标 URL。
     String host = job.deploymentName() + "-rest." + namespace + ".svc:8081";
     String query = request.getQueryString();
-    URI target = URI.create("http://" + host + "/" + path + (query == null ? "" : "?" + query));
+    String upstreamPath = path;
+    URI target =
+        URI.create("http://" + host + "/" + upstreamPath + (query == null ? "" : "?" + query));
     var outgoing =
         HttpRequest.newBuilder(target)
             .timeout(Duration.ofSeconds(30))
@@ -76,10 +80,47 @@ public class FlinkUiServiceImpl implements FlinkUiService {
                   + (redirect.getRawQuery() == null ? "" : "?" + redirect.getRawQuery()));
           return;
         }
+        if (upstream.statusCode() >= 400) {
+          log.warn(
+              "Flink UI upstream response jobId={} deployment={} path={} status={}",
+              id,
+              job.deploymentName(),
+              upstreamPath,
+              upstream.statusCode());
+          response.setHeader("X-Flink-UI-Error", "upstream");
+        }
         response.setStatus(upstream.statusCode());
         String type =
             upstream.headers().firstValue("Content-Type").orElse("application/octet-stream");
         response.setContentType(type);
+        if (upstream.statusCode() >= 500 && (path.isEmpty() || path.equals("index.html"))) {
+          byte[] bytes = body.readNBytes(2 * 1024 * 1024 + 1);
+          if (bytes.length > 2 * 1024 * 1024) throw new IOException("Error response too large");
+          if (new String(bytes, StandardCharsets.UTF_8).contains("Metaspace")) {
+            log.warn(
+                "Flink UI unavailable: JobManager Metaspace exhausted jobId={} deployment={}",
+                id,
+                job.deploymentName());
+            response.setHeader("X-Flink-UI-Error", "metaspace");
+            response.setContentType("text/html;charset=UTF-8");
+            response
+                .getOutputStream()
+                .write(
+                    ("""
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flink UI 暂不可用</title><body style="font-family:system-ui;max-width:720px;margin:64px auto;padding:24px;color:#24334b">
+<h1>JobManager Metaspace 不足</h1><p>Flink 自身返回了内存错误，当前无法加载 Web UI。</p>
+<p>请在作业 YAML 中检查 <code>jobmanager.memory.jvm-metaspace.size</code>。
+可先调整为 <code>512m</code>，并将 JobManager 总内存调整为 <code>2048m</code>，为堆和其他内存留出空间。</p>
+<p>保存配置并重新部署后生效；持续出现时，请检查 JobManager 日志与类加载情况。</p>
+<a href="/">返回平台</a></body></html>
+""")
+                        .getBytes(StandardCharsets.UTF_8));
+            return;
+          }
+          response.getOutputStream().write(bytes);
+          return;
+        }
         if (path.endsWith("/config")
             && !path.matches("(v[0-9]+/)?config")
             && upstream.statusCode() == 200) {
@@ -102,6 +143,12 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       Thread.currentThread().interrupt();
       throw unavailable();
     } catch (IOException ex) {
+      log.warn(
+          "Flink UI proxy transport failed jobId={} deployment={} path={} errorType={}",
+          id,
+          job.deploymentName(),
+          upstreamPath,
+          ex.getClass().getSimpleName());
       if (!response.isCommitted()) throw unavailable();
     }
   }

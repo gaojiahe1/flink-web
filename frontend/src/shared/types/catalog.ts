@@ -1,4 +1,4 @@
-export type CatalogModule = 'templates' | 'images' | 'configs' | 'artifacts' | 'users' | 'audit'
+export type CatalogModule = 'templates' | 'images' | 'configs' | 'users' | 'audit'
 export interface CatalogField {
   key: string
   label: string

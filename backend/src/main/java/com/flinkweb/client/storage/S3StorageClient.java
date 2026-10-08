@@ -20,6 +20,8 @@ import software.amazon.awssdk.services.s3.model.*;
 /** 封装 S3 目录查询、流式上传和下载；元数据登记由业务服务负责。 */
 @Component
 public class S3StorageClient implements AutoCloseable {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(S3StorageClient.class);
   private final String bucket, prefix;
   private final String stateBucket;
   private final String endpoint, region, stateRoot;
@@ -83,7 +85,11 @@ public class S3StorageClient implements AutoCloseable {
       if (token != null && !token.isBlank()) builder.continuationToken(token);
       var response = client.listObjectsV2(builder.build());
       var result =
-          mapper.createObjectNode().put("bucket", bucket).put("prefix", safePrefix(requested)).put("rootPrefix", prefix);
+          mapper
+              .createObjectNode()
+              .put("bucket", bucket)
+              .put("prefix", safePrefix(requested))
+              .put("rootPrefix", prefix);
       var dirs = result.putArray("directories");
       for (var dir : response.commonPrefixes()) dirs.add(dir.prefix());
       var objects = result.putArray("objects");
@@ -129,8 +135,10 @@ public class S3StorageClient implements AutoCloseable {
       }
       String checksum = HexFormat.of().formatHex(digest.digest()),
           id = UUID.randomUUID().toString(),
-          key = direct ? safePrefix(category).replaceAll("/+$", "") + "/" + filename
-              : prefix + category + "/" + id + "/" + filename;
+          key =
+              direct
+                  ? safePrefix(category).replaceAll("/+$", "") + "/" + filename
+                  : prefix + category + "/" + id + "/" + filename;
       client.putObject(
           PutObjectRequest.builder()
               .bucket(bucket)
@@ -161,62 +169,82 @@ public class S3StorageClient implements AutoCloseable {
       if (temporary != null)
         try {
           Files.deleteIfExists(temporary);
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+          log.warn("Temporary artifact cleanup failed errorType={}", ex.getClass().getSimpleName());
         }
     }
   }
 
   /** 返回可公开的连接默认值，不返回任何凭证。 */
   public ObjectNode defaults() {
-    return mapper.createObjectNode().put("bucket", bucket).put("rootPrefix", prefix)
-        .put("endpoint", endpoint).put("region", region).put("stateRoot", stateRoot);
+    return mapper
+        .createObjectNode()
+        .put("bucket", bucket)
+        .put("rootPrefix", prefix)
+        .put("endpoint", endpoint)
+        .put("region", region)
+        .put("stateRoot", stateRoot);
   }
 
-  /** 读取选中对象并计算真实校验和，支持直接上传到固定目录的文件。 */
+  /** 读取选中对象元数据，不下载文件或计算校验和，支持直接上传到固定目录的文件。 */
   public ObjectNode describe(String key) {
     configured();
     safePrefix(key);
-    if (key.endsWith("/")) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请选择文件");
+    if (key.endsWith("/"))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请选择文件");
     try {
       var head = client.headObject(HeadObjectRequest.builder().bucket(bucket).key(key).build());
       if (head.contentLength() != null && head.contentLength() > 1024L * 1024 * 1024)
-        throw new BusinessException(HttpStatus.BAD_REQUEST, "FILE_TOO_LARGE", "单个依赖文件不能超过下载器的 1 GiB 限制");
-      String checksum = head.metadata().getOrDefault("sha256", "");
-      if (!checksum.matches("[a-fA-F0-9]{64}")) {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (var input = new DigestInputStream(download(key), digest)) {
-          input.transferTo(java.io.OutputStream.nullOutputStream());
-        }
-        checksum = HexFormat.of().formatHex(digest.digest());
-      }
-      return mapper.createObjectNode().put("id", "s3:" + key).put("key", key)
+        throw new BusinessException(
+            HttpStatus.BAD_REQUEST, "FILE_TOO_LARGE", "单个依赖文件不能超过下载器的 1 GiB 限制");
+      return mapper
+          .createObjectNode()
+          .put("id", "s3:" + key)
+          .put("key", key)
           .put("filename", key.substring(key.lastIndexOf('/') + 1))
-          .put("uri", "s3://" + bucket + "/" + key).put("sha256", checksum);
-    } catch (BusinessException ex) { throw ex; }
-      catch (Exception ex) { throw unavailable(); }
+          .put("uri", "s3://" + bucket + "/" + key);
+    } catch (BusinessException ex) {
+      throw ex;
+    } catch (Exception ex) {
+      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
+      throw unavailable();
+    }
   }
 
   /** 创建目录标记，不覆盖已经存在的对象。 */
   public ObjectNode mkdir(String requested) {
     configured();
     String key = safePrefix(requested).replaceAll("/+$", "") + "/";
-    if (key.equals(prefix)) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "请输入子目录");
+    if (key.equals(prefix))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "请输入子目录");
     try {
-      client.putObject(PutObjectRequest.builder().bucket(bucket).key(key)
-          .overrideConfiguration(c -> c.putHeader("If-None-Match", "*")).build(), RequestBody.empty());
+      client.putObject(
+          PutObjectRequest.builder()
+              .bucket(bucket)
+              .key(key)
+              .overrideConfiguration(c -> c.putHeader("If-None-Match", "*"))
+              .build(),
+          RequestBody.empty());
       return mapper.createObjectNode().put("key", key);
-    } catch (Exception ex) { throw unavailable(); }
+    } catch (Exception ex) {
+      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
+      throw unavailable();
+    }
   }
 
   /** 仅删除明确指定的单个文件；不执行递归目录删除。 */
   public ObjectNode delete(String key) {
     configured();
     safePrefix(key);
-    if (key.endsWith("/")) throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请进入目录后选择具体文件，不能递归删除目录");
+    if (key.endsWith("/"))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_FILE", "请进入目录后选择具体文件，不能递归删除目录");
     try {
       client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
       return mapper.createObjectNode().put("deleted", true).put("key", key);
-    } catch (Exception ex) { throw unavailable(); }
+    } catch (Exception ex) {
+      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
+      throw unavailable();
+    }
   }
 
   /** 校验对象范围后获取下载流，由调用方关闭。 */
@@ -226,6 +254,127 @@ public class S3StorageClient implements AutoCloseable {
     try {
       return client.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build());
     } catch (Exception ex) {
+      throw unavailable();
+    }
+  }
+
+  /** 只接受平台 UUID，生成带目录分隔符的专属前缀，防止误删相邻作业。 */
+  public String jobPrefix(String id) {
+    if (!id.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_WORKSPACE", "作业目录标识无效");
+    return prefix + "jobs/" + id + "/";
+  }
+
+  /** 获取作业专属状态地址，不从可编辑 YAML 推断删除目标。 */
+  public String jobStateRoot(String id) {
+    jobPrefix(id);
+    return stateRoot.replaceAll("/+$", "") + "/" + id + "/";
+  }
+
+  /** 同步清理平台生成的作业文件与状态目录；失败向上抛出，保留作业供重试。 */
+  public void deleteJobStorage(String id, boolean required) {
+    String objects = jobPrefix(id);
+    if (client == null) {
+      if (required) configured();
+      return;
+    }
+    deletePrefix(bucket, objects);
+    if (stateBucket != null) {
+      URI location = URI.create(jobStateRoot(id));
+      deletePrefix(stateBucket, location.getPath().replaceFirst("^/", ""));
+    }
+    log.info("Job storage deleted jobId={}", id);
+  }
+
+  /** 分页递归删除专属前缀，检查批量响应中的单项错误，支持失败后幂等重试。 */
+  private void deletePrefix(String targetBucket, String targetPrefix) {
+    try {
+      java.util.List<String> previous = java.util.List.of();
+      while (true) {
+        var page =
+            client.listObjectsV2(
+                ListObjectsV2Request.builder()
+                    .bucket(targetBucket)
+                    .prefix(targetPrefix)
+                    .maxKeys(1000)
+                    .build());
+        if (page.contents().isEmpty()) return;
+        var keys = new ArrayList<ObjectIdentifier>();
+        for (var item : page.contents()) {
+          if (!item.key().startsWith(targetPrefix))
+            throw new IllegalStateException("Storage returned an object outside job prefix");
+          keys.add(ObjectIdentifier.builder().key(item.key()).build());
+        }
+        var current = keys.stream().map(ObjectIdentifier::key).toList();
+        if (current.equals(previous))
+          throw new IllegalStateException("Storage deletion made no progress");
+        previous = current;
+        var result =
+            client.deleteObjects(
+                DeleteObjectsRequest.builder()
+                    .bucket(targetBucket)
+                    .delete(Delete.builder().objects(keys).quiet(true).build())
+                    .build());
+        if (!result.errors().isEmpty()) throw new IllegalStateException("Partial storage deletion");
+      }
+    } catch (S3Exception ex) {
+      if (ex.statusCode() == 404
+          && ex.awsErrorDetails() != null
+          && "NoSuchBucket".equals(ex.awsErrorDetails().errorCode())) return;
+      log.warn("Job storage deletion failed errorType={}", ex.getClass().getSimpleName());
+      throw unavailable();
+    } catch (Exception ex) {
+      log.warn("Job storage deletion failed errorType={}", ex.getClass().getSimpleName());
+      throw unavailable();
+    }
+  }
+
+  /** 复制作业专属依赖到新 UUID 目录，公共文件保持共享，状态文件不复制。 */
+  public void copyJobFiles(String from, String to, boolean required) {
+    String sourcePrefix = jobPrefix(from), targetPrefix = jobPrefix(to);
+    if (from.equals(to)) throw new IllegalArgumentException("Distinct job directories required");
+    if (client == null) {
+      if (required) configured();
+      return;
+    }
+    try {
+      String token = null;
+      var tokens = new HashSet<String>();
+      do {
+        var page =
+            client.listObjectsV2(
+                ListObjectsV2Request.builder()
+                    .bucket(bucket)
+                    .prefix(sourcePrefix)
+                    .continuationToken(token)
+                    .maxKeys(1000)
+                    .build());
+        for (var item : page.contents()) {
+          if (!item.key().startsWith(sourcePrefix))
+            throw new IllegalStateException("Invalid source prefix");
+          String source =
+              java.net.URLEncoder.encode(
+                      bucket + "/" + item.key(), java.nio.charset.StandardCharsets.UTF_8)
+                  .replace("+", "%20");
+          client.copyObject(
+              CopyObjectRequest.builder()
+                  .copySource(source)
+                  .destinationBucket(bucket)
+                  .destinationKey(targetPrefix + item.key().substring(sourcePrefix.length()))
+                  .copySourceIfMatch(item.eTag())
+                  .build());
+        }
+        token = Boolean.TRUE.equals(page.isTruncated()) ? page.nextContinuationToken() : null;
+        if (Boolean.TRUE.equals(page.isTruncated()) && (token == null || !tokens.add(token)))
+          throw new IllegalStateException("Invalid storage continuation token");
+      } while (token != null);
+      log.info("Job files copied sourceJobId={} targetJobId={}", from, to);
+    } catch (Exception ex) {
+      try {
+        deletePrefix(bucket, targetPrefix);
+      } catch (Exception cleanup) {
+        log.warn("Partial job copy cleanup failed targetJobId={}", to);
+      }
       throw unavailable();
     }
   }

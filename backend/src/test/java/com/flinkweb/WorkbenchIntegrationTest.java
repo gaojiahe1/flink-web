@@ -54,6 +54,7 @@ class WorkbenchIntegrationTest {
   /** 每个测试上下文使用独立元数据文件和仅供测试的凭据。 */
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry registry) {
+    registry.add("platform.artifacts.downloader-image", () -> "registry.test/downloader:current");
     registry.add("platform.storage.local-path", () -> DATABASE.toString());
     registry.add("platform.security.password", () -> "Test-password-12345");
     registry.add(
@@ -444,11 +445,18 @@ class WorkbenchIntegrationTest {
         .put("state.savepoints.dir", "s3://state/savepoints");
     resource
         .withObject("/status/jobStatus/savepointInfo/lastSavepoint")
-        .put("location", "s3://state/old");
+        .put("location", "s3://state/old")
+        .put("triggerType", "UPGRADE");
     when(kubernetes.base()).thenReturn("/cr");
     when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
     when(kubernetes.call(eq("PUT"), anyString(), any()))
-        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+        .thenAnswer(
+            i -> {
+              ObjectNode changed = ((ObjectNode) i.getArgument(2)).deepCopy();
+              if (!i.getArgument(1).toString().contains("dryRun"))
+                resource.set("spec", changed.path("spec").deepCopy());
+              return changed;
+            });
     when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
     assertThat(
             operations
@@ -466,7 +474,8 @@ class WorkbenchIntegrationTest {
     verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
     resource
         .withObject("/status/jobStatus/savepointInfo/lastSavepoint")
-        .put("location", "s3://state/new");
+        .put("location", "s3://state/new")
+        .put("triggerType", "UPGRADE");
     var progress = stops.advance(job.id());
     assertThat(progress.path("phase").asText()).isEqualTo("DELETING");
     assertThat(stops.restorePath(job.id())).isEqualTo("s3://state/new");
@@ -522,6 +531,19 @@ class WorkbenchIntegrationTest {
     var resource = live(job, "RUNNING", "running");
     resource.withObject("/spec").put("serviceAccount", "legacy-flink");
     resource.withObject("/spec/job").put("parallelism", 2);
+    var init =
+        resource
+            .withObject("/spec/podTemplate/spec")
+            .putArray("initContainers")
+            .addObject()
+            .put("name", "fw-download")
+            .put("image", "legacy/downloader:old");
+    init.putArray("env")
+        .addObject()
+        .put("name", "ARTIFACT_MANIFEST")
+        .put(
+            "value",
+            "[{\"uri\":\"https://files.test/job.jar\",\"filename\":\"job.jar\",\"sha256\":\"old\"}]");
     when(kubernetes.base()).thenReturn("/cr");
     when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
     when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
@@ -556,6 +578,15 @@ class WorkbenchIntegrationTest {
                 body ->
                     body.at("/spec/job/parallelism").asInt() == 2
                         && body.at("/spec/serviceAccount").asText().equals("legacy-flink")
+                        && body.at("/spec/podTemplate/spec/initContainers/0/image")
+                            .asText()
+                            .equals("registry.test/downloader:current")
+                        && !body.at("/spec/podTemplate/spec/initContainers/0/env")
+                            .toString()
+                            .contains("sha256")
+                        && !body.at("/spec/podTemplate/spec/initContainers/0/env")
+                            .toString()
+                            .contains("AWS_ACCESS_KEY_ID")
                         && !body.path("metadata").has("uid")));
     assertThat(stops.advance(job.id())).isNull();
   }
@@ -689,10 +720,267 @@ class WorkbenchIntegrationTest {
         .withObject("/status/jobStatus")
         .put("state", "FINISHED")
         .withObject("/savepointInfo/lastSavepoint")
-        .put("location", "s3://state/new");
+        .put("location", "s3://state/new")
+        .put("triggerType", "UPGRADE");
     resource.withObject("/status").put("lifecycleState", "SUSPENDED");
     var refreshed = query.refresh();
     assertThat(refreshed.path("items")).isEmpty();
     assertThat(refreshed.at("/stopProgress/" + job.id() + "/phase").asText()).isEqualTo("DELETING");
+  }
+
+  /** 未预期的客户端异常保留 UNKNOWN 结果，避免操作永久卡在 SUBMITTING。 */
+  @Test
+  void unexpectedClientFailureDoesNotLeaveSubmittingOperation() {
+    var job = draft();
+    var request = command(job);
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull()))
+        .thenThrow(new IllegalStateException("private details"));
+    var result = operations.execute(job.id(), "start", request, () -> "admin");
+    assertThat(result.path("state").asText()).isEqualTo("UNKNOWN");
+    assertThat(result.toString()).doesNotContain("private details");
+    assertThat(operations.execute(job.id(), "start", request, () -> "admin")).isEqualTo(result);
+  }
+
+  /** 使用实际配置代数和异步状态的集群替身准备停止流程。 */
+  ObjectNode savepointStopFixture(JobDraft job) {
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/metadata").put("generation", 1);
+    resource.withObject("/status").put("observedGeneration", 1).put("lifecycleState", "STABLE");
+    resource
+        .withObject("/spec/flinkConfiguration")
+        .put("state.savepoints.dir", "s3://state/savepoints");
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("PUT"), anyString(), any()))
+        .thenAnswer(
+            i -> {
+              ObjectNode changed = ((ObjectNode) i.getArgument(2)).deepCopy();
+              if (!i.getArgument(1).toString().contains("dryRun")) {
+                resource.set("spec", changed.path("spec").deepCopy());
+                resource.withObject("/metadata").put("generation", 2).put("resourceVersion", "6");
+                changed.withObject("/metadata").put("generation", 2).put("resourceVersion", "6");
+              }
+              return changed;
+            });
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    return resource;
+  }
+
+  /** 模拟新 Operator 完成停止并记录专用的升级保存点。 */
+  void completeSavepointStop(ObjectNode resource) {
+    resource.withObject("/status").put("observedGeneration", 2).put("lifecycleState", "SUSPENDED");
+    resource
+        .withObject("/status/jobStatus")
+        .put("state", "FINISHED")
+        .put("upgradeSavepointPath", "s3://state/stop-new");
+    var snapshots = mapper.createObjectNode();
+    var snapshot = snapshots.putArray("items").addObject();
+    snapshot.withObject("/metadata/labels").put("snapshot.trigger-type", "UPGRADE");
+    snapshot
+        .withObject("/spec/jobReference")
+        .put("kind", "FlinkDeployment")
+        .put("name", resource.at("/metadata/name").asText());
+    snapshot
+        .withObject("/spec/savepoint")
+        .put("alreadyExists", true)
+        .put("path", "s3://state/stop-new");
+    snapshot.withObject("/status").put("state", "COMPLETED").put("path", "s3://state/stop-new");
+    when(kubernetes.call("GET", "/flinkstatesnapshots", null)).thenReturn(snapshots);
+  }
+
+  /** 新版 Operator 只更新 upgradeSavepointPath 时仍可完成停止并保留恢复地址。 */
+  @Test
+  void stopAcceptsUpgradeSavepointPathWithoutLegacyField() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    assertThat(stops.advance(job.id()).path("phase").asText()).isEqualTo("DELETING");
+    assertThat(stops.restorePath(job.id())).isEqualTo("s3://state/stop-new");
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 仅观测到旧保存点、普通手动保存点或尚未确认的代数都不能删除。 */
+  @Test
+  void stopRejectsUnrelatedSavepointsAndStaleObservation() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    resource.withObject("/status/jobStatus").put("upgradeSavepointPath", "s3://state/old");
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    resource.withObject("/status/jobStatus").put("upgradeSavepointPath", "s3://state/old");
+    stops.advance(job.id());
+    resource.withObject("/status/jobStatus").remove("upgradeSavepointPath");
+    resource
+        .withObject("/status/jobStatus/savepointInfo/lastSavepoint")
+        .put("location", "s3://state/manual")
+        .put("triggerType", "MANUAL");
+    assertThatThrownBy(() -> stops.advance(job.id())).hasMessageContaining("尚未确认");
+    completeSavepointStop(resource);
+    resource.withObject("/status").put("observedGeneration", 1);
+    stops.advance(job.id());
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 删除失败后作业在外部恢复运行，刷新不得凭历史 DELETING 阶段继续删。 */
+  @Test
+  void failedDeleteDoesNotDeleteResumedJob() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any()))
+        .thenThrow(
+            new BusinessException(
+                org.springframework.http.HttpStatus.CONFLICT, "KUBERNETES_CONFLICT", "changed"));
+    assertThatThrownBy(() -> stops.advance(job.id())).isInstanceOf(BusinessException.class);
+    resource.withObject("/spec/job").put("state", "running");
+    resource.withObject("/metadata").put("generation", 3);
+    resource.withObject("/status").put("observedGeneration", 3).put("lifecycleState", "STABLE");
+    resource.withObject("/status/jobStatus").put("state", "RUNNING");
+    assertThatThrownBy(() -> stops.advance(job.id())).hasMessageContaining("配置已变化");
+    verify(kubernetes, times(1)).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 只有状态版本变化的删除失败允许安全重试，恢复地址早于 DELETE 持久化。 */
+  @Test
+  void failedDeleteCanRetryWhileStopProofStillMatches() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any()))
+        .thenAnswer(
+            i -> {
+              assertThat(stops.restorePath(job.id())).isEqualTo("s3://state/stop-new");
+              throw new BusinessException(
+                  org.springframework.http.HttpStatus.CONFLICT, "KUBERNETES_CONFLICT", "changed");
+            });
+    assertThatThrownBy(() -> stops.advance(job.id())).isInstanceOf(BusinessException.class);
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    resource.withObject("/metadata").put("resourceVersion", "8");
+    stops.advance(job.id());
+    verify(kubernetes)
+        .call(
+            eq("DELETE"),
+            anyString(),
+            argThat(v -> "8".equals(v.at("/preconditions/resourceVersion").asText())));
+  }
+
+  /** 保存点异常不删除资源，修复后刷新仍可继续；立即删除始终需要明确选择。 */
+  @Test
+  void savepointErrorIsVisibleAndRecoverable() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    resource.withObject("/status").put("error", "Savepoint failed");
+    assertThatThrownBy(() -> stops.advance(job.id())).hasMessageContaining("Savepoint 异常");
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+    resource.withObject("/status").remove("error");
+    completeSavepointStop(resource);
+    stops.advance(job.id());
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 未结束的升级不能被 Savepoint 停止覆盖，未知结果重试不会重复提交挂起。 */
+  @Test
+  void stopWaitsForReconciliationAndSurvivesLostPutResponse() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    resource.withObject("/status").put("lifecycleState", "UPGRADING");
+    assertThatThrownBy(() -> stops.stop(job.id(), "savepoint", resource))
+        .hasMessageContaining("协调或升级");
+    resource.withObject("/status").put("lifecycleState", "STABLE");
+    when(kubernetes.call(eq("PUT"), argThat(p -> !p.contains("dryRun")), any()))
+        .thenAnswer(
+            i -> {
+              resource.set("spec", ((ObjectNode) i.getArgument(2)).path("spec").deepCopy());
+              resource.withObject("/metadata").put("generation", 2);
+              throw new BusinessException(
+                  org.springframework.http.HttpStatus.BAD_GATEWAY,
+                  "KUBERNETES_UNAVAILABLE",
+                  "timeout");
+            });
+    assertThatThrownBy(() -> stops.stop(job.id(), "savepoint", resource))
+        .isInstanceOf(BusinessException.class);
+    stops.advance(job.id());
+    completeSavepointStop(resource);
+    stops.advance(job.id());
+    verify(kubernetes, times(1)).call(eq("PUT"), argThat(p -> !p.contains("dryRun")), any());
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 新终态路径可能是 Checkpoint，缺少对应停止 Savepoint 证据时不得删除。 */
+  @Test
+  void upgradePathWithoutSavepointProofDoesNotDelete() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    when(kubernetes.call("GET", "/flinkstatesnapshots", null))
+        .thenReturn(mapper.createObjectNode());
+    assertThatThrownBy(() -> stops.advance(job.id())).hasMessageContaining("尚未确认");
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+    completeSavepointStop(resource);
+    stops.advance(job.id());
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 保存点已生成但停止配置被外部修改时，即使仍挂起也不能沿用旧证明删除。 */
+  @Test
+  void changedGenerationBlocksDeleteAndImmediateModeCanOverride() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    resource.withObject("/metadata").put("generation", 3);
+    resource.withObject("/status").put("observedGeneration", 3);
+    assertThatThrownBy(() -> stops.advance(job.id())).hasMessageContaining("配置已变化");
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+    resource.withObject("/status").put("error", "Savepoint failed");
+    stops.stop(job.id(), "stateless", resource);
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 外部提前删除资源只能确认已停止，不能宣称本次状态保存成功。 */
+  @Test
+  void disappearingResourceDoesNotClaimSavepointSuccess() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    when(kubernetes.call("GET", "/cr/" + job.deploymentName(), null))
+        .thenReturn(MissingNode.getInstance());
+    var result = stops.advance(job.id());
+    assertThat(result.path("phase").asText()).isEqualTo("DONE");
+    assertThat(result.path("message").asText()).contains("未确认本次 Savepoint");
+    assertThat(stops.restorePath(job.id())).isEmpty();
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 改选立即删除时不能把尚未核实的终态路径登记成可恢复的保存点。 */
+  @Test
+  void immediateOverrideDoesNotPersistUnverifiedCheckpoint() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    when(kubernetes.call("GET", "/flinkstatesnapshots", null))
+        .thenReturn(mapper.createObjectNode());
+    stops.stop(job.id(), "stateless", resource);
+    assertThat(stops.restorePath(job.id())).isEmpty();
+    verify(kubernetes).call(eq("DELETE"), anyString(), any());
+  }
+
+  /** 旧停止请求不能作用于替换后的同名资源。 */
+  @Test
+  void replacementUidCannotBeDeletedByPendingStop() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    stops.stop(job.id(), "savepoint", resource);
+    completeSavepointStop(resource);
+    resource.withObject("/metadata").put("uid", "replacement-uid");
+    assertThatThrownBy(() -> stops.advance(job.id())).isInstanceOf(BusinessException.class);
+    verify(kubernetes, never()).call(eq("DELETE"), anyString(), any());
   }
 }

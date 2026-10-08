@@ -44,6 +44,7 @@ spec:
       containers:
         - name: backend
           image: 192.168.68.1:5000/flink-web/app:0.0.4
+          imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           env:
             - {name: FLINK_WEB_NAMESPACE, value: flink-kubernetes-operator}
@@ -55,7 +56,8 @@ spec:
             - {name: FLINK_WEB_LOCAL_PATH, value: /app/data/flink-web.db}
             # 自动判断：数据库文件不存在时创建；已存在时保留数据，仅检查并执行必要的版本升级。
             - {name: FLINK_WEB_STORAGE_INITIALIZE, value: "true"}
-            - {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-state"}
+            - {name: FLINK_WEB_DOWNLOADER_IMAGE, value: "192.168.68.1:5000/flink-web/downloader:0.0.4"}
+            - {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-web/flink-state"}
             - {name: FLINK_WEB_S3_BUCKET, value: "flink-web"}
             - {name: FLINK_WEB_S3_ENDPOINT, value: "http://minio.flink-kubernetes-operator.svc.cluster.local:9000"}
             # 复用同 namespace 的 MinIO Secret；生产可改为仅允许所需桶的专用凭据。
@@ -117,6 +119,7 @@ spec:
       containers:
         - name: frontend
           image: 192.168.68.1:5000/flink-web/web:0.0.4
+          imagePullPolicy: Always
           ports: [{containerPort: 8080}]
           securityContext:
             allowPrivilegeEscalation: false

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useOperator } from '../../../shared/composables/useOperator'
 const { status, hint, refresh, disabled, remaining, busy } = useOperator()
+import DownloaderSettings from '../components/DownloaderSettings.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import { systemInfo } from '../stores/system'
 </script>
@@ -9,6 +10,7 @@ import { systemInfo } from '../stores/system'
     ><template #title>系统设置</template
     ><template #description>当前服务的部署配置与接入状态。</template></PageHeader
   >
+  <DownloaderSettings />
   <section class="panel form-panel operator-panel">
     <div class="panel-toolbar">
       <h3>Flink Kubernetes Operator</h3>
