@@ -126,7 +126,7 @@ class S3ServiceTest {
 
   /** 固定作业目录上传和直接选择无需登记，目录边界仍由后端执行。 */
   @Test
-  void directObjectReferencesStayInsideConfiguredRoot() {
+  void directObjectReferencesAllowBucketRootAndRejectTraversal() {
     var file =
         new org.springframework.mock.web.MockMultipartFile(
             "file", "job.jar", "application/java-archive", "data".getBytes(StandardCharsets.UTF_8));
@@ -136,12 +136,16 @@ class S3ServiceTest {
         .isEqualTo("s3://test-bucket/artifacts/jobs/one/job.jar");
     var reference = service.describe("artifacts/jobs/one/job.jar");
     assertThat(reference.has("sha256")).isFalse();
-    assertThatThrownBy(() -> service.describe("outside/job.jar"))
+    assertThat(service.describe("outside/job.jar").path("uri").asText())
+        .isEqualTo("s3://test-bucket/outside/job.jar");
+    assertThatThrownBy(() -> service.describe("../outside/job.jar"))
         .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
     assertThatThrownBy(() -> service.delete("artifacts/jobs/"))
         .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
     assertThat(service.defaults().toString()).doesNotContain("local-test-only");
-    assertThat(service.list("", null).path("rootPrefix").asText()).isEqualTo("artifacts/");
+    assertThat(service.list("", null).path("rootPrefix").asText()).isEmpty();
+    assertThat(service.list("", null).path("prefix").asText()).isEmpty();
+    assertThat(service.defaults().path("rootPrefix").asText()).isEqualTo("artifacts/");
   }
 
   /** 替换网络客户端，验证批量删除和复制协议的边界及分页行为。 */
@@ -150,6 +154,182 @@ class S3ServiceTest {
     var client = mock(software.amazon.awssdk.services.s3.S3Client.class);
     org.springframework.test.util.ReflectionTestUtils.setField(service, "client", client);
     return client;
+  }
+
+  /** 真实 HTTP 协议请求包含与 XML 正文匹配的 Content-MD5，满足传统 S3 批量删除要求。 */
+  @Test
+  void compatibleBulkDeletionIncludesCorrectMd5AndSignatureRegion() throws Exception {
+    var removed = new java.util.concurrent.atomic.AtomicBoolean();
+    var headers = new java.util.concurrent.atomic.AtomicReference<com.sun.net.httpserver.Headers>();
+    var payload = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+    server.createContext(
+        "/test-bucket",
+        exchange -> {
+          String body;
+          if (exchange.getRequestMethod().equals("POST")) {
+            headers.set(exchange.getRequestHeaders());
+            payload.set(exchange.getRequestBody().readAllBytes());
+            removed.set(true);
+            body = "<DeleteResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"/>";
+          } else {
+            body =
+                "<ListBucketResult"
+                    + " xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><IsTruncated>false</IsTruncated>"
+                    + (removed.get()
+                        ? ""
+                        : "<Contents><Key>external/data/file.txt</Key><Size>1</Size></Contents>")
+                    + "</ListBucketResult>";
+          }
+          var bytes = body.getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, bytes.length);
+          exchange.getResponseBody().write(bytes);
+          exchange.close();
+        });
+    assertThat(service.deleteDirectory("external/data/").path("deletedObjects").asLong())
+        .isEqualTo(1);
+    assertThat(headers.get().getFirst("Content-MD5"))
+        .isEqualTo(
+            java.util.Base64.getEncoder()
+                .encodeToString(
+                    java.security.MessageDigest.getInstance("MD5").digest(payload.get())));
+    assertThat(headers.get().getFirst("Authorization"))
+        .startsWith("AWS4-HMAC-SHA256")
+        .contains("/us-east-1/s3/aws4_request");
+  }
+
+  /** 目录删除包含目录标记、嵌套文件和多批次，严格保留同名前缀相邻目录及根文件。 */
+  @Test
+  void deletesDirectoryRecursivelyWithoutTouchingAdjacentKeys() {
+    var client = mockStorage();
+    var keys = new java.util.LinkedHashSet<String>();
+    keys.add("outside/data/");
+    for (int i = 0; i < 1001; i++) keys.add("outside/data/nested/file-" + i);
+    keys.add("outside/data-other/keep.jar");
+    keys.add("outside/data");
+    when(client.listObjectsV2(
+            any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+        .thenAnswer(
+            inv -> {
+              var request =
+                  (software.amazon.awssdk.services.s3.model.ListObjectsV2Request)
+                      inv.getArgument(0);
+              assertThat(request.bucket()).isEqualTo("test-bucket");
+              assertThat(request.prefix()).isEqualTo("outside/data/");
+              return software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                  .contents(
+                      keys.stream()
+                          .filter(k -> k.startsWith(request.prefix()))
+                          .limit(1000)
+                          .map(
+                              k ->
+                                  software.amazon.awssdk.services.s3.model.S3Object.builder()
+                                      .key(k)
+                                      .build())
+                          .toList())
+                  .build();
+            });
+    when(client.deleteObjects(
+            any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class)))
+        .thenAnswer(
+            inv -> {
+              var request =
+                  (software.amazon.awssdk.services.s3.model.DeleteObjectsRequest)
+                      inv.getArgument(0);
+              request.delete().objects().forEach(k -> keys.remove(k.key()));
+              return software.amazon.awssdk.services.s3.model.DeleteObjectsResponse.builder()
+                  .build();
+            });
+    assertThat(service.deleteDirectory("outside/data/").path("deletedObjects").asLong())
+        .isEqualTo(1002);
+    assertThat(keys).containsExactly("outside/data-other/keep.jar", "outside/data");
+    assertThat(service.deleteDirectory("outside/data/").path("deletedObjects").asLong()).isZero();
+    verify(client, times(2))
+        .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
+  }
+
+  /** 目录删除拒绝根目录、目录穿越和没有分隔符的前缀，不发送任何存储请求。 */
+  @Test
+  void directoryDeletionRejectsUnsafePrefixesBeforeStorageCalls() {
+    var client = mockStorage();
+    for (String path :
+        java.util.List.of(
+            "",
+            "/",
+            "outside/data",
+            "../data/",
+            "outside//data/",
+            "outside/../data/",
+            "outside\\data/",
+            "outside/\n/"))
+      assertThatThrownBy(() -> service.deleteDirectory(path))
+          .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);
+    verifyNoInteractions(client);
+  }
+
+  /** 部分删除失败保留根因和 WARN 堆栈，明确记录权限错误；不接受越界返回的对象。 */
+  @Test
+  void directoryFailureLogsThrowableAndPreservesCause() {
+    var client = mockStorage();
+    when(client.listObjectsV2(
+            any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+        .thenReturn(
+            software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                .contents(
+                    software.amazon.awssdk.services.s3.model.S3Object.builder()
+                        .key("outside/data/a.jar")
+                        .build())
+                .build());
+    when(client.deleteObjects(
+            any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class)))
+        .thenReturn(
+            software.amazon.awssdk.services.s3.model.DeleteObjectsResponse.builder()
+                .errors(
+                    software.amazon.awssdk.services.s3.model.S3Error.builder()
+                        .code("AccessDenied")
+                        .build())
+                .build());
+    var logger =
+        (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(S3StorageClient.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThatThrownBy(() -> service.deleteDirectory("outside/data/"))
+          .isInstanceOf(com.flinkweb.exception.common.BusinessException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .rootCause()
+          .hasMessageContaining("AccessDenied");
+      var failure =
+          appender.list.stream()
+              .filter(event -> event.getFormattedMessage().startsWith("S3 operation failed"))
+              .findFirst()
+              .orElseThrow();
+      assertThat(failure.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+      assertThat(failure.getFormattedMessage())
+          .contains("operation=DeleteObjects", "httpStatus=200", "s3Code=AccessDenied");
+      assertThat(failure.getThrowableProxy().getMessage()).contains("AccessDenied");
+      assertThat(
+              ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(failure.getThrowableProxy()))
+          .contains("S3StorageClient.deletePrefix", "S3StorageClient.deleteDirectory");
+      when(client.listObjectsV2(
+              any(software.amazon.awssdk.services.s3.model.ListObjectsV2Request.class)))
+          .thenReturn(
+              software.amazon.awssdk.services.s3.model.ListObjectsV2Response.builder()
+                  .contents(
+                      software.amazon.awssdk.services.s3.model.S3Object.builder()
+                          .key("outside/data-other/a.jar")
+                          .build())
+                  .build());
+      assertThatThrownBy(() -> service.deleteDirectory("outside/data/"))
+          .rootCause()
+          .hasMessageContaining("outside requested prefix");
+      verify(client, times(1))
+          .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   /** 删除仅扫描作业专属前缀，处理多批次并保留共享目录及相邻 UUID。 */

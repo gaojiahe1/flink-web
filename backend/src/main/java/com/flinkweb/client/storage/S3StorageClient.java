@@ -48,7 +48,16 @@ public class S3StorageClient implements AutoCloseable {
         S3Client.builder()
             .region(Region.of(region))
             .credentialsProvider(DefaultCredentialsProvider.create())
-            .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+            .addPlugin(LegacyMd5Plugin.create())
+            .requestChecksumCalculation(
+                software.amazon.awssdk.core.checksums.RequestChecksumCalculation.WHEN_REQUIRED)
+            .responseChecksumValidation(
+                software.amazon.awssdk.core.checksums.ResponseChecksumValidation.WHEN_REQUIRED)
+            .serviceConfiguration(
+                S3Configuration.builder()
+                    .pathStyleAccessEnabled(true)
+                    .chunkedEncodingEnabled(false)
+                    .build())
             .overrideConfiguration(
                 c ->
                     c.apiCallTimeout(java.time.Duration.ofMinutes(5))
@@ -64,10 +73,13 @@ public class S3StorageClient implements AutoCloseable {
           HttpStatus.SERVICE_UNAVAILABLE, "S3_UNCONFIGURED", "请配置 S3 bucket、endpoint 和 AWS 凭证");
   }
 
-  /** 验证目录位于允许前缀内，拒绝目录穿越和反斜杠。 */
+  /** 文件浏览覆盖整个制品桶，拒绝目录穿越、绝对路径和控制字符。 */
   private String safePrefix(String requested) {
-    String value = requested == null || requested.isBlank() ? prefix : requested;
-    if (!value.startsWith(prefix) || value.contains("..") || value.contains("\\"))
+    String value = requested == null ? "" : requested;
+    if (value.startsWith("/")
+        || value.contains("..")
+        || value.contains("\\")
+        || value.chars().anyMatch(c -> c < 32 || c == 127))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "目录超出允许范围");
     return value;
   }
@@ -89,7 +101,8 @@ public class S3StorageClient implements AutoCloseable {
               .createObjectNode()
               .put("bucket", bucket)
               .put("prefix", safePrefix(requested))
-              .put("rootPrefix", prefix);
+              .put("rootPrefix", "")
+              .put("managedPrefix", prefix);
       var dirs = result.putArray("directories");
       for (var dir : response.commonPrefixes()) dirs.add(dir.prefix());
       var objects = result.putArray("objects");
@@ -104,7 +117,7 @@ public class S3StorageClient implements AutoCloseable {
     } catch (BusinessException ex) {
       throw ex;
     } catch (Exception ex) {
-      throw unavailable();
+      throw unavailable(ex, "ListObjectsV2", bucket);
     }
   }
 
@@ -115,7 +128,7 @@ public class S3StorageClient implements AutoCloseable {
 
   /** 按主程序、依赖和公共目录上传，使用随机标识避免同名覆盖。 */
   public ObjectNode upload(MultipartFile file, String category) {
-    boolean direct = category.startsWith(prefix);
+    boolean direct = category.isEmpty() || category.endsWith("/");
     if (!direct && !Set.of("main", "dependency", "shared").contains(category))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_CATEGORY", "制品目录类型无效");
     configured();
@@ -137,7 +150,7 @@ public class S3StorageClient implements AutoCloseable {
           id = UUID.randomUUID().toString(),
           key =
               direct
-                  ? safePrefix(category).replaceAll("/+$", "") + "/" + filename
+                  ? safePrefix(category) + filename
                   : prefix + category + "/" + id + "/" + filename;
       client.putObject(
           PutObjectRequest.builder()
@@ -162,15 +175,18 @@ public class S3StorageClient implements AutoCloseable {
     } catch (S3Exception ex) {
       if (ex.statusCode() == 412 || ex.statusCode() == 409)
         throw new BusinessException(HttpStatus.CONFLICT, "OBJECT_EXISTS", "同名文件已存在，请更换文件名或先删除旧文件");
-      throw unavailable();
+      throw unavailable(ex, "PutObject", bucket);
     } catch (Exception ex) {
-      throw unavailable();
+      throw unavailable(ex, "PutObject", bucket);
     } finally {
       if (temporary != null)
         try {
           Files.deleteIfExists(temporary);
         } catch (Exception ex) {
-          log.warn("Temporary artifact cleanup failed errorType={}", ex.getClass().getSimpleName());
+          log.warn(
+              "Temporary artifact cleanup failed errorType={}",
+              ex.getClass().getSimpleName(),
+              S3FailureDiagnostics.trace(ex));
         }
     }
   }
@@ -206,8 +222,7 @@ public class S3StorageClient implements AutoCloseable {
     } catch (BusinessException ex) {
       throw ex;
     } catch (Exception ex) {
-      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
-      throw unavailable();
+      throw unavailable(ex, "HeadObject", bucket);
     }
   }
 
@@ -215,7 +230,7 @@ public class S3StorageClient implements AutoCloseable {
   public ObjectNode mkdir(String requested) {
     configured();
     String key = safePrefix(requested).replaceAll("/+$", "") + "/";
-    if (key.equals(prefix))
+    if (key.equals("/") || key.equals(prefix))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "请输入子目录");
     try {
       client.putObject(
@@ -227,8 +242,7 @@ public class S3StorageClient implements AutoCloseable {
           RequestBody.empty());
       return mapper.createObjectNode().put("key", key);
     } catch (Exception ex) {
-      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
-      throw unavailable();
+      throw unavailable(ex, "PutObject", bucket);
     }
   }
 
@@ -242,19 +256,43 @@ public class S3StorageClient implements AutoCloseable {
       client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
       return mapper.createObjectNode().put("deleted", true).put("key", key);
     } catch (Exception ex) {
-      log.warn("S3 operation failed errorType={}", ex.getClass().getSimpleName());
-      throw unavailable();
+      throw unavailable(ex, "DeleteObject", bucket);
     }
+  }
+
+  /** 递归删除非根目录，以带斜杠的精确前缀限制范围，保留同名前缀的相邻对象。 */
+  public ObjectNode deleteDirectory(String requested) {
+    configured();
+    String directory = safePrefix(requested);
+    if (directory.isBlank() || !directory.endsWith("/") || directory.contains("//"))
+      throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PREFIX", "请选择非根目录，路径必须以 / 结尾");
+    long count = deletePrefix(bucket, directory, false);
+    log.info(
+        "Artifact directory deleted bucket={} prefix={} deletedObjects={}",
+        bucket,
+        directory,
+        count);
+    return mapper
+        .createObjectNode()
+        .put("deleted", true)
+        .put("prefix", directory)
+        .put("deletedObjects", count);
   }
 
   /** 校验对象范围后获取下载流，由调用方关闭。 */
   public software.amazon.awssdk.core.ResponseInputStream<GetObjectResponse> download(String key) {
+    return download(bucket, key);
+  }
+
+  /** 外部 S3 文件支持指定桶，沿用平台连接和凭据，单对象读取不扩大清理范围。 */
+  public software.amazon.awssdk.core.ResponseInputStream<GetObjectResponse> download(
+      String sourceBucket, String key) {
     configured();
     safePrefix(key);
     try {
-      return client.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build());
+      return client.getObject(GetObjectRequest.builder().bucket(sourceBucket).key(key).build());
     } catch (Exception ex) {
-      throw unavailable();
+      throw unavailable(ex, "GetObject", sourceBucket);
     }
   }
 
@@ -278,19 +316,22 @@ public class S3StorageClient implements AutoCloseable {
       if (required) configured();
       return;
     }
-    deletePrefix(bucket, objects);
+    deletePrefix(bucket, objects, true);
     if (stateBucket != null) {
       URI location = URI.create(jobStateRoot(id));
-      deletePrefix(stateBucket, location.getPath().replaceFirst("^/", ""));
+      deletePrefix(stateBucket, location.getPath().replaceFirst("^/", ""), true);
     }
     log.info("Job storage deleted jobId={}", id);
   }
 
   /** 分页递归删除专属前缀，检查批量响应中的单项错误，支持失败后幂等重试。 */
-  private void deletePrefix(String targetBucket, String targetPrefix) {
+  private long deletePrefix(String targetBucket, String targetPrefix, boolean allowMissingBucket) {
+    long deleted = 0;
+    String operation = "ListObjectsV2";
     try {
       java.util.List<String> previous = java.util.List.of();
       while (true) {
+        operation = "ListObjectsV2";
         var page =
             client.listObjectsV2(
                 ListObjectsV2Request.builder()
@@ -298,34 +339,66 @@ public class S3StorageClient implements AutoCloseable {
                     .prefix(targetPrefix)
                     .maxKeys(1000)
                     .build());
-        if (page.contents().isEmpty()) return;
+        if (page.contents().isEmpty()) return deleted;
         var keys = new ArrayList<ObjectIdentifier>();
         for (var item : page.contents()) {
           if (!item.key().startsWith(targetPrefix))
-            throw new IllegalStateException("Storage returned an object outside job prefix");
+            throw new IllegalStateException("Storage returned an object outside requested prefix");
           keys.add(ObjectIdentifier.builder().key(item.key()).build());
         }
         var current = keys.stream().map(ObjectIdentifier::key).toList();
         if (current.equals(previous))
           throw new IllegalStateException("Storage deletion made no progress");
         previous = current;
+        operation = "DeleteObjects";
         var result =
             client.deleteObjects(
                 DeleteObjectsRequest.builder()
                     .bucket(targetBucket)
                     .delete(Delete.builder().objects(keys).quiet(true).build())
                     .build());
-        if (!result.errors().isEmpty()) throw new IllegalStateException("Partial storage deletion");
+        if (!result.errors().isEmpty()) {
+          var failure =
+              S3Exception.builder()
+                  .statusCode(200)
+                  .awsErrorDetails(
+                      software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                          .errorCode(result.errors().get(0).code())
+                          .build())
+                  .build();
+          log.warn(
+              "Partial storage deletion bucket={} prefix={} failedObjects={} deletedObjects={}",
+              targetBucket,
+              targetPrefix,
+              result.errors().size(),
+              deleted,
+              S3FailureDiagnostics.trace(failure));
+          throw failure;
+        }
+        deleted += keys.size();
       }
     } catch (S3Exception ex) {
-      if (ex.statusCode() == 404
+      if (allowMissingBucket
+          && ex.statusCode() == 404
           && ex.awsErrorDetails() != null
-          && "NoSuchBucket".equals(ex.awsErrorDetails().errorCode())) return;
-      log.warn("Job storage deletion failed errorType={}", ex.getClass().getSimpleName());
-      throw unavailable();
+          && "NoSuchBucket".equals(ex.awsErrorDetails().errorCode())) return deleted;
+      log.warn(
+          "Storage prefix deletion failed bucket={} prefix={} deletedObjects={} errorType={}",
+          targetBucket,
+          targetPrefix,
+          deleted,
+          ex.getClass().getSimpleName(),
+          S3FailureDiagnostics.trace(ex));
+      throw unavailable(ex, operation, targetBucket);
     } catch (Exception ex) {
-      log.warn("Job storage deletion failed errorType={}", ex.getClass().getSimpleName());
-      throw unavailable();
+      log.warn(
+          "Storage prefix deletion failed bucket={} prefix={} deletedObjects={} errorType={}",
+          targetBucket,
+          targetPrefix,
+          deleted,
+          ex.getClass().getSimpleName(),
+          S3FailureDiagnostics.trace(ex));
+      throw unavailable(ex, operation, targetBucket);
     }
   }
 
@@ -337,10 +410,12 @@ public class S3StorageClient implements AutoCloseable {
       if (required) configured();
       return;
     }
+    String operation = "ListObjectsV2";
     try {
       String token = null;
       var tokens = new HashSet<String>();
       do {
+        operation = "ListObjectsV2";
         var page =
             client.listObjectsV2(
                 ListObjectsV2Request.builder()
@@ -356,6 +431,7 @@ public class S3StorageClient implements AutoCloseable {
               java.net.URLEncoder.encode(
                       bucket + "/" + item.key(), java.nio.charset.StandardCharsets.UTF_8)
                   .replace("+", "%20");
+          operation = "CopyObject";
           client.copyObject(
               CopyObjectRequest.builder()
                   .copySource(source)
@@ -371,18 +447,21 @@ public class S3StorageClient implements AutoCloseable {
       log.info("Job files copied sourceJobId={} targetJobId={}", from, to);
     } catch (Exception ex) {
       try {
-        deletePrefix(bucket, targetPrefix);
+        deletePrefix(bucket, targetPrefix, true);
       } catch (Exception cleanup) {
-        log.warn("Partial job copy cleanup failed targetJobId={}", to);
+        log.warn(
+            "Partial job copy cleanup failed targetJobId={} errorType={}",
+            to,
+            cleanup.getClass().getSimpleName(),
+            S3FailureDiagnostics.trace(cleanup));
       }
-      throw unavailable();
+      throw unavailable(ex, operation, bucket);
     }
   }
 
   /** 生成统一的 S3 访问失败异常。 */
-  private BusinessException unavailable() {
-    return new BusinessException(
-        HttpStatus.BAD_GATEWAY, "S3_ERROR", "S3 请求失败，请检查端点、凭证、目录权限和对象是否存在");
+  private BusinessException unavailable(Throwable cause, String operation, String targetBucket) {
+    return S3FailureDiagnostics.failure(log, cause, operation, endpoint, targetBucket, region);
   }
 
   /** 检查同一受管 bucket 内快照的元数据文件；不扫描目录，也不承诺状态兼容。 */
@@ -423,9 +502,9 @@ public class S3StorageClient implements AutoCloseable {
       exists = true;
     } catch (S3Exception ex) {
       if (ex.statusCode() == 404) exists = false;
-      else throw unavailable();
+      else throw unavailable(ex, "HeadObject", uri.getHost());
     } catch (Exception ex) {
-      throw unavailable();
+      throw unavailable(ex, "HeadObject", uri.getHost());
     }
     return mapper
         .createObjectNode()

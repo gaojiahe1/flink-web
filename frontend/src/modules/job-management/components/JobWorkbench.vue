@@ -3,6 +3,7 @@ import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { computed, ref, watch } from 'vue'
 import { workbenchApi } from '../api/workbench'
+import LogViewer from '../../../shared/components/editor/LogViewer.vue'
 import { permissionApi } from '../../permission/api/permission'
 import { currentUser } from '../../permission/stores/auth'
 import type { JobDraft } from '../../../shared/types/api'
@@ -73,12 +74,22 @@ const comparison = computed(() => {
 })
 const pods = computed(() => diagnostic.value?.pods || [])
 const containers = computed(() => pods.value.find((p) => p.name === pod.value)?.containers || [])
+let logEpoch = 0
 watch(pod, () => (container.value = containers.value[0] || ''))
+watch(
+  [pod, container, previous],
+  () => {
+    log.value = ''
+    logEpoch++
+  },
+  { flush: 'sync' },
+)
 watch(
   () => props.job.id,
   () => {
     diagnostic.value = null
     log.value = ''
+    logEpoch++
     pod.value = ''
     tab.value = 'history'
     void load()
@@ -136,13 +147,19 @@ function readLog() {
   return props.query(() =>
     run(async () => {
       const id = props.job.id
-      const result = await workbenchApi.logs(id, {
-        pod: pod.value,
-        container: container.value,
-        lines: 500,
-        previous: previous.value,
-      })
-      if (id === props.job.id) log.value = result.text
+      const epoch = ++logEpoch
+      log.value = ''
+      try {
+        const result = await workbenchApi.logs(id, {
+          pod: pod.value,
+          container: container.value,
+          lines: 10000,
+          previous: previous.value,
+        })
+        if (id === props.job.id && epoch === logEpoch) log.value = result.text
+      } catch (e) {
+        if (id === props.job.id && epoch === logEpoch) throw e
+      }
     }),
   )
 }
@@ -326,10 +343,13 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
           ><label class="inline-check"
             ><input data-field="previous" type="checkbox" v-model="previous" />上一实例</label
           ><button class="button" :disabled="!container || busy || queryDisabled" @click="readLog">
-            读取最近 500 行
+            读取最新 10000 行
           </button>
         </div>
-        <pre v-if="log" class="log-output">{{ log }}</pre>
+        <p v-if="operator && acl.canOperate" class="muted">
+          最多最近 10000 行，超过 4 MiB 时保留末尾。
+        </p>
+        <LogViewer v-if="log" :text="log" />
         <h4>事件</h4>
         <div v-if="!diagnostic.events.length" class="empty-state">当前没有可见事件</div>
         <table v-else>

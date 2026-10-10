@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { showValidationError, clearValidationErrors } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
+import { Trash2 } from '@lucide/vue'
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
@@ -18,9 +19,10 @@ import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { request, jsonBody } from '../../../shared/api/http'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { request, jsonBody, ApiError } from '../../../shared/api/http'
+import { verificationApi, verificationTerminal, type SqlVerification } from '../api/verification'
 import { currentUser } from '../../permission/stores/auth'
 import { requestId } from '../../../shared/utils/requestId'
 import type { JobDraft } from '../../../shared/types/api'
@@ -35,7 +37,7 @@ type Catalog = {
 type Runtime = {
   workspaceId: string
   imageId: string
-  jarURI: string
+  runnerArtifactId: string
   parallelism: number
   slots: number
   catalogId: string
@@ -60,6 +62,7 @@ type SqlDraft = {
   publishedAt?: string
 }
 const router = useRouter()
+const route = useRoute()
 const sqlNameInput = ref<HTMLInputElement>()
 let nameCheck = 0
 async function checkName() {
@@ -93,7 +96,7 @@ const initialRuntime = (): Runtime => ({
   jmCpu: 1,
   tmCpu: 1,
   imageId: '',
-  jarURI: 'local:///opt/flink/lib/flink-web-sql-runner.jar',
+  runnerArtifactId: '',
   parallelism: 1,
   slots: 1,
   jmMemory: '1024m',
@@ -158,6 +161,53 @@ const check = ref<{
   insertCount: number
   message: string
 } | null>(null)
+const verification = ref<SqlVerification | null>(null)
+const resultTab = ref('status')
+const needsSession = ref(false)
+const verifying = computed(
+  () => !!verification.value && !verificationTerminal(verification.value.state),
+)
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+let pollVersion = 0
+let pollController: AbortController | undefined
+function stopListening() {
+  ++pollVersion
+  clearTimeout(pollTimer)
+  pollController?.abort()
+}
+async function listen() {
+  const current = verification.value
+  if (!current || verificationTerminal(current.state)) return
+  const version = pollVersion
+  pollController = new AbortController()
+  try {
+    const updated = await verificationApi.status(current.id, pollController.signal)
+    if (version !== pollVersion) return
+    verification.value = updated
+  } catch (e) {
+    if (version !== pollVersion) return
+    error.value = (e as Error).message
+  }
+  if (version === pollVersion && verifying.value) pollTimer = setTimeout(listen, 2000)
+}
+onUnmounted(stopListening)
+const verificationLabels: Record<string, string> = {
+  ACCEPTED: '已受理',
+  SUBMITTING: '提交中',
+  RUNNING: '验证中',
+  CREATED: '创建中',
+  RESTARTING: '恢复中',
+  FINISHED: '已完成',
+  DRAINING: '正在读取结果',
+  COMPLETED: '已达到结果上限',
+  FAILED: '验证失败',
+  CANCELED: '已取消',
+  TIMED_OUT: '已超时',
+  ABORTED: '集群已停止',
+  UNKNOWN: '结果待确认',
+  CANCEL_PENDING: '正在取消',
+  CANCELING: '正在取消',
+}
 watch(
   [() => form.sql, () => form.name, () => form.description, runtime, config, pod, podTemplateId],
   () => {
@@ -183,6 +233,10 @@ const snapshot = () => JSON.stringify({ form, runtime, config: config.value, pod
 const dirty = computed(() => savedSnapshot.value !== snapshot())
 async function load() {
   records.value = await request<SqlDraft[]>('/api/sql/jobs')
+  if (selected.value) {
+    const current = records.value.find((r) => r.id === selected.value)
+    linkedJob.value = current?.jobId || ''
+  }
 }
 onMounted(async () => {
   try {
@@ -200,7 +254,13 @@ onMounted(async () => {
     templates.value = result[4]
     flinkCatalogs.value = result[5]
     savedSnapshot.value = snapshot()
-    if (!editable.value && records.value[0]) open(records.value[0], true)
+    const requested =
+      typeof route.query.draft === 'string'
+        ? records.value.find((r) => r.id === route.query.draft)
+        : undefined
+    if (requested) await open(requested, true)
+    else if (route.query.draft) error.value = '对应 SQL 草稿不存在或没有访问权限'
+    else if (!editable.value && records.value[0]) await open(records.value[0], true)
   } catch (e) {
     error.value = showValidationError((e as Error).message)
   } finally {
@@ -208,11 +268,19 @@ onMounted(async () => {
   }
 })
 async function mayDiscard() {
+  if (verifying.value) {
+    if (!(await confirmDialog('切换草稿将取消当前 SQL 验证，确认继续？'))) return false
+    await cancelVerification()
+    if (verifying.value) return false
+  }
   return !dirty.value || (await confirmDialog('当前 SQL 有未保存的修改，确认切换？'))
 }
 async function open(record: SqlDraft, force = false) {
   if (!force && !(await mayDiscard())) return
   selected.value = record.id
+  stopListening()
+  verification.value = null
+  needsSession.value = false
   linkedJob.value = record.jobId || ''
   Object.assign(form, {
     name: record.name,
@@ -244,6 +312,9 @@ async function reloadRestoredSql() {
 async function create() {
   if (!(await mayDiscard())) return
   selected.value = ''
+  stopListening()
+  verification.value = null
+  needsSession.value = false
   linkedJob.value = ''
   Object.assign(form, { name: '', description: '', sql: example, revision: 0 })
   Object.assign(runtime, initialRuntime())
@@ -307,7 +378,7 @@ async function persist() {
   await load()
   return record
 }
-async function run(task: () => Promise<void>) {
+async function run(task: () => Promise<void>, fieldErrors = true) {
   if (busy.value || stateConfigBusy.value) return
   busy.value = true
   error.value = ''
@@ -315,7 +386,7 @@ async function run(task: () => Promise<void>) {
   try {
     await task()
   } catch (e) {
-    error.value = showValidationError((e as Error).message)
+    error.value = fieldErrors ? showValidationError((e as Error).message) : (e as Error).message
   } finally {
     busy.value = false
   }
@@ -329,12 +400,54 @@ function save() {
 function validate() {
   return run(async () => {
     check.value = null
-    check.value = await request('/api/sql/validate', {
+    const before = snapshot()
+    const result = await request<{
+      level: string
+      statementCount: number
+      insertCount: number
+      message: string
+    }>('/api/sql/validate', {
       method: 'POST',
       ...jsonBody({ sql: form.sql, runtime: payload().runtime }),
     })
-    message.value = check.value!.message
+    if (before === snapshot()) {
+      check.value = result
+      message.value = result.message
+    } else message.value = 'SQL 或配置已修改，请重新检查。'
   })
+}
+function verifySql() {
+  if (!check.value || verifying.value) return
+  clearValidationErrors()
+  return run(async () => {
+    needsSession.value = false
+    try {
+      const clusters = await request<{ id: string; validation: boolean }[]>('/api/sessions')
+      if (!clusters.some((c) => c.validation)) {
+        needsSession.value = true
+        throw new Error('请前往 Session 集群创建并启动 SQL 验证专用集群。')
+      }
+      await persist()
+      verification.value = await verificationApi.submit(selected.value, form.revision, requestId())
+      resultTab.value = 'status'
+      stopListening()
+      void listen()
+    } catch (e) {
+      if (e instanceof ApiError && e.code.startsWith('VALIDATION_SESSION'))
+        needsSession.value = true
+      throw e
+    }
+  }, false)
+}
+async function cancelVerification() {
+  const id = verification.value?.id
+  if (!id) return
+  try {
+    verification.value = await verificationApi.cancel(id)
+    if (verificationTerminal(verification.value.state)) stopListening()
+  } catch (e) {
+    error.value = (e as Error).message
+  }
 }
 function render() {
   return run(async () => {
@@ -350,7 +463,7 @@ async function publish(deploy: boolean) {
   if (
     deploy &&
     !(await confirmDialog(
-      '确认保存并部署当前 SQL？运行镜像需包含 SQL Runner 和连接器。已有同名部署会按升级策略变更。',
+      '确认保存并部署当前 SQL？Runner 和连接器通过文件挂载加载。已有同名部署会按升级策略变更。',
     ))
   )
     return
@@ -375,14 +488,32 @@ async function publish(deploy: boolean) {
     } else message.value = '已生成部署草稿。可前往作业管理部署、启停和创建快照。'
   })
 }
-async function remove() {
-  if (!selected.value || !(await confirmDialog('删除 SQL 草稿「' + form.name + '」？'))) return
+async function remove(record?: SqlDraft) {
+  const id = record?.id || selected.value
+  if (!id || busy.value || (id === selected.value && verifying.value)) return
+  const revision = id === selected.value ? form.revision : record!.revision
+  const name = record?.name || form.name
+  if (
+    !(await confirmDialog(
+      '删除 SQL 草稿「' +
+        name +
+        '」？' +
+        (id === selected.value && dirty.value ? '当前未保存的修改也将丢弃。' : '') +
+        '已生成部署的草稿须先在作业管理删除关联记录。',
+      '删除 SQL 草稿',
+    ))
+  )
+    return
   return run(async () => {
-    await request('/api/sql/jobs/' + selected.value + '?revision=' + form.revision, {
+    await request('/api/sql/jobs/' + encodeURIComponent(id) + '?revision=' + revision, {
       method: 'DELETE',
     })
-    savedSnapshot.value = snapshot()
-    create()
+    if (id === selected.value) {
+      savedSnapshot.value = snapshot()
+      await create()
+      if (route.query.draft === id)
+        await router.replace({ path: '/sql', query: { ...route.query, draft: undefined } })
+    }
     await load()
     message.value = 'SQL 草稿已删除'
   })
@@ -421,7 +552,8 @@ function insertSource(id: string) {
     pod.value = JSON.stringify(template, null, 2)
     form.sql = snippet.sql + '\n' + form.sql
     check.value = null
-    message.value = '已插入建表语句和密钥引用。继续编写 INSERT，使用“执行 SQL”部署到 Flink。'
+    message.value =
+      '已插入建表语句和密钥引用。继续编写 INSERT，检查通过后可验证数据或在部署配置中部署并启动。'
   })
 }
 function invalidateContext() {
@@ -463,10 +595,14 @@ function insertTable(value: { database: string; table: string; columns: ColumnDe
   check.value = null
   message.value = '已追加完整表引用示例，请选择目标表后再检查和发布。'
 }
-function executeSql() {
-  sideTab.value = 'runtime'
-  void publish(true)
-}
+watch(
+  () => route.query.draft,
+  async (value) => {
+    if (loading.value || typeof value !== 'string' || value === selected.value) return
+    const record = records.value.find((r) => r.id === value)
+    if (record) await open(record)
+  },
+)
 </script>
 
 <template>
@@ -479,6 +615,11 @@ function executeSql() {
   >
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice" role="status">{{ message }}</div>
+  <div v-if="needsSession" class="notice">
+    <RouterLink class="text-button" to="/sessions"
+      >前往 Session 集群，创建或启动 SQL 验证集群 ↗</RouterLink
+    >
+  </div>
   <section
     class="sql-workbench"
     :class="{
@@ -522,20 +663,31 @@ function executeSql() {
           <p v-else-if="!filtered.length" class="muted empty-tree">
             暂无草稿<br />从右侧编辑器开始创建
           </p>
-          <button
-            v-for="record in filtered"
-            :key="record.id"
-            class="sql-file"
-            :title="record.name"
-            :class="{ active: selected === record.id }"
-            :disabled="busy"
-            @click="open(record)"
-          >
-            <span class="sql-file-icon">SQL</span
-            ><span
-              >{{ record.name }}<small>{{ record.jobId ? '已生成部署' : '开发草稿' }}</small></span
+          <div v-for="record in filtered" :key="record.id" class="sql-file-row">
+            <button
+              class="sql-file"
+              :title="record.name"
+              :class="{ active: selected === record.id }"
+              :disabled="busy"
+              @click="open(record)"
             >
-          </button>
+              <span class="sql-file-icon">SQL</span
+              ><span
+                >{{ record.name
+                }}<small>{{ record.jobId ? '已生成部署' : '开发草稿' }}</small></span
+              >
+            </button>
+            <button
+              v-if="editable"
+              class="text-button danger sql-file-delete"
+              :aria-label="'删除 SQL 草稿「' + record.name + '」'"
+              :title="record.jobId ? '先在作业管理删除关联记录，再删除 SQL 草稿' : '删除 SQL 草稿'"
+              :disabled="busy || (selected === record.id && verifying)"
+              @click="remove(record)"
+            >
+              <Trash2 :size="14" />
+            </button>
+          </div>
         </div>
       </div>
     </aside>
@@ -569,6 +721,20 @@ function executeSql() {
             SQL 检查</button
           ><button
             v-if="editable"
+            class="button"
+            :disabled="
+              !check || busy || verifying || artifactUploading || stateConfigBusy || loading
+            "
+            :title="
+              check
+                ? '提交到 SQL 验证 Session，最多展示 100 条数据'
+                : '请先通过 SQL 检查；修改 SQL 或配置后需重新检查'
+            "
+            @click="verifySql"
+          >
+            SQL 验证</button
+          ><button
+            v-if="editable"
             class="text-button"
             :disabled="busy || artifactUploading || stateConfigBusy || loading"
             @click="render"
@@ -576,14 +742,7 @@ function executeSql() {
             预览 YAML
           </button>
         </div>
-        <button
-          v-if="editable"
-          class="button primary"
-          :disabled="busy || artifactUploading || stateConfigBusy || loading"
-          @click="executeSql"
-        >
-          执行 SQL</button
-        ><span class="muted">{{ bytes.toLocaleString() }} / 32,768 B</span>
+        <span class="muted">{{ bytes.toLocaleString() }} / 32,768 B</span>
       </div>
       <div class="catalog-context">
         <label
@@ -620,7 +779,7 @@ function executeSql() {
         v-model="form.sql"
         language="sql"
         label="SQL 编辑器"
-        :readonly="!editable || loading"
+        :readonly="!editable || loading || busy"
         @update:model-value="check = null"
       />
       <div class="sql-diagnostics">
@@ -652,6 +811,70 @@ function executeSql() {
         <summary>FlinkDeployment YAML 预览</summary>
         <CodeEditor :model-value="preview" readonly label="SQL 部署 YAML" />
       </details>
+      <section v-if="verification" class="sql-diagnostics verification-results">
+        <div class="tab-bar" role="tablist" aria-label="SQL 验证结果">
+          <button
+            class="text-button"
+            role="tab"
+            :aria-selected="resultTab === 'status'"
+            @click="resultTab = 'status'"
+          >
+            作业状态
+          </button>
+          <button
+            class="text-button"
+            role="tab"
+            :aria-selected="resultTab === 'data'"
+            @click="resultTab = 'data'"
+          >
+            作业数据 · {{ verification.rows.length }} / {{ verification.limit }}
+          </button>
+          <button v-if="verifying" class="text-button danger" @click="cancelVerification">
+            取消验证
+          </button>
+        </div>
+        <div v-if="resultTab === 'status'" role="tabpanel">
+          <p>
+            <span
+              class="badge"
+              :class="{ running: verifying, failed: verification.state === 'FAILED' }"
+              >{{ verificationLabels[verification.state] || verification.state }}</span
+            >
+            · SQL 修订 {{ verification.sqlRevision }}
+          </p>
+          <p class="verification-message">{{ verification.message }}</p>
+          <small class="muted"
+            >Flink Job ID：{{ verification.jobId }} · 达到 100 条或两分钟后自动取消。</small
+          >
+        </div>
+        <div v-else role="tabpanel" class="table-wrap verification-table">
+          <table v-if="verification.rows.length">
+            <thead>
+              <tr>
+                <th>序号</th>
+                <th>输出</th>
+                <th>变更</th>
+                <th>数据</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in verification.rows" :key="index">
+                <td>{{ index + 1 }}</td>
+                <td>Sink {{ row.sink }}</td>
+                <td>
+                  <code>{{ row.kind }}</code>
+                </td>
+                <td class="verification-value">{{ row.value }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="muted">
+            {{
+              verifying ? '等待 TaskManager 输出数据…' : '本次验证没有输出数据，请查看作业状态。'
+            }}
+          </p>
+        </div>
+      </section>
     </div>
     <aside v-if="sideTab === 'runtime'" class="sql-runtime">
       <div class="field-heading">
@@ -687,7 +910,7 @@ function executeSql() {
             v-model="runtime.imageId"
             :images="images"
             label="运行镜像" /><HelpTip
-            text="镜像需包含 SQL Runner、Table Planner 及匹配版本的连接器。"
+            text="与 JAR 作业共用 Flink 镜像；Runner 和依赖通过下载器挂载，镜像需包含 Table Planner。"
         /></label>
         <StateStorageForm
           v-model="configValues"
@@ -746,10 +969,14 @@ function executeSql() {
         >
         <details class="runtime-advanced">
           <summary>附加依赖与高级配置</summary>
-          <label
-            >SQL Runner 路径<input data-field="jarURI" v-model="runtime.jarURI" /><HelpTip
-              text="镜像内 local:/// JAR 路径；默认 /opt/flink/lib/flink-web-sql-runner.jar。"
-          /></label>
+          <ArtifactPicker
+            data-field="runnerArtifactId"
+            v-model="runtime.runnerArtifactId"
+            category="main"
+            runner
+            :disabled="busy || !editable || artifactUploading"
+            @uploading="artifactUploading = $event"
+          />
           <ArtifactPicker
             data-field="dependencyArtifactIds"
             v-model="runtime.dependencyArtifactIds"
@@ -812,8 +1039,8 @@ function executeSql() {
       <button
         v-if="editable && selected"
         class="text-button danger full-width"
-        :disabled="busy"
-        @click="remove"
+        :disabled="busy || verifying"
+        @click="remove()"
       >
         删除 SQL 草稿
       </button>

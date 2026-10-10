@@ -22,6 +22,7 @@ public class StopServiceImpl implements StopService {
   private final JobRepository jobs;
   private final JobOwnershipService ownership;
   private final ObjectMapper mapper;
+  private final com.flinkweb.security.permission.SecretCipher cipher;
 
   /** 注入集群客户端和持久化仓库，不启动后台轮询。 */
   public StopServiceImpl(
@@ -29,12 +30,14 @@ public class StopServiceImpl implements StopService {
       RecordRepository records,
       JobRepository jobs,
       JobOwnershipService ownership,
-      ObjectMapper mapper) {
+      ObjectMapper mapper,
+      com.flinkweb.security.permission.SecretCipher cipher) {
     this.client = client;
     this.records = records;
     this.jobs = jobs;
     this.ownership = ownership;
     this.mapper = mapper;
+    this.cipher = cipher;
   }
 
   /** 校验策略和资源身份，记录停止意图后提交对应操作。 */
@@ -109,7 +112,9 @@ public class StopServiceImpl implements StopService {
                 "deletionTimestamp",
                 "ownerReferences",
                 "finalizers"));
-    intent.set("deployment", deployment);
+    intent.remove("deployment");
+    intent.put(
+        "encryptedDeployment", cipher.encrypt("stop-deployment:" + id, deployment.toString()));
     intent =
         records.save(
             "stop-intents", id, intent, pending == null ? 0 : pending.path("revision").asLong());
@@ -300,6 +305,17 @@ public class StopServiceImpl implements StopService {
   /** 返回停止前已经在集群运行的配置，避免把尚未发布的草稿当作启动配置。 */
   public ObjectNode restartResource(String id) {
     var intent = records.find("stop-intents", id);
+    if (intent != null && intent.hasNonNull("encryptedDeployment")) {
+      try {
+        return (ObjectNode)
+            mapper.readTree(
+                cipher.decrypt(
+                    "stop-deployment:" + id, intent.path("encryptedDeployment").asText()));
+      } catch (com.fasterxml.jackson.core.JsonProcessingException | ClassCastException ex) {
+        throw new BusinessException(
+            HttpStatus.CONFLICT, "INVALID_STOP_SNAPSHOT", "停止前配置无法读取，请检查保存的数据");
+      }
+    }
     return intent != null && intent.path("deployment").isObject()
         ? ((ObjectNode) intent.get("deployment")).deepCopy()
         : null;

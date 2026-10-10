@@ -29,8 +29,37 @@ class OperatorStatusTest {
       assertThat(result.path("accepted").get(0).asText()).isEqualTo("1.15");
     }
     for (String tag :
-        java.util.List.of("latest", "1.6.0", "1.17.0", "1.14.0-custom", "1.14.0@sha256:abc"))
+        java.util.List.of(
+            "latest",
+            "1.6.0",
+            "1.17.0",
+            "custom-1.9.0",
+            "1.9.0evil",
+            "1.9.01.2",
+            "1.14.0@sha256:abc"))
       assertThat(service.compatibility("repo:" + tag).path("known").asBoolean()).isFalse();
+  }
+
+  /** 带构建后缀的发行标签按开头版本识别，不从仓库名称或任意标签中猜测。 */
+  @Test
+  void recognizesReleasePrefixWithBuildSuffix() throws Exception {
+    var service =
+        new OperatorServiceImpl(
+            mock(KubernetesClient.class), new ObjectMapper(), "ops", "operator", "operator");
+    for (String tag :
+        java.util.List.of(
+            "1.9.0-xxxxx", "1.9.1-20241009", "v1.9.1-java17-build.2", "1.14.0-custom")) {
+      var result = service.compatibility("registry:5000/team/operator:" + tag);
+      assertThat(result.path("known").asBoolean()).isTrue();
+      assertThat(result.path("version").asText())
+          .isEqualTo(tag.replaceFirst("^v", "").split("-", 2)[0]);
+    }
+    assertThat(
+            service
+                .compatibility("repo:1.9.1-build@sha256:" + "a".repeat(64))
+                .path("version")
+                .asText())
+        .isEqualTo("1.9.1");
   }
 
   /** Deployment 的镜像而非 Pod 的旧镜像决定版本，Pod 只提供实际运行状态。 */

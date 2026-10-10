@@ -93,7 +93,8 @@ const aliases: Record<string, string[]> = {
   tmMemory: ['TaskManager 内存'],
   yaml: ['YAML', 'metadata.', 'spec.'],
   sql: ['SQL'],
-  flinkConfiguration: ['Flink 配置', 'flinkConfiguration', 'last-state'],
+  upgradeMode: ['last-state 模式', 'savepoint 模式', '升级策略'],
+  flinkConfiguration: ['Flink 配置', 'flinkConfiguration'],
   podTemplate: ['PodTemplate', 'podTemplate'],
   value: ['密钥值', 'JSON'],
   secretName: ['Secret 名称'],
@@ -146,7 +147,9 @@ export function showValidationError(message: string, scope: ParentNode = current
         : !(aliases[key] || [key]).some((word) => word && message.includes(word))
     )
       continue
-    const target = field.matches('input,select,textarea,.code-editor,.flink-config-editor')
+    const target = field.matches(
+      'input,select,textarea,.code-editor,.flink-config-editor,.artifact-picker',
+    )
       ? field
       : field.querySelector<HTMLElement>(
           'input,select,textarea,.code-editor,.flink-config-editor',

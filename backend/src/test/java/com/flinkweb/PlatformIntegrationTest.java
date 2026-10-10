@@ -70,6 +70,50 @@ class PlatformIntegrationTest {
   @Autowired CatalogService catalogs;
   @Autowired FormService forms;
   @MockitoBean KubernetesClient kubernetes;
+  @MockitoBean com.flinkweb.service.artifact.ArtifactService artifacts;
+
+  /** 管理员与开发者可删除目录，接口以精确前缀委托业务层。 */
+  @Test
+  @WithMockUser(roles = "DEVELOPER")
+  void developerCanDeleteArtifactDirectory() throws Exception {
+    when(artifacts.deleteDirectory("outside/data/"))
+        .thenReturn(mapper.createObjectNode().put("deleted", true).put("deletedObjects", 2));
+    mvc.perform(delete("/api/artifacts/directories").param("prefix", "outside/data/").with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.deletedObjects").value(2));
+    verify(artifacts).deleteDirectory("outside/data/");
+  }
+
+  /** 只读角色无法执行目录删除，拒绝发生在调用存储业务层之前。 */
+  @Test
+  @WithMockUser(roles = "VIEWER")
+  void viewerCannotDeleteArtifactDirectory() throws Exception {
+    mvc.perform(delete("/api/artifacts/directories").param("prefix", "outside/data/").with(csrf()))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(artifacts);
+  }
+
+  /** 安全令牌失效时打印原始过滤器堆栈，但异常消息中的实际令牌必须遮蔽。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  @org.junit.jupiter.api.extension.ExtendWith(
+      org.springframework.boot.test.system.OutputCaptureExtension.class)
+  void invalidCsrfLogsStackWithoutActualToken(
+      org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+    mvc.perform(
+            delete("/api/artifacts/directories")
+                .param("prefix", "outside/data/")
+                .with(csrf().useInvalidToken()))
+        .andExpect(status().isForbidden());
+    assertThat(output.getOut())
+        .contains(
+            "Security access denied",
+            "InvalidCsrfTokenException",
+            "CsrfFilter.doFilterInternal",
+            "[REDACTED]")
+        .doesNotContain("Invalid CSRF Token 'invalid'");
+    verifyNoInteractions(artifacts);
+  }
 
   /** 生成指定名称的最小 FlinkDeployment YAML 测试样例。 */
   String source(String name) {
@@ -137,10 +181,10 @@ class PlatformIntegrationTest {
     assertThat(renderer.render(node).deployment().at("/spec/job/parallelism").asInt()).isEqualTo(3);
   }
 
-  /** 验证敏感配置密文持久化，部署中仅通过 Secret 引用使用。 */
+  /** 验证敏感配置密文持久化，提交时展开实际值且预览保持引用。 */
   @Test
   @WithMockUser(roles = "ADMIN")
-  void secretIsEncryptedAndOnlyBecomesSecretRef() throws Exception {
+  void secretIsEncryptedAndExpandedOnlyAtSubmission() throws Exception {
     String id = "secret-" + UUID.randomUUID();
     var credentialSession = new org.springframework.mock.web.MockHttpSession();
     var envelope =
@@ -177,9 +221,12 @@ class PlatformIntegrationTest {
         .put("value", "{{secret:" + id + "}}");
     var rendered = renderer.render(node);
     assertThat(rendered.deployment().toString())
+        .contains("super-sensitive-value")
+        .doesNotContain("secretKeyRef");
+    assertThat(rendered.secrets()).isEmpty();
+    assertThat(renderer.preview(rendered.deployment()).toString())
         .doesNotContain("super-sensitive-value")
-        .contains("secretKeyRef");
-    assertThat(rendered.secrets()).hasSize(1);
+        .contains("{{secret:" + id + "}}");
     ((ObjectNode) node.get("spec")).put("image", "{{secret:" + id + "}}");
     assertThatThrownBy(() -> renderer.render(node)).isInstanceOf(BusinessException.class);
   }
@@ -218,8 +265,10 @@ class PlatformIntegrationTest {
     }
     var rendered = renderer.render(source);
     assertThat(rendered.deployment().toString())
-        .doesNotContain("fake-s3-access", "old-secret", "{{secret:")
-        .contains("workload-s3", "secretKeyRef", "sidecar", "OTHER");
+        .doesNotContain("old-secret", "{{secret:")
+        .contains("fake-s3-access", "workload-s3", "secretKeyRef", "sidecar", "OTHER");
+    assertThat(renderer.preview(rendered.deployment()).toString()).doesNotContain("fake-s3-access");
+    assertThat(rendered.secrets()).isEmpty();
     assertThat(rendered.deployment().at("/spec/flinkConfiguration").has("s3.access-key")).isFalse();
     assertThat(source.at("/spec/flinkConfiguration/s3.access-key").asText()).contains("{{secret:");
     for (String path : java.util.List.of("/spec/podTemplate")) {
@@ -455,7 +504,9 @@ class PlatformIntegrationTest {
     String env = deployment.at("/spec/podTemplate/spec/initContainers/0/env").toString();
     assertThat(env)
         .contains("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "{{secret:s3-access-key}}");
-    assertThat(env).doesNotContain("sha256", "AWS_DEFAULT_REGION", "AWS_REGION");
+    assertThat(env)
+        .contains("AWS_REGION", "us-east-1")
+        .doesNotContain("sha256", "AWS_DEFAULT_REGION");
   }
 
   /** 验证账号修订变化会使已有会话失效。 */
@@ -670,6 +721,14 @@ class PlatformIntegrationTest {
   ObjectNode sqlRuntime(String suffix) {
     String imageId = "sql-image-" + suffix;
     records.save(
+        "artifacts",
+        "runner-" + suffix,
+        mapper
+            .createObjectNode()
+            .put("filename", "flink-web-sql-runner.jar")
+            .put("uri", "https://artifacts.test/flink-web-sql-runner.jar"),
+        0);
+    records.save(
         "images",
         imageId,
         mapper
@@ -682,9 +741,9 @@ class PlatformIntegrationTest {
     return mapper
         .createObjectNode()
         .put("imageId", imageId)
-        .put("jarURI", "local:///opt/flink/lib/flink-web-sql-runner.jar")
+        .put("runnerArtifactId", "runner-" + suffix)
         .put("parallelism", 1)
-        .put("upgradeMode", "savepoint");
+        .put("upgradeMode", "stateless");
   }
 
   /** SQL 草稿保存不访问集群，发布能解码还原脚本并关联同一部署草稿。 */

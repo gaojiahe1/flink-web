@@ -38,6 +38,7 @@ test('login, independent manual refresh, catalog and YAML job workflow', async (
   await page.getByRole('link',{name:'作业模板'}).click()
   await expect(page.getByText('Application 基础模板',{exact:true})).toBeVisible()
   await page.getByRole('link',{name:'作业管理'}).click()
+  await page.goto('/#/jar')
   await page.getByRole('link',{name:'＋ 新建 JAR 作业'}).click()
   await page.getByRole('button',{name:'YAML 编辑',exact:true}).click()
   const name='e2e-job-'+Date.now()

@@ -17,7 +17,7 @@ test('adopt an existing namespace job without mutating Kubernetes', async ({ pag
   const registered = page.getByRole('row').filter({ hasText: 'existing-e2e-job' })
   await expect(registered.getByRole('link', { name: 'Flink UI ↗' })).toHaveAttribute('href', /^\/flink-ui\/[^/]+\/$/)
   await page.screenshot({ path: 'test-results/adopted-job.png', fullPage: true })
-  await registered.getByRole('link', { name: '编辑', exact: true }).click()
+  await registered.getByRole('button', { name: '编辑', exact: true }).click()
   await expect(page.getByRole('textbox',{name:'YAML 编辑器',exact:true})).toContainText(/legacy-flink/)
   const yaml = await page.getByRole('textbox',{name:'YAML 编辑器',exact:true}).innerText()
   expect(yaml).toContain('legacy-flink')

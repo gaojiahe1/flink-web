@@ -30,13 +30,24 @@ public class ArtifactServiceImpl implements ArtifactService {
   }
 
   /** 返回非敏感连接默认值。 */
-  public ObjectNode defaults() { return client.defaults(); }
+  public ObjectNode defaults() {
+    return client.defaults();
+  }
 
   /** 创建目录标记。 */
-  public ObjectNode mkdir(String prefix) { return client.mkdir(prefix); }
+  public ObjectNode mkdir(String prefix) {
+    return client.mkdir(prefix);
+  }
 
   /** 删除单个对象。 */
-  public ObjectNode delete(String key) { return client.delete(key); }
+  public ObjectNode delete(String key) {
+    return client.delete(key);
+  }
+
+  /** 递归删除明确指定的目录，具体范围由存储客户端校验。 */
+  public ObjectNode deleteDirectory(String prefix) {
+    return client.deleteDirectory(prefix);
+  }
 
   /** 委托 S3 客户端提供已校验范围的对象流。 */
   public ResponseInputStream<GetObjectResponse> download(String key) {

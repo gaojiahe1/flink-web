@@ -41,11 +41,13 @@ public class OperatorServiceImpl implements OperatorService {
     }
   }
 
-  /** 从明确的版本标签识别发行版；自定义标签、摘要及未知版本不猜测兼容性。 */
+  /** 从镜像标签的版本前缀识别发行版，允许构建后缀；未知发行系列不猜测兼容性。 */
   public ObjectNode compatibility(String image) {
     var result = mapper.createObjectNode().put("known", false).put("version", "");
     var matcher =
-        java.util.regex.Pattern.compile(":v?(1\\.(?:[7-9]|1[0-6])\\.\\d+)$").matcher(image);
+        java.util.regex.Pattern.compile(
+                ":v?(1\\.(?:[7-9]|1[0-6])\\.\\d+)(?:-[A-Za-z0-9_.-]+)?(?:@sha256:[a-fA-F0-9]{64})?$")
+            .matcher(image);
     if (!matcher.find()) return result.put("message", "无法识别 Operator 发行版本，请核实 Deployment 镜像标签");
     String version = matcher.group(1);
     var entry = matrix.path(version.substring(0, version.lastIndexOf('.')));

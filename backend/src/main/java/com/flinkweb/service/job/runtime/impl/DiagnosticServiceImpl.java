@@ -122,7 +122,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     return result;
   }
 
-  /** 获取最多 1000 行、256 KiB 的日志，Pod 与容器必须属于该作业。 */
+  /** 获取最多 10000 行，保留最新 4 MiB 日志，Pod 与容器必须属于该作业。 */
   public ObjectNode log(String id, String podName, String container, int lines, boolean previous) {
     access.require(id, "operate");
     if (!podName.matches("[a-z0-9][a-z0-9.-]{0,252}")
@@ -139,7 +139,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
       for (JsonNode c : pod.path("spec").path(field))
         if (container.equals(c.path("name").asText())) found = true;
     if (!found) fail("容器不存在");
-    int limit = Math.max(1, Math.min(lines, 1000));
+    int limit = Math.max(1, Math.min(lines, 10000));
     String text =
         client.text(
             client.core()
@@ -149,9 +149,9 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                 + encode(container)
                 + "&tailLines="
                 + limit
-                + "&limitBytes=262144&timestamps=true&previous="
+                + "&timestamps=true&previous="
                 + previous,
-            262144);
+            4 * 1024 * 1024);
     records.save(
         "audit",
         UUID.randomUUID().toString(),
@@ -166,7 +166,8 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         .createObjectNode()
         .put("text", redactPodSecrets(redact(text), pod))
         .put("queriedAt", java.time.Instant.now().toString())
-        .put("limitBytes", 262144);
+        .put("limitBytes", 4 * 1024 * 1024)
+        .put("lines", limit);
   }
 
   /** 遮蔽本 Pod 实际引用的 Kubernetes Secret 值，读取失败时不返回原始日志。 */

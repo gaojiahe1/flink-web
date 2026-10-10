@@ -23,7 +23,10 @@ export const workbenchApi = {
   diagnostics: (id: string) =>
     request<Diagnostic>(jobPath(id) + '/diagnostics', { method: 'POST' }),
   logs: (id: string, input: LogQuery) =>
-    request<{ text: string }>(jobPath(id) + '/logs', { method: 'POST', ...jsonBody(input) }),
+    request<{ text: string; queriedAt?: string; limitBytes?: number; lines?: number }>(
+      jobPath(id) + '/logs',
+      { method: 'POST', ...jsonBody(input) },
+    ),
   restore: (id: string, release: string, revision: number) =>
     request<JobDraft>(jobPath(id) + '/releases/' + encodeURIComponent(release) + '/restore', {
       method: 'POST',

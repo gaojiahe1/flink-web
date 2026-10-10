@@ -506,7 +506,7 @@ function resetFilters() {
       ><button class="text-button" @click="resetFilters">重置</button
       ><ManualRefreshButton :action="load" />
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap datasource-records">
       <table>
         <thead>
           <tr>

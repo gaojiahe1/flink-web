@@ -63,6 +63,7 @@ async function signOut() {
             :to="item.path"
             class="nav-item"
             :title="item.title"
+            :aria-label="item.title"
             ><component :is="item.icon" :size="18" class="nav-icon" aria-hidden="true" /><span
               class="nav-text"
               >{{ item.title }}</span
@@ -71,7 +72,7 @@ async function signOut() {
         </section>
       </nav>
       <div class="sidebar-bottom">
-        <RouterLink to="/settings" class="nav-item" title="系统设置"
+        <RouterLink to="/settings" class="nav-item" title="系统设置" aria-label="系统设置"
           ><Settings :size="18" class="nav-icon" aria-hidden="true" /><span class="nav-text"
             >系统设置</span
           ></RouterLink

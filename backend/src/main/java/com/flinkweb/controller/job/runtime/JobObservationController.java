@@ -31,7 +31,7 @@ public class JobObservationController {
     return ApiResponse.ok(diagnostics.inspect(id));
   }
 
-  /** 按权限读取受限日志，默认不跟随，最多一千行。 */
+  /** 按权限读取受限日志，默认不跟随，最多一万行。 */
   @PostMapping("/jobs/{id}/logs")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER','OPERATOR')")
   public ApiResponse<ObjectNode> logs(@PathVariable String id, @RequestBody ObjectNode input) {
@@ -40,7 +40,7 @@ public class JobObservationController {
             id,
             input.path("pod").asText(),
             input.path("container").asText(),
-            input.path("lines").asInt(200),
+            input.path("lines").asInt(10000),
             input.path("previous").asBoolean()));
   }
 

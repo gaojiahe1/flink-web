@@ -22,6 +22,9 @@ public interface ArtifactService {
   /** 删除一个明确选中的对象，不递归删除目录。 */
   ObjectNode delete(String key);
 
+  /** 删除明确选中的非根目录及其全部当前对象。 */
+  ObjectNode deleteDirectory(String prefix);
+
   /** 委托 S3 客户端提供已校验范围的对象流。 */
   ResponseInputStream<GetObjectResponse> download(String key);
 }

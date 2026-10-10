@@ -48,6 +48,7 @@ class FlinkCatalogIntegrationTest {
   /** 使用隔离的元数据库与测试专用安全配置。 */
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry registry) {
+    registry.add("platform.artifacts.downloader-image", () -> "registry.test/downloader:current");
     registry.add("platform.storage.local-path", () -> DATABASE.toString());
     registry.add("platform.security.password", () -> "Test-password-12345");
     registry.add(
@@ -182,6 +183,9 @@ class FlinkCatalogIntegrationTest {
         "CREATE TEMPORARY TABLE sink_table (n INT) WITH ('connector'='blackhole'); INSERT INTO"
             + " sink_table VALUES (1);";
     var input = new SqlDraftRequest(job, "", script, runtime, 0);
+    records.save("artifacts", "runner-" + job, mapper.createObjectNode()
+        .put("filename", "flink-web-sql-runner.jar").put("uri", "https://artifacts.test/flink-web-sql-runner.jar"), 0);
+    runtime.put("runnerArtifactId", "runner-" + job);
     var saved = sql.save(job, input);
     assertThat(sql.check(script, runtime).statementCount()).isEqualTo(5);
     String yaml = sql.preview(input).path("yaml").asText();

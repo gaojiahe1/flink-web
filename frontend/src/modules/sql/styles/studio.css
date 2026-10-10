@@ -75,6 +75,28 @@
   color: #4c5666;
   border-radius: 4px;
 }
+.sql-file-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.sql-file-row .sql-file {
+  flex: 1;
+  min-width: 0;
+}
+.sql-file-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.sql-file-delete:hover {
+  background: var(--color-background);
+}
 .sql-file > span:last-child {
   min-width: 0;
   white-space: nowrap;
@@ -364,17 +386,50 @@
   }
 }
 @media (max-width: 640px) {
-  .sql-workbench {
-    --explorer-width: 110px;
+  .sql-workbench,
+  .sql-workbench.with-inspector,
+  .sql-workbench.explorer-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    overflow: auto;
   }
   .sql-runtime {
-    grid-column: 1 / 3;
+    grid-column: 1;
+    grid-row: 4;
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
   .sql-explorer {
+    grid-column: 1;
     grid-row: 1;
+    max-height: 220px;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .sql-center {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .studio-rail {
+    grid-column: 1;
+    grid-row: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 4px;
+    border-left: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .studio-rail button {
+    writing-mode: horizontal-tb;
+    letter-spacing: 0;
+    border-left: 0;
+    padding: 8px;
   }
   .sql-center > .code-editor {
     min-height: 320px;
+    height: 320px;
+    flex: none;
   }
 }
 
@@ -391,4 +446,36 @@
 }
 .sql-runtime label {
   margin-bottom: 10px;
+}
+/* 验证结果与工作台共用紧凑表格和信息栏。 */
+.verification-results {
+  min-width: 0;
+  flex-shrink: 0;
+  max-height: 340px;
+  overflow: auto;
+}
+.verification-results .tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+.verification-results [aria-selected='true'] {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.verification-table {
+  max-height: 300px;
+  overflow: auto;
+}
+.verification-value,
+.verification-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.verification-table td {
+  vertical-align: top;
 }

@@ -8,13 +8,12 @@ import com.flinkweb.dto.job.creation.RenderedDeployment;
 import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.repository.metadata.RecordRepository;
 import com.flinkweb.security.permission.SecretCipher;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-/** 解析配置引用并进行类型化替换，将敏感变量转换为 Kubernetes Secret 引用。 */
+/** 解析配置引用，在提交时展开加密密钥，保留用户显式登记的 Secret 引用。 */
 @Service
 public class VariableRenderer {
   private static final Pattern TOKEN =
@@ -42,7 +41,7 @@ public class VariableRenderer {
     this.properties = properties;
   }
 
-  /** 复制部署资源并递归替换配置引用，收集需要创建的 Secret。 */
+  /** 复制部署资源并在请求内展开配置引用，不生成 Kubernetes Secret。 */
   public RenderedDeployment render(ObjectNode source) {
     List<ObjectNode> secrets = new ArrayList<>();
     ObjectNode deployment = source.deepCopy();
@@ -53,7 +52,7 @@ public class VariableRenderer {
     return new RenderedDeployment(rendered, secrets);
   }
 
-  /** 将 S3 密钥变量映射为 Flink 主容器凭据，避免密钥明文进入 CR 和历史。 */
+  /** 将 S3 密钥变量映射为 Flink 主容器凭据，预览和历史另行恢复占位符。 */
   private void bindS3Credentials(ObjectNode deployment) {
     JsonNode config = deployment.at("/spec/flinkConfiguration");
     String access = config.path("s3.access-key").asText();
@@ -87,7 +86,7 @@ public class VariableRenderer {
     env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", secret);
   }
 
-  /** 遍历 YAML 节点，保留普通变量原始类型，并将敏感环境变量改为 Secret 引用。 */
+  /** 遍历 YAML 节点，保留普通变量类型，并在环境变量中展开加密值。 */
   private JsonNode walk(JsonNode node, List<ObjectNode> secrets, String parent) {
     if (node.isObject()) {
       ObjectNode object = (ObjectNode) node;
@@ -101,40 +100,10 @@ public class VariableRenderer {
             name = config.path("secretName").asText();
             key = config.path("secretKey").asText();
           } else if (config.path("kind").asText().equals("secret")) {
-            name =
-                "fw-"
-                    + UUID.nameUUIDFromBytes(
-                        (match.group(2) + ":" + config.path("revision").asLong())
-                            .getBytes(StandardCharsets.UTF_8));
-            key = "value";
-            ObjectNode secret =
-                mapper
-                    .createObjectNode()
-                    .put("apiVersion", "v1")
-                    .put("kind", "Secret")
-                    .put("type", "Opaque")
-                    .put("immutable", true);
-            secret
-                .putObject("metadata")
-                .put("name", name)
-                .put("namespace", properties.namespace())
-                .putObject("labels")
-                .put("app.kubernetes.io/managed-by", "flink-web");
-            secret
-                .putObject("data")
-                .put(
-                    key,
-                    Base64.getEncoder()
-                        .encodeToString(
-                            cipher
-                                .decrypt(match.group(2), config.path("encryptedValue").asText())
-                                .getBytes(StandardCharsets.UTF_8)));
-            if (secrets.stream()
-                .noneMatch(
-                    item ->
-                        item.path("metadata")
-                            .path("name")
-                            .equals(secret.path("metadata").path("name")))) secrets.add(secret);
+            object.remove("valueFrom");
+            object.put(
+                "value", cipher.decrypt(match.group(2), config.path("encryptedValue").asText()));
+            return object;
           } else {
             fail("secret 引用必须指向密钥配置");
             return null;
@@ -165,6 +134,37 @@ public class VariableRenderer {
         return config.path("value").deepCopy();
       }
       if (value.contains("{{")) fail("变量必须独占一个 YAML 标量，并用引号包裹");
+    }
+    return node;
+  }
+
+  /** 本地预览恢复密钥占位符，避免展开后的实际值进入浏览器或被重新保存。 */
+  public ObjectNode preview(ObjectNode resource) {
+    ObjectNode result = resource.deepCopy();
+    Map<String, String> values = new LinkedHashMap<>();
+    for (var config : store.list("configs"))
+      if ("secret".equals(config.path("kind").asText())) {
+        String value =
+            cipher.decrypt(config.path("id").asText(), config.path("encryptedValue").asText());
+        if (!value.isEmpty())
+          values.putIfAbsent(value, "{{secret:" + config.path("id").asText() + "}}");
+      }
+    return (ObjectNode) mask(result, values);
+  }
+
+  /** 递归替换实际密钥值，兼顾嵌入文本和纯标量引用。 */
+  private JsonNode mask(JsonNode node, Map<String, String> values) {
+    if (node.isObject()) {
+      var names = new ArrayList<String>();
+      node.fieldNames().forEachRemaining(names::add);
+      for (String name : names) ((ObjectNode) node).set(name, mask(node.get(name), values));
+    } else if (node.isArray()) {
+      for (int i = 0; i < node.size(); i++) ((ArrayNode) node).set(i, mask(node.get(i), values));
+    } else if (node.isTextual()) {
+      String text = node.asText();
+      if (values.containsKey(text)) return TextNode.valueOf(values.get(text));
+      for (String value : values.keySet()) text = text.replace(value, "******");
+      return TextNode.valueOf(text);
     }
     return node;
   }

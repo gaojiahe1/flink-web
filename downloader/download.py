@@ -25,7 +25,10 @@ def open_source(item):
         raise ValueError("Credentials and query parameters are not allowed in artifact URI")
     if uri.scheme == "s3":
         client = boto3.client("s3", endpoint_url=os.getenv("S3_ENDPOINT") or None,
-                              config=Config(connect_timeout=10, read_timeout=60, retries={"max_attempts": 2}, s3={"addressing_style": "path"}))
+                              region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1",
+                              config=Config(signature_version="s3v4", request_checksum_calculation="when_required",
+                                            response_checksum_validation="when_required", connect_timeout=10, read_timeout=60,
+                                            retries={"max_attempts": 2}, s3={"addressing_style": "path"}))
         return client.get_object(Bucket=uri.hostname, Key=uri.path.lstrip("/"))["Body"]
     if uri.scheme not in ("http", "https") or uri.netloc.lower() not in ALLOWED:
         raise ValueError("Artifact host is not explicitly allowed")

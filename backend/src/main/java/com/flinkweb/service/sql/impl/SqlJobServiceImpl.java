@@ -37,6 +37,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   private final AccessService access;
   private final SqlParserService parser;
   private final com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs;
+  private final com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts;
 
   /** 注入草稿持久化、SQL 基础校验及部署渲染依赖。 */
   public SqlJobServiceImpl(
@@ -50,7 +51,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       AuditService audit,
       AccessService access,
       SqlParserService parser,
-      com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs) {
+      com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs,
+      com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts) {
+    this.runtimeArtifacts = runtimeArtifacts;
     this.records = records;
     this.jobRepository = jobRepository;
     this.jobs = jobs;
@@ -69,13 +72,22 @@ public class SqlJobServiceImpl implements SqlJobService {
     var permitted = access.evaluator();
     return records.list("sql_jobs").stream()
         .filter(s -> permitted.test("sql:" + s.path("id").asText(), "read"))
+        .map(this::deploymentLink)
         .toList();
   }
 
   /** 读取指定 SQL 草稿及其已关联的部署信息。 */
   public ObjectNode get(String id) {
     access.require("sql:" + id, "read");
-    return records.require("sql_jobs", id);
+    return deploymentLink(records.require("sql_jobs", id));
+  }
+
+  /** 读取时兼容旧的失效关联；删除后的部署不再显示为已生成。 */
+  private ObjectNode deploymentLink(ObjectNode record) {
+    if (!record.path("jobId").asText().isBlank()
+        && jobRepository.findById(record.path("jobId").asText()).isEmpty())
+      record.remove(List.of("jobId", "publishedAt"));
+    return record;
   }
 
   /** 保存尚在编写的 SQL，使用修订号保护并发修改；不要求未完成脚本通过执行检查。 */
@@ -88,6 +100,7 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SQL", "SQL 脚本不能超过 32 KiB");
     catalogs.prepare(input.runtime().deepCopy());
     ObjectNode old = records.find("sql_jobs", id);
+    if (old != null) deploymentLink(old);
     var existingJob = jobRepository.findByName(input.name());
     if (existingJob.isPresent() && (old == null || !existingJob.get().id().equals(old.path("jobId").asText())))
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
@@ -153,12 +166,8 @@ public class SqlJobServiceImpl implements SqlJobService {
         parser.check(
             validation.validate(catalogs.prepare(options) + input.sql()),
             options.path("imageId").asText());
-    // SQL 使用镜像内的 Runner；依赖文件不会被误当成主 JAR。
-    options.remove(List.of("artifactIds", "mainArtifactId"));
-    options.put("name", input.name()).put("entryClass", "com.flinkweb.sql.SqlRunner");
-    String runner =
-        options.path("jarURI").asText("local:///opt/flink/lib/flink-web-sql-runner.jar");
-    options.put("jarURI", runner);
+    runtimeArtifacts.configure(options);
+    options.put("name", input.name());
     var args = options.putArray("args");
     for (String statement : checked.statements()) {
       args.add("--statement");
@@ -170,6 +179,7 @@ public class SqlJobServiceImpl implements SqlJobService {
     ObjectNode rendered = forms.render(options);
     ObjectNode resource = yaml.validate(yaml.parse(rendered.path("yaml").asText()), input.name());
     resource.withObject("/metadata").withObject("/labels").put("flink-web/job-type", "sql");
+    resource.withObject("/metadata/labels").put("flink-web/sql-id", input.name());
     return rendered.put("yaml", yaml.dump(resource)).put("message", checked.message());
   }
 

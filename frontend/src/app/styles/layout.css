@@ -50,7 +50,6 @@
   color: #c4cddd;
 }
 .nav-label {
-  margin-top: 34px;
   margin: 8px 10px 6px;
   color: #8294af;
   font-size: 11px;
@@ -63,7 +62,7 @@
   height: 42px;
   white-space: nowrap;
   position: relative;
-  font-size: 12px;
+  font-size: 13px;
   min-height: 38px;
   border-radius: 5px;
   padding: 8px 11px;
@@ -96,7 +95,7 @@
   padding: 20px 0 0;
   display: flex;
   gap: 10px;
-  font-size: 12px;
+  font-size: 13px;
   border-color: #233044;
   margin: 20px 9px 0;
   color: #8090a9;
@@ -106,7 +105,7 @@
   color: #c5d0e1;
   font-family: monospace;
   margin-top: 5px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .main-shell {
   margin-left: var(--sidebar);
@@ -124,7 +123,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0 24px;
-  font-size: 12px;
+  font-size: 13px;
   border-color: var(--line);
   height: 58px;
   border-bottom: 1px solid var(--color-border);
@@ -132,7 +131,7 @@
 }
 .breadcrumb {
   color: #8691a0;
-  font-size: 12px;
+  font-size: 13px;
 }
 .breadcrumb span {
   margin: 0 12px;
@@ -151,7 +150,7 @@
   border-radius: 50%;
   width: 28px;
   height: 28px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 .content {
@@ -169,7 +168,7 @@ footer {
 .panel-footer {
   border-top: 1px solid #edf0f1;
   padding: 12px 20px;
-  font-size: 12px;
+  font-size: 13px;
   color: #93a0b1;
 }
 @media (max-width: 1050px) {
@@ -261,17 +260,6 @@ footer {
     padding: 20px 14px;
   }
 }
-.nav-item.router-link-active:before {
-  content: '';
-  position: absolute;
-  left: -14px;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  background: #5594ff;
-  border-radius: 0 3px 3px 0;
-  display: none;
-}
 .sidebar-collapsed {
   --sidebar: 68px;
 }
@@ -287,9 +275,6 @@ footer {
 .sidebar-collapsed .nav-text,
 .sidebar-collapsed .workspace {
   display: none;
-}
-.sidebar-collapsed nav {
-  margin-top: 32px;
 }
 .sidebar-collapsed .nav-item {
   justify-content: center;
@@ -357,4 +342,52 @@ footer {
 .sidebar-collapsed .navigation-group + .navigation-group {
   border-top: 1px solid #ffffff12;
   padding-top: 12px;
+}
+
+/* 折叠宽度与主内容共用一个变量，避免中等屏幕出现空白导航栏。 */
+@media (min-width: 761px) and (max-width: 1050px) {
+  .app-shell {
+    --sidebar: 190px;
+  }
+  .sidebar-collapsed {
+    --sidebar: 68px;
+  }
+  .sidebar {
+    width: var(--sidebar);
+  }
+  .main-shell {
+    margin-left: var(--sidebar);
+    width: calc(100% - var(--sidebar));
+  }
+}
+.workspace small {
+  overflow-wrap: anywhere;
+}
+.topbar {
+  flex-shrink: 0;
+}
+.sidebar {
+  background: linear-gradient(180deg, #152238 0%, #19263b 100%);
+}
+.nav-item {
+  font-weight: 500;
+}
+.nav-item.router-link-active {
+  box-shadow:
+    inset 3px 0 #62a0ff,
+    0 3px 8px #08162912;
+}
+.nav-label {
+  font-weight: 500;
+}
+.sidebar-collapsed .nav-item {
+  min-height: 42px;
+}
+@media (max-width: 760px) {
+  .sidebar .nav-item {
+    font-size: 13px;
+  }
+  .sidebar .brand {
+    padding: 0;
+  }
 }

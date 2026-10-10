@@ -25,6 +25,22 @@ const router = createRouter({
         },
         { path: 'sql', component: () => import('../../modules/sql/pages/SqlStudioView.vue') },
         {
+          path: 'jar',
+          component: () => import('../../modules/job-creation/pages/JarDevelopmentView.vue'),
+        },
+        {
+          path: 'jar/new',
+          component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
+        },
+        {
+          path: 'jar/:id/edit',
+          component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
+        },
+        {
+          path: 'sessions',
+          component: () => import('../../modules/session/pages/SessionsView.vue'),
+        },
+        {
           path: 'jobs/jar/new',
           component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
         },

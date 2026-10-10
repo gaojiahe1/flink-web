@@ -17,6 +17,7 @@ public class ArtifactPodBuilder {
   private final RecordRepository records;
   private final DownloaderSettingsService settings;
   private final PodTemplates templates;
+  private final ArtifactReferences references;
   private final String hosts, endpoint, credentialsSecret;
   private static final org.slf4j.Logger log =
       org.slf4j.LoggerFactory.getLogger(ArtifactPodBuilder.class);
@@ -28,6 +29,7 @@ public class ArtifactPodBuilder {
       com.flinkweb.client.storage.S3StorageClient storage,
       DownloaderSettingsService settings,
       PodTemplates templates,
+      ArtifactReferences references,
       @Value("${platform.artifacts.allowed-hosts:}") String hosts,
       @Value("${platform.s3.endpoint:}") String endpoint,
       @Value("${platform.artifacts.credentials-secret:}") String credentialsSecret) {
@@ -36,6 +38,7 @@ public class ArtifactPodBuilder {
     this.storage = storage;
     this.settings = settings;
     this.templates = templates;
+    this.references = references;
     this.hosts = hosts;
     this.endpoint = endpoint;
     this.credentialsSecret = credentialsSecret;
@@ -51,10 +54,7 @@ public class ArtifactPodBuilder {
     Set<String> names = new HashSet<>();
     int index = 0;
     for (JsonNode id : ids) {
-      var artifact =
-          id.asText().startsWith("s3:")
-              ? storage.describe(id.asText().substring(3))
-              : records.require("artifacts", id.asText());
+      var artifact = references.describe(id.asText());
       String filename = artifact.path("filename").asText();
       if (!names.add(filename)) fail("附加文件名重复：" + filename);
       var entry =
@@ -137,7 +137,7 @@ public class ArtifactPodBuilder {
     return false;
   }
 
-  /** 设置清单和按需 S3 凭据引用，不生成区域环境变量或密钥明文。 */
+  /** 设置清单、S3 签名区域和按需凭据引用，不向模板写入密钥明文。 */
   private void configureEnvironment(ArrayNode env, ArrayNode manifest) {
     Set<String> managed =
         Set.of(
@@ -156,6 +156,9 @@ public class ArtifactPodBuilder {
     env.addObject().put("name", "ARTIFACT_ALLOWED_HOSTS").put("value", hosts);
     if (usesS3(manifest)) {
       env.addObject().put("name", "S3_ENDPOINT").put("value", endpoint);
+      env.addObject()
+          .put("name", "AWS_REGION")
+          .put("value", storage.defaults().path("region").asText("us-east-1"));
       for (String key : List.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")) {
         var variable = env.addObject().put("name", key);
         if (!credentialsSecret.isBlank())

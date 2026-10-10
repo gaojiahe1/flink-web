@@ -48,6 +48,21 @@ interface Operation {
   updatedAt: string
 }
 const jobAccess = ref<Record<string, { canEdit: boolean; canOperate: boolean }>>({})
+const developmentLinks = ref<Record<string, { type: 'sql' | 'jar'; sqlId?: string }>>({})
+async function editJob(job: JobDraft) {
+  const link = developmentLinks.value[job.id]
+  try {
+    if (link?.type === 'sql') {
+      if (!link.sqlId) throw new Error('找不到对应 SQL 草稿或没有访问权限，请检查 SQL 开发列表。')
+      await router.push({ path: '/sql', query: { draft: link.sqlId } })
+    } else {
+      await request('/api/development/jar/jobs/' + job.id + '/open', { method: 'POST' })
+      await router.push('/jar/' + job.id + '/edit')
+    }
+  } catch (e) {
+    error.value = (e as Error).message
+  }
+}
 const mayEdit = (job: JobDraft) =>
   !!developer.value && (!!admin.value || jobAccess.value[job.id]?.canEdit === true)
 const mayOperate = (job: JobDraft) =>
@@ -62,6 +77,7 @@ const loading = ref(true),
   acting = ref(false),
   selected = ref<JobDraft | null>(null)
 const podJob = ref<JobDraft | null>(null)
+const snapshotNotice = ref('')
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
 const yamlOpen = ref(false)
@@ -245,12 +261,14 @@ function badgeClass(value?: string) {
 
 const state = (job: JobDraft) => runtime.value.find((item) => item.name === job.deploymentName)
 async function load() {
-  const [items, permissions] = await Promise.all([
+  const [items, permissions, links] = await Promise.all([
     jobsApi.list(),
     request<Record<string, { canEdit: boolean; canOperate: boolean }>>('/api/platform/job-access'),
+    request<Record<string, { type: 'sql' | 'jar'; sqlId?: string }>>('/api/development/links'),
   ])
   drafts.value = items
   jobAccess.value = permissions
+  developmentLinks.value = links
   loading.value = false
 }
 const {
@@ -262,10 +280,12 @@ const {
 } = useManualRefresh(async () => {
   error.value = ''
   message.value = ''
+  snapshotNotice.value = ''
   try {
     const result = await request<{
       items: Runtime[]
       queriedAt: string
+      snapshotQuery?: { state: string; message: string }
       stopProgress?: Record<string, { phase: string; message: string; savepointPath?: string }>
     }>('/api/jobs/refresh', {
       method: 'POST',
@@ -275,6 +295,8 @@ const {
     stopProgress.value = result.stopProgress || {}
     submittedActions.value = {}
     queriedAt.value = result.queriedAt
+    if (result.snapshotQuery?.state === 'UNAVAILABLE')
+      snapshotNotice.value = result.snapshotQuery.message
     await load()
   } catch (e) {
     if ((e as Error).name !== 'AbortError') {
@@ -506,6 +528,10 @@ watch(copyName, () => {
   copyError.value = ''
 })
 async function openCopy(job: JobDraft) {
+  if (developmentLinks.value[job.id]?.type === 'sql') {
+    error.value = 'SQL 作业请在 SQL 开发中新建草稿。'
+    return
+  }
   copySource.value = job
   copyEditor.value = 'yaml'
   copyName.value = job.name.slice(0, 53).replace(/-+$/, '') + '-copy'
@@ -562,7 +588,7 @@ function resetFilters() {
     ><template #description>单 namespace 管理 · 首次进入查询一次，之后按需刷新</template
     ><template #actions
       ><div v-if="developer" class="toolbar-actions">
-        <RouterLink class="button primary" to="/jobs/jar/new">＋ 新建 JAR 作业</RouterLink>
+        <RouterLink class="button" to="/jar">前往 JAR 开发 ↗</RouterLink>
       </div></template
     ></PageHeader
   >
@@ -590,6 +616,7 @@ function resetFilters() {
     </div>
   </div>
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
+  <div v-if="snapshotNotice" class="notice" role="status">{{ snapshotNotice }}</div>
   <div v-if="message" class="notice">{{ message }}</div>
   <div
     v-if="ongoing.length"
@@ -700,6 +727,10 @@ function resetFilters() {
             </td>
             <td>
               <button class="text-button job-name" @click="details(job)">{{ job.name }}</button
+              ><span
+                class="badge job-type"
+                :class="{ 'sql-type': developmentLinks[job.id]?.type === 'sql' }"
+                >{{ developmentLinks[job.id]?.type === 'sql' ? 'SQL' : 'JAR' }}</span
               ><small class="table-description"
                 >编号 flink-{{ String(job.jobNumber).padStart(7, '0')
                 }}<template
@@ -759,12 +790,12 @@ function resetFilters() {
               ><button
                 v-if="mayEdit(job)"
                 class="text-button"
-                :disabled="copying"
+                :disabled="copying || developmentLinks[job.id]?.type === 'sql'"
+                :title="developmentLinks[job.id]?.type === 'sql' ? '请在 SQL 开发中新建草稿' : ''"
                 @click="openCopy(job)"
               >
                 复制</button
-              ><RouterLink v-if="mayEdit(job)" class="text-button" :to="'/jobs/' + job.id + '/edit'"
-                >编辑</RouterLink
+              ><button v-if="mayEdit(job)" class="text-button" @click="editJob(job)">编辑</button
               ><button
                 v-if="developer"
                 class="text-button danger"
@@ -1072,7 +1103,13 @@ function resetFilters() {
       </table>
     </div>
   </section>
-  <PodStatusDrawer v-if="podJob" :key="podJob.id" :job="podJob" @close="podJob = null" />
+  <PodStatusDrawer
+    v-if="podJob"
+    :key="podJob.id"
+    :job="podJob"
+    :can-read-logs="mayOperate(podJob)"
+    @close="podJob = null"
+  />
   <dialog
     ref="yamlDialog"
     class="yaml-snapshot-dialog"

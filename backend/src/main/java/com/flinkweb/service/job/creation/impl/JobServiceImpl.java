@@ -25,6 +25,7 @@ public class JobServiceImpl implements JobService {
   private final AuditService audit;
   private final AccessService access;
   private final com.flinkweb.client.storage.S3StorageClient storage;
+  private final com.flinkweb.repository.metadata.RecordRepository records;
 
   /** 注入草稿仓库、YAML 校验器、绑定仓库和审计服务。 */
   public JobServiceImpl(
@@ -33,7 +34,9 @@ public class JobServiceImpl implements JobService {
       YamlService yaml,
       JobBindingRepository bindings,
       AccessService access,
-      com.flinkweb.client.storage.S3StorageClient storage) {
+      com.flinkweb.client.storage.S3StorageClient storage,
+      com.flinkweb.repository.metadata.RecordRepository records) {
+    this.records = records;
     this.storage = storage;
     this.repository = repository;
     this.audit = audit;
@@ -93,6 +96,12 @@ public class JobServiceImpl implements JobService {
             null);
     repository.insert(draft);
     access.initialize(draft.id());
+    if (!"sql".equals(source.at("/metadata/labels/flink-web~1job-type").asText()))
+      records.save(
+          "jar_development",
+          draft.id(),
+          new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode(),
+          0);
     audit.record("DRAFT_CREATE", draft.id(), "SUCCESS");
     return repository.findById(draft.id()).orElseThrow();
   }
@@ -134,8 +143,28 @@ public class JobServiceImpl implements JobService {
     access.require(id, "edit");
     var existing = get(id);
     if (!repository.delete(id, revision)) throw conflict();
+    for (var sql : records.list("sql_jobs")) {
+      if (!id.equals(sql.path("jobId").asText())) continue;
+      String workspace =
+          UUID.nameUUIDFromBytes(
+                  ("sql-workspace:" + sql.path("id").asText() + ":" + id)
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+              .toString();
+      String oldPrefix = storage.jobPrefix(id), newPrefix = storage.jobPrefix(workspace);
+      var runtime = sql.withObject("/runtime");
+      if (runtime.toString().contains(oldPrefix)) {
+        // SQL 开发草稿仍存在，先迁移其依赖，再按原规则清理已删除作业目录。
+        storage.copyJobFiles(id, workspace, true);
+        sql.set("runtime", yaml.parse(runtime.toString().replace(oldPrefix, newPrefix)));
+      }
+      sql.remove(List.of("jobId", "publishedAt"));
+      sql.withObject("/runtime").put("workspaceId", workspace);
+      records.save("sql_jobs", sql.path("id").asText(), sql, sql.path("revision").asLong());
+    }
     storage.deleteJobStorage(id, existing.yaml().contains("s3://"));
     bindings.delete(id);
+    var jar = records.find("jar_development", id);
+    if (jar != null) records.delete("jar_development", id, jar.path("revision").asLong());
     audit.record("DRAFT_DELETE", id, "SUCCESS");
   }
 
@@ -145,6 +174,9 @@ public class JobServiceImpl implements JobService {
     access.require(id, "edit");
     var source = get(id);
     if (source.revision() != request.revision()) throw conflict();
+    if (records.list("sql_jobs").stream().anyMatch(sql -> id.equals(sql.path("jobId").asText())))
+      throw new BusinessException(
+          HttpStatus.CONFLICT, "SQL_EDITOR_REQUIRED", "SQL 作业请在 SQL 开发中新建草稿，不能复制为无 SQL 关联的 JAR 作业");
     String target = UUID.randomUUID().toString();
     var node = yaml.parse(source.yaml());
     node.remove("status");

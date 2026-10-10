@@ -27,7 +27,9 @@ export const navigationGroups: NavigationGroup[] = [
     title: '开发与运维',
     items: [
       { path: '/sql', icon: Code, title: 'SQL 开发' },
+      { path: '/jar', icon: Box, title: 'JAR 开发' },
       { path: '/jobs', icon: Activity, title: '作业管理' },
+      { path: '/sessions', icon: Layers, title: 'Session 集群' },
     ],
   },
   {

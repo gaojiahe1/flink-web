@@ -39,7 +39,7 @@ h2 {
   font-size: 18px;
 }
 h3 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
 }
 input,
@@ -52,7 +52,7 @@ select {
   width: 100%;
   outline: none;
   color: #34435a;
-  font-size: 12px;
+  font-size: 13px;
   min-height: var(--control-height);
   line-height: 1.5;
 }
@@ -64,12 +64,12 @@ select:focus {
 }
 button:focus-visible,
 a:focus-visible {
-  outline: 2px solid #1a9a8d;
+  outline: 2px solid var(--color-primary);
   outline-offset: 3px;
 }
 label {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 label input,
@@ -80,7 +80,7 @@ label select {
 label small,
 .form-help {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   color: #7c8d91;
   font-weight: 400;
   margin-top: 4px;
@@ -103,7 +103,7 @@ label small,
   margin-top: 5px;
 }
 .version-tag {
-  font-size: 12px;
+  font-size: 13px;
   color: #98a1af;
   border: 0;
   padding: 3px 8px;
@@ -120,7 +120,7 @@ label small,
 }
 .page-title .muted {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .button {
   display: inline-flex;
@@ -135,7 +135,7 @@ label small,
   white-space: nowrap;
   min-height: var(--control-height);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 13px;
   gap: 6px;
 }
 .button:hover {
@@ -155,12 +155,12 @@ label small,
 .text-button {
   background: none;
   border: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--blue);
   padding: 4px 6px;
 }
 .danger {
-  color: #b76864;
+  color: var(--color-danger);
 }
 .full-width {
   width: 100%;
@@ -176,7 +176,7 @@ label small,
   margin: 0 0 20px;
   border-color: #d5e6ff;
   margin-bottom: 16px;
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-sm);
 }
 .notice.error {
@@ -199,7 +199,7 @@ label small,
   overflow: hidden;
   border-color: var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 1px 2px #15223803;
+  box-shadow: var(--shadow-panel);
 }
 .panel-toolbar {
   padding: 16px 20px;
@@ -211,13 +211,13 @@ label small,
   border-color: var(--line);
 }
 .panel-heading {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   display: flex;
   align-items: center;
 }
 .count {
-  font-size: 12px;
+  font-size: 13px;
   margin-left: 8px;
   background: #f0f3f8;
   border-radius: 5px;
@@ -231,7 +231,7 @@ label small,
 }
 .search {
   width: 240px;
-  font-size: 12px;
+  font-size: 13px;
   padding: 8px 12px;
 }
 .empty-state {
@@ -253,7 +253,7 @@ label small,
   border-color: #e3ebf9;
 }
 .empty-state p {
-  font-size: 12px;
+  font-size: 13px;
   color: #91a0a3;
   margin: 9px 0 22px;
 }
@@ -264,12 +264,12 @@ label small,
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
 }
 th {
   height: 40px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-muted);
   font-weight: 600;
   background: #f7f9fc;
@@ -290,7 +290,7 @@ tbody tr:last-child td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-muted);
 }
 .mono {
@@ -305,7 +305,7 @@ tbody tr:last-child td {
   align-items: center;
   gap: 6px;
   font-weight: 500;
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-sm);
 }
 .badge.amber {
@@ -316,7 +316,7 @@ tbody tr:last-child td {
   display: inline-block;
   margin-bottom: 12px;
   color: #8391a6;
-  font-size: 12px;
+  font-size: 13px;
 }
 .editor-grid {
   display: grid;
@@ -344,7 +344,7 @@ tbody tr:last-child td {
   border: 0;
   border-radius: 0;
   font-family: Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.9;
   padding: 24px;
   tab-size: 2;
@@ -366,7 +366,7 @@ tbody tr:last-child td {
   font-size: 20px;
 }
 .module-placeholder > .muted {
-  font-size: 12px;
+  font-size: 13px;
   margin: 10px 0 30px;
 }
 .feature-list {
@@ -377,10 +377,10 @@ tbody tr:last-child td {
 .feature-list > div {
   padding: 15px;
   border-top: 1px solid #ecf0f1;
-  font-size: 12px;
+  font-size: 13px;
 }
 .feature-list span {
-  font-size: 12px;
+  font-size: 13px;
   color: #8cab9f;
   margin-right: 20px;
 }
@@ -389,7 +389,7 @@ tbody tr:last-child td {
   grid-template-columns: 180px 1fr;
   gap: 18px;
   margin-bottom: 28px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .settings-list dt {
   color: #83979a;
@@ -465,7 +465,7 @@ pre {
   overflow-wrap: anywhere;
   background: #f5f7f9;
   padding: 16px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .inline-label {
   display: flex !important;
@@ -497,7 +497,7 @@ input[type='checkbox'] {
   padding: 10px;
   margin-top: 8px;
   background: #f5f7fa;
-  font-size: 12px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 .explorer-title {
@@ -507,14 +507,14 @@ input[type='checkbox'] {
 }
 .empty-tree {
   padding: 22px 5px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 2;
 }
 .explorer-help {
   border-top: 1px solid #e4e9ee;
   padding: 18px 4px;
   margin-top: 30px;
-  font-size: 12px;
+  font-size: 13px;
   color: #8a93a1;
   line-height: 2;
 }
@@ -606,10 +606,10 @@ input[type='radio'] {
 .filter-count {
   margin-left: auto;
   color: #939eae;
-  font-size: 12px;
+  font-size: 13px;
 }
 td {
-  font-size: 12px;
+  font-size: 13px;
   height: 56px;
 }
 tbody tr:hover {
@@ -660,7 +660,7 @@ tbody tr:hover {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  font-size: 12px;
+  font-size: 13px;
   color: #95a0af;
   border-top: 1px solid var(--line);
 }
@@ -668,12 +668,12 @@ tbody tr:hover {
   width: 108px;
   min-height: 30px;
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .pagination .button {
   min-height: 29px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .segmented {
   display: inline-flex;
@@ -688,7 +688,7 @@ tbody tr:hover {
   border-radius: 5px;
   color: #7c899c;
   background: transparent;
-  font-size: 12px;
+  font-size: 13px;
 }
 .segmented button.active {
   background: #fff;
@@ -708,13 +708,13 @@ tbody tr:hover {
   gap: 13px 16px;
 }
 .compact-form label {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   margin: 0;
 }
 .compact-form label small,
 .artifact-picker > small {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: #97a1b1;
   display: block;
@@ -765,7 +765,7 @@ tbody tr:hover {
   margin-bottom: 9px;
 }
 .field-heading strong {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
 }
 .field-heading h3 {
@@ -773,7 +773,7 @@ tbody tr:hover {
 }
 .artifact-search {
   margin-bottom: 7px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .file-chips {
   display: flex;
@@ -824,7 +824,7 @@ tbody tr:hover {
   outline-offset: 2px;
 }
 .field-error {
-  font-size: 12px;
+  font-size: 13px;
   color: #d25c5c;
 }
 .config-rows {
@@ -841,7 +841,7 @@ tbody tr:hover {
 .config-row small {
   grid-column: 1/-1;
   color: #8c99ab;
-  font-size: 12px;
+  font-size: 13px;
 }
 .config-rows > .button {
   align-self: flex-start;
@@ -924,7 +924,7 @@ tbody tr:hover {
   border-color: var(--blue);
 }
 .flink-config-editor > small {
-  font-size: 12px;
+  font-size: 13px;
   color: #78879a;
   line-height: 1.7;
 }
@@ -938,7 +938,7 @@ tbody tr:hover {
     monospace;
 }
 .cm-completionDetail {
-  font-size: 12px;
+  font-size: 13px;
   color: #65758c;
 }
 .inline-check {
@@ -980,7 +980,7 @@ summary:focus-visible {
 input,
 textarea,
 select {
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-sm);
   border-color: #d9e0e9;
   min-height: var(--control-height);
@@ -1024,7 +1024,7 @@ label {
   border-radius: 4px;
   color: #fff;
   background: #25344b;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   white-space: normal;
   box-shadow: 0 3px 12px #15223820;
@@ -1114,7 +1114,7 @@ textarea.field-invalid,
 .inline-validation {
   display: block;
   margin-top: 5px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .app-confirm-dialog {
   width: min(460px, calc(100vw - 40px));
@@ -1138,4 +1138,95 @@ textarea.field-invalid,
 }
 .app-confirm-dialog .dialog-footer {
   padding: 20px 0 0;
+}
+
+/* 统一列表与表单的可读性，不改变编辑器和运行状态语义。 */
+.panel-heading {
+  gap: 6px;
+}
+.table-wrap {
+  overscroll-behavior-inline: contain;
+}
+tbody tr {
+  transition: background 120ms ease;
+}
+tbody tr:hover {
+  background: #f8faff;
+}
+.text-button:hover {
+  background: #eef4ff;
+  border-radius: var(--radius-sm);
+}
+.text-button.danger:hover {
+  background: #fff0f0;
+}
+.notice {
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.form-help,
+label small {
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+.empty-state h3 {
+  margin: 10px 0 6px;
+  font-size: 15px;
+}
+.empty-state p {
+  max-width: 420px;
+  margin-inline: auto;
+}
+.panel-toolbar .search {
+  margin-left: auto;
+}
+.dialog-footer {
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .toolbar-actions {
+    gap: 6px;
+  }
+  .panel-toolbar {
+    padding: 14px;
+  }
+  .panel-toolbar .search {
+    width: 100%;
+  }
+  .form-panel {
+    padding: 16px;
+  }
+  .settings-list {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .settings-list dd {
+    margin-bottom: 12px;
+    overflow-wrap: anywhere;
+  }
+  .notice {
+    padding: 10px 12px;
+  }
+}
+
+/* 窄屏横向查看完整记录，避免操作栏压成多行而撑高每条记录。 */
+.catalog-records > table {
+  min-width: 680px;
+}
+.catalog-records td {
+  overflow-wrap: anywhere;
+  max-width: 360px;
+}
+.catalog-records td:first-child {
+  min-width: 140px;
+}
+.catalog-records th,
+.catalog-records td:last-child {
+  white-space: nowrap;
+}
+.datasource-records > table {
+  min-width: 900px;
+}
+.datasource-records td:last-child {
+  min-width: 280px;
 }

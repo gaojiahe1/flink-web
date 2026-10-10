@@ -163,7 +163,7 @@ public class YamlServiceImpl implements YamlService {
         && ((config.path("high-availability.type").asText("").isBlank()
                 && config.path("high-availability").asText("").isBlank())
             || config.path("high-availability.storageDir").asText("").isBlank()))
-      fail("last-state 模式需要配置 Kubernetes HA 及 HA 存储目录");
+      fail("upgradeMode: last-state 模式需要启用状态存储并配置 Kubernetes HA 及 HA 存储目录");
     podTemplates.normalize(spec);
     for (String key : List.of("podTemplate")) if (spec.has(key)) validatePod(spec.get(key));
     for (String key : List.of("jobManager", "taskManager"))

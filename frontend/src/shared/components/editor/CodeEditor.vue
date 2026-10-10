@@ -3,7 +3,6 @@ import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
 import { EditorState, Compartment } from '@codemirror/state'
 import { yaml } from '@codemirror/lang-yaml'
-import { sql } from '@codemirror/lang-sql'
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { parseDocument } from 'yaml'
 const props = withDefaults(
@@ -19,6 +18,24 @@ const emit = defineEmits<{ 'update:modelValue': [string] }>()
 const host = ref<HTMLElement>(),
   issues = ref<string[]>([])
 const editability = new Compartment()
+const language = new Compartment()
+const languageError = ref('')
+let languageEpoch = 0,
+  disposed = false
+async function updateLanguage() {
+  const epoch = ++languageEpoch
+  languageError.value = ''
+  issues.value = []
+  try {
+    const extension =
+      props.language === 'sql' ? (await import('@codemirror/lang-sql')).sql() : yaml()
+    if (!disposed && epoch === languageEpoch)
+      view?.dispatch({ effects: language.reconfigure(extension) })
+  } catch {
+    if (!disposed && epoch === languageEpoch)
+      languageError.value = '语法高亮加载失败，内容仍可编辑；请刷新页面重试。'
+  }
+}
 let view: EditorView | undefined
 onMounted(() => {
   view = new EditorView({
@@ -27,7 +44,7 @@ onMounted(() => {
       doc: props.modelValue,
       extensions: [
         basicSetup,
-        props.language === 'sql' ? sql() : yaml(),
+        language.of(props.language === 'yaml' ? yaml() : []),
         lintGutter(),
         editability.of([
           EditorState.readOnly.of(props.readonly),
@@ -73,7 +90,14 @@ onMounted(() => {
       ],
     }),
   })
+  void updateLanguage()
 })
+watch(
+  () => props.language,
+  () => {
+    void updateLanguage()
+  },
+)
 watch(
   () => props.modelValue,
   (value) => {
@@ -91,7 +115,10 @@ watch(
       ]),
     }),
 )
-onBeforeUnmount(() => view?.destroy())
+onBeforeUnmount(() => {
+  disposed = true
+  view?.destroy()
+})
 </script>
 <template>
   <div
@@ -100,6 +127,7 @@ onBeforeUnmount(() => view?.destroy())
     :aria-invalid="issues.length > 0"
   >
     <div ref="host" class="code-editor-host"></div>
+    <p v-if="languageError" class="muted" role="status">{{ languageError }}</p>
     <div v-if="issues.length" class="editor-errors" role="alert">{{ issues[0] }}</div>
   </div>
 </template>

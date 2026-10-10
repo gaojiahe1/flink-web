@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 /** 管理作业负责人、业务归属及用户组范围权限；平台角色仍由接口层限制。 */
 @Service
 public class AccessServiceImpl implements AccessService {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(AccessServiceImpl.class);
   private final RecordRepository records;
   private final ObjectMapper mapper;
   private final AuditService audit;
@@ -73,8 +75,17 @@ public class AccessServiceImpl implements AccessService {
 
   /** 对直接 API 调用执行与列表一致的范围校验。 */
   public void require(String resource, String action) {
-    if (!allowed(resource, action))
-      throw new BusinessException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "没有该作业的访问或操作权限");
+    if (!allowed(resource, action)) {
+      var failure =
+          new BusinessException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "没有该作业的访问或操作权限");
+      log.warn(
+          "Resource access denied actor={} resource={} action={}",
+          actor().replaceAll("[\\r\\n\\t]", "_"),
+          resource.replaceAll("[\\r\\n\\t]", "_"),
+          action,
+          failure);
+      throw failure;
+    }
   }
 
   /** 新建作业时登记负责人；同事务调用避免产生无归属的半成品。 */

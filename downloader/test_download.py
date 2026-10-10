@@ -22,6 +22,20 @@ download = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(download)
 
 class DownloadTest(unittest.TestCase):
+    def test_s3_region_and_compatible_signature_configuration(self):
+        with patch.dict(download.os.environ, {"S3_ENDPOINT": "https://storage.example", "AWS_REGION": "cn-north-4"}), patch.object(download.boto3, "client", create=True) as client:
+            client.return_value.get_object.return_value = {"Body": io.BytesIO(b"data")}
+            with download.open_source({"uri": "s3://bucket/path/job.jar"}) as stream:
+                self.assertEqual(stream.read(), b"data")
+            values = client.call_args.kwargs
+            self.assertEqual(values["region_name"], "cn-north-4")
+            self.assertEqual(values["endpoint_url"], "https://storage.example")
+            config = values["config"]
+            options = config if isinstance(config, dict) else config.__dict__
+            self.assertEqual(options["signature_version"], "s3v4")
+            self.assertEqual(options["response_checksum_validation"], "when_required")
+            client.return_value.get_object.assert_called_once_with(Bucket="bucket", Key="path/job.jar")
+
     def test_plugin_bootstrap_needs_no_download(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(download, "BOOTSTRAP_ROOT", pathlib.Path(folder)), patch.dict(download.os.environ, {"ARTIFACT_MANIFEST": "[]", "FLINK_PLUGIN_BOOTSTRAP": "true"}), patch.object(download, "open_source") as transport:
             download.main()

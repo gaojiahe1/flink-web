@@ -29,3 +29,17 @@
 .watermark-fields {
   margin-top: 24px;
 }
+
+@media (max-width: 800px) {
+  .column-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .column-row > input {
+    grid-column: 1 / -1;
+  }
+  .column-row .column-flag {
+    margin-bottom: 0;
+  }
+}

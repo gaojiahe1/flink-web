@@ -78,11 +78,7 @@ public class KubernetesClient {
   public JsonNode call(String method, String path, JsonNode body) {
     long started = System.nanoTime();
     try {
-      if (!Files.isReadable(Path.of(tokenFile)))
-        throw new BusinessException(
-            HttpStatus.SERVICE_UNAVAILABLE,
-            "KUBERNETES_UNAVAILABLE",
-            "未配置 Kubernetes ServiceAccount 凭证");
+      requireToken();
       var request =
           HttpRequest.newBuilder(URI.create(endpoint + path))
               .timeout(Duration.ofSeconds(25))
@@ -103,26 +99,48 @@ public class KubernetesClient {
           (System.nanoTime() - started) / 1_000_000);
       if (response.statusCode() == 404 && method.equals("GET")) return MissingNode.getInstance();
       if (response.statusCode() < 200 || response.statusCode() >= 300) {
-        String code = response.statusCode() == 409 ? "KUBERNETES_CONFLICT" : "KUBERNETES_REJECTED";
+        String code =
+            response.statusCode() == 409
+                ? "KUBERNETES_CONFLICT"
+                : response.statusCode() == 403
+                    ? "KUBERNETES_FORBIDDEN"
+                    : response.statusCode() == 401
+                        ? "KUBERNETES_UNAUTHENTICATED"
+                        : "KUBERNETES_REJECTED";
         HttpStatus status =
             response.statusCode() == 409 ? HttpStatus.CONFLICT : HttpStatus.BAD_GATEWAY;
         // API 错误正文可能包含提交的密钥值，不直接返回给前端。
-        throw new BusinessException(
-            status, code, "Kubernetes 拒绝请求 (HTTP " + response.statusCode() + ")，请检查 CRD、RBAC 及配置");
+        var failure = new BusinessException(status, code, rejection(response.statusCode()));
+        log.warn(
+            "Kubernetes rejected method={} resource={} status={} elapsedMs={}",
+            method,
+            resource(path),
+            response.statusCode(),
+            (System.nanoTime() - started) / 1_000_000,
+            failure);
+        throw failure;
       }
       return mapper.readTree(response.body());
     } catch (BusinessException ex) {
-      log.warn("Kubernetes request failed method={} code={}", method, ex.code());
+      log.warn(
+          "Kubernetes request failed method={} resource={} code={}",
+          method,
+          resource(path),
+          ex.code(),
+          ex);
       throw ex;
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      throw unavailable();
+      log.warn("Kubernetes request interrupted method={} resource={}", method, resource(path), ex);
+      throw unavailable(ex);
     } catch (Exception ex) {
       log.warn(
-          "Kubernetes transport failed method={} errorType={}",
+          "Kubernetes transport failed method={} resource={} errorType={}",
           method,
-          ex.getClass().getSimpleName());
-      throw unavailable();
+          resource(path),
+          ex.getClass().getSimpleName(),
+          ex);
+      throw unavailable(ex);
     }
   }
 
@@ -131,6 +149,7 @@ public class KubernetesClient {
     if (!path.startsWith(core() + "/pods/"))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_LOG_PATH", "日志路径无效");
     try {
+      requireToken();
       var request =
           HttpRequest.newBuilder(URI.create(endpoint + path))
               .timeout(Duration.ofSeconds(15))
@@ -139,31 +158,98 @@ public class KubernetesClient {
               .build();
       var response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
       try (var input = response.body()) {
-        if (response.statusCode() != 200)
-          throw new BusinessException(
-              HttpStatus.BAD_GATEWAY,
-              "LOG_UNAVAILABLE",
-              "日志暂不可用，请检查容器状态及 RBAC (HTTP " + response.statusCode() + ")");
-        return new String(
-            input.readNBytes(Math.min(maximumBytes, 262144)),
-            java.nio.charset.StandardCharsets.UTF_8);
+        if (response.statusCode() != 200) {
+          var failure =
+              new BusinessException(
+                  HttpStatus.BAD_GATEWAY,
+                  "LOG_UNAVAILABLE",
+                  "日志暂不可用；" + rejection(response.statusCode()));
+          log.warn(
+              "Kubernetes log rejected method=GET resource={} status={}",
+              resource(path),
+              response.statusCode(),
+              failure);
+          throw failure;
+        }
+        return readTail(input, Math.max(1, Math.min(maximumBytes, 4 * 1024 * 1024)));
       }
     } catch (BusinessException ex) {
+      log.warn(
+          "Kubernetes log failed method=GET resource={} code={}", resource(path), ex.code(), ex);
       throw ex;
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      throw unavailable();
+      log.warn("Kubernetes log interrupted method=GET resource={}", resource(path), ex);
+      throw unavailable(ex);
     } catch (Exception ex) {
-      throw unavailable();
+      log.warn(
+          "Kubernetes log transport failed method=GET resource={} errorType={}",
+          resource(path),
+          ex.getClass().getSimpleName(),
+          ex);
+      throw unavailable(ex);
     }
   }
 
+  /** 流式保留日志末尾，避免字节上限截掉最新输出；总传输量同时有界。 */
+  private String readTail(java.io.InputStream input, int capacity) throws java.io.IOException {
+    byte[] tail = new byte[capacity], buffer = new byte[8192];
+    int position = 0, size = 0;
+    long received = 0;
+    for (int count; (count = input.read(buffer)) != -1; ) {
+      received += count;
+      if (received > 64L * 1024 * 1024)
+        throw new BusinessException(
+            HttpStatus.BAD_GATEWAY, "LOG_TOO_LARGE", "最近日志超过 64 MiB，请减少查询行数或检查日志轮转");
+      for (int offset = 0; offset < count; ) {
+        int length = Math.min(count - offset, capacity - position);
+        System.arraycopy(buffer, offset, tail, position, length);
+        position = (position + length) % capacity;
+        size = Math.min(capacity, size + length);
+        offset += length;
+      }
+    }
+    byte[] ordered = new byte[size];
+    int first = size == capacity ? position : 0, length = Math.min(size, capacity - first);
+    System.arraycopy(tail, first, ordered, 0, length);
+    System.arraycopy(tail, 0, ordered, length, size - length);
+    int start = 0;
+    // 截断位置可能落在 UTF-8 多字节字符中间，跳过不完整的开头。
+    if (received > capacity) while (start < size && (ordered[start] & 0xc0) == 0x80) start++;
+    return new String(ordered, start, size - start, java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  /** 凭证文件不可读时给出明确错误，不输出文件内容。 */
+  private void requireToken() {
+    if (!Files.isReadable(Path.of(tokenFile)))
+      throw new BusinessException(
+          HttpStatus.SERVICE_UNAVAILABLE,
+          "KUBERNETES_UNAVAILABLE",
+          "未配置可读的 Kubernetes ServiceAccount 凭证");
+  }
+
+  /** 日志只记录资源路径，不记录查询参数、请求正文或上游错误正文。 */
+  private String resource(String path) {
+    String value = path.split("\\?", 2)[0].replaceAll("[\\r\\n\\t]", "_");
+    return value.substring(0, Math.min(value.length(), 512));
+  }
+
+  /** 区分认证、授权和其他 API 拒绝，便于定位具体资源的 RBAC。 */
+  private String rejection(int status) {
+    return switch (status) {
+      case 401 -> "Kubernetes 认证失败 (HTTP 401)，请检查 ServiceAccount 令牌是否有效";
+      case 403 -> "Kubernetes 权限不足 (HTTP 403)，请检查 ServiceAccount 对该资源及操作的 RBAC 授权";
+      default -> "Kubernetes 拒绝请求 (HTTP " + status + ")，请检查资源状态、CRD、RBAC 及配置";
+    };
+  }
+
   /** 生成不泄露端点凭据的 Kubernetes 连接错误。 */
-  private BusinessException unavailable() {
+  private BusinessException unavailable(Throwable cause) {
     return new BusinessException(
         HttpStatus.SERVICE_UNAVAILABLE,
         "KUBERNETES_UNAVAILABLE",
-        "无法连接 Kubernetes API，请检查地址、网络与证书");
+        "无法连接 Kubernetes API，请检查地址、网络与证书",
+        cause);
   }
 
   /** 读取指定作业资源，资源不存在时返回明确的业务错误。 */

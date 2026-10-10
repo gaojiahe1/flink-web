@@ -21,6 +21,7 @@ import { jobsApi } from '../../job-management/api/jobs'
 import { request, jsonBody } from '../../../shared/api/http'
 import { requestId } from '../../../shared/utils/requestId'
 import type { DraftInput } from '../../../shared/types/api'
+import { currentUser } from '../../permission/stores/auth'
 type Catalog = {
   id: string
   name: string
@@ -55,6 +56,39 @@ const options = reactive({
   tmCpu: 1,
 })
 const workspaceId = ref(requestId())
+const entryClasses = ref<string[]>([]),
+  inspectingEntry = ref(false),
+  entryError = ref('')
+let entryEpoch = 0
+watch(
+  () => options.mainArtifactId,
+  async (reference, previous) => {
+    const epoch = ++entryEpoch
+    entryClasses.value = []
+    entryError.value = ''
+    if (!reference) {
+      inspectingEntry.value = false
+      return
+    }
+    if (previous && reference !== previous) options.entryClass = ''
+    inspectingEntry.value = true
+    try {
+      const result = await request<{ entryClasses: string[] }>('/api/artifacts/entry-classes', {
+        method: 'POST',
+        ...jsonBody({ reference }),
+      })
+      if (epoch !== entryEpoch) return
+      entryClasses.value = result.entryClasses || []
+      if (entryClasses.value.length === 1) options.entryClass = entryClasses.value[0]!
+      else if (entryClasses.value.length > 1 && !entryClasses.value.includes(options.entryClass))
+        options.entryClass = ''
+    } catch (e) {
+      if (epoch === entryEpoch) entryError.value = (e as Error).message
+    } finally {
+      if (epoch === entryEpoch) inspectingEntry.value = false
+    }
+  },
+)
 const baseYaml = ref('')
 const yamlOnly = ref(false)
 const formRewriteConfirmed = ref(false)
@@ -104,19 +138,7 @@ const args = ref(''),
   config = ref<Record<string, string>>(
     id.value ? {} : { 'jobmanager.memory.jvm-metaspace.size': '512m' },
   ),
-  method = ref(route.path.includes('/jar/') ? 'form' : 'yaml')
-const jmMetaspace = computed({
-  get: () => config.value['jobmanager.memory.jvm-metaspace.size'] || '256m',
-  set: (value: string) => {
-    config.value = { ...config.value, 'jobmanager.memory.jvm-metaspace.size': value }
-  },
-})
-const tmMetaspace = computed({
-  get: () => config.value['taskmanager.memory.jvm-metaspace.size'] || '256m',
-  set: (value: string) => {
-    config.value = { ...config.value, 'taskmanager.memory.jvm-metaspace.size': value }
-  },
-})
+  method = ref(route.path.includes('/jar/') || route.path === '/jar/new' ? 'form' : 'yaml')
 const templates = ref<Catalog[]>([]),
   images = ref<Catalog[]>([]),
   artifacts = ref<Artifact[]>([])
@@ -137,6 +159,16 @@ onMounted(async () => {
 
     if (id.value) {
       const saved = await jobsApi.get(id.value)
+      const links =
+        await request<Record<string, { type: string; sqlId?: string }>>('/api/development/links')
+      if (links[saved.id]?.type === 'sql') {
+        const sqlId = links[saved.id]?.sqlId
+        if (!sqlId) throw new Error('对应 SQL 草稿不存在或没有访问权限，请从 SQL 开发检查关联。')
+        await router.replace({ path: '/sql', query: { draft: sqlId } })
+        return
+      }
+      if (currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)))
+        await request('/api/development/jar/jobs/' + saved.id + '/open', { method: 'POST' })
       deploymentName.value = saved.deploymentName
       workspaceId.value = saved.id
       method.value = 'yaml'
@@ -151,7 +183,8 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  if (route.query.editor === 'jar' && !error.value) await switchMethod('form')
+  if ((route.query.editor === 'jar' || (id.value && !yamlOnly.value)) && !error.value)
+    await switchMethod('form')
 })
 async function switchMethod(next: string) {
   if (
@@ -359,7 +392,7 @@ async function save(deploy = false) {
     Object.assign(form, saved)
     deploymentName.value = saved.deploymentName
     if (deploy) {
-      await router.replace('/jobs/' + saved.id + '/edit')
+      await router.replace('/jar/' + saved.id + '/edit')
       const result = await request<{ state: string; message: string }>(
         '/api/jobs/' + saved.id + '/actions/deploy',
         { method: 'POST', ...jsonBody({ requestId: requestId(), revision: saved.revision }) },
@@ -375,7 +408,7 @@ async function save(deploy = false) {
 }
 </script>
 <template>
-  <RouterLink to="/jobs" class="back-link">← 返回作业列表</RouterLink>
+  <RouterLink to="/jar" class="back-link">← 返回 JAR 开发</RouterLink>
   <PageHeader eyebrow="JOB DEVELOPMENT"
     ><template #title>{{
       id ? '编辑作业' : method === 'form' ? '新建 JAR 作业' : '新建作业'
@@ -490,12 +523,32 @@ async function save(deploy = false) {
           />
           <div class="field-grid">
             <label
-              >入口类<input
+              >入口类<select
+                v-if="entryClasses.length > 1"
+                data-field="entryClass"
+                v-model="options.entryClass"
+                required
+              >
+                <option value="">请选择主 JAR 入口类</option>
+                <option v-for="name in entryClasses" :key="name" :value="name">
+                  {{ name }}
+                </option></select
+              ><input
+                v-else
                 data-field="entryClass"
                 v-model="options.entryClass"
                 pattern="[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*"
-                placeholder="com.example.Main" /><HelpTip
-                text="留空时使用 JAR Manifest 中的入口类。" /></label
+                placeholder="com.example.Main"
+              /><HelpTip
+                text="自动识别主 JAR 的入口类；一个入口自动填入，多个入口请选择。识别失败时可手动填写。"
+              /><small v-if="inspectingEntry" class="muted" role="status"
+                >正在识别主 JAR 入口类…</small
+              ><small v-if="entryError" class="field-error" role="alert">{{ entryError }}</small
+              ><small
+                v-else-if="options.mainArtifactId && !inspectingEntry && !entryClasses.length"
+                class="muted"
+                >未发现入口类，可手动填写或使用 JAR Manifest 默认入口。</small
+              ></label
             ><label
               >程序参数<textarea
                 data-field="args"
@@ -551,14 +604,6 @@ async function save(deploy = false) {
                 label="TaskManager 内存"
               />
             </div>
-            <div class="resource-pair resource-memory">
-              <MemoryInput v-model="jmMetaspace" label="JobManager Metaspace" />
-              <MemoryInput v-model="tmMetaspace" label="TaskManager Metaspace" />
-            </div>
-            <p class="muted">
-              总内存包含堆、Metaspace 和其他开销。Flink UI 报 Metaspace 错误时，可先将 JobManager
-              Metaspace 调至 512 MB、总内存调至 2 GB，保存并重新部署。
-            </p>
             <div class="resource-pair resource-cpu">
               <label
                 >JobManager CPU<input

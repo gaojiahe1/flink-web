@@ -86,7 +86,8 @@ public class FlinkUiServiceImpl implements FlinkUiService {
               id,
               job.deploymentName(),
               upstreamPath,
-              upstream.statusCode());
+              upstream.statusCode(),
+              new IOException("Flink REST returned HTTP " + upstream.statusCode()));
           response.setHeader("X-Flink-UI-Error", "upstream");
         }
         response.setStatus(upstream.statusCode());
@@ -100,7 +101,8 @@ public class FlinkUiServiceImpl implements FlinkUiService {
             log.warn(
                 "Flink UI unavailable: JobManager Metaspace exhausted jobId={} deployment={}",
                 id,
-                job.deploymentName());
+                job.deploymentName(),
+                new IOException("JobManager returned Metaspace error"));
             response.setHeader("X-Flink-UI-Error", "metaspace");
             response.setContentType("text/html;charset=UTF-8");
             response
@@ -141,15 +143,22 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       }
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      throw unavailable();
+      log.warn(
+          "Flink UI proxy interrupted jobId={} deployment={} path={}",
+          id,
+          job.deploymentName(),
+          upstreamPath,
+          ex);
+      throw unavailable(ex);
     } catch (IOException ex) {
       log.warn(
           "Flink UI proxy transport failed jobId={} deployment={} path={} errorType={}",
           id,
           job.deploymentName(),
           upstreamPath,
-          ex.getClass().getSimpleName());
-      if (!response.isCommitted()) throw unavailable();
+          ex.getClass().getSimpleName(),
+          ex);
+      if (!response.isCommitted()) throw unavailable(ex);
     }
   }
 
@@ -178,10 +187,11 @@ public class FlinkUiServiceImpl implements FlinkUiService {
   }
 
   /** 生成不泄露内部网络细节的代理不可用异常。 */
-  private BusinessException unavailable() {
+  private BusinessException unavailable(Throwable cause) {
     return new BusinessException(
         HttpStatus.BAD_GATEWAY,
         "FLINK_UI_UNAVAILABLE",
-        "Flink UI 不可访问，请确认 JobManager 和 REST Service 已就绪");
+        "Flink UI 不可访问，请确认 JobManager 和 REST Service 已就绪",
+        cause);
   }
 }

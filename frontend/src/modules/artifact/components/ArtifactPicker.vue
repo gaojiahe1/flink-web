@@ -18,6 +18,7 @@ const props = defineProps<{
   category: 'main' | 'dependency'
   exclude?: string
   disabled?: boolean
+  runner?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [string | string[]]
@@ -28,7 +29,9 @@ const uploading = ref(false),
   busy = ref(false),
   error = ref(''),
   query = ref(''),
-  scope = ref('job')
+  scope = ref(props.runner ? 'runner' : props.scopeId ? 'job' : 'shared')
+const source = ref('s3'),
+  address = ref('')
 const root = ref(''),
   prefix = ref(''),
   bucket = ref(''),
@@ -40,9 +43,22 @@ const visibleDirs = computed(() =>
     d.slice(prefix.value.length).toLowerCase().includes(query.value.toLowerCase()),
   ),
 )
-const label = computed(() => (props.category === 'main' ? '主 JAR 文件' : '附加依赖与配置文件'))
-const base = computed(
-  () => root.value + (scope.value === 'job' ? 'jobs/' + props.scopeId + '/' : 'shared/'),
+const label = computed(() =>
+  props.runner
+    ? 'SQL Runner 文件'
+    : props.category === 'main'
+      ? '主 JAR 文件'
+      : '附加依赖与配置文件',
+)
+const base = computed(() =>
+  scope.value === 'all'
+    ? ''
+    : root.value +
+      (scope.value === 'runner'
+        ? 'shared/sql-runner/'
+        : scope.value === 'job'
+          ? 'jobs/' + props.scopeId + '/'
+          : 'shared/'),
 )
 const selectedIds = computed(() =>
   Array.isArray(props.modelValue) ? props.modelValue : props.modelValue ? [props.modelValue] : [],
@@ -69,7 +85,17 @@ const breadcrumbs = computed(() => {
   const relative = prefix.value.startsWith(base.value) ? prefix.value.slice(base.value.length) : ''
   const parts = relative.split('/').filter(Boolean)
   return [
-    { name: scope.value === 'job' ? '作业文件' : '共享文件', path: base.value },
+    {
+      name:
+        scope.value === 'runner'
+          ? 'SQL Runner'
+          : scope.value === 'all'
+            ? '全部文件'
+            : scope.value === 'job'
+              ? '作业文件'
+              : '共享文件',
+      path: base.value,
+    },
     ...parts.map((name, i) => ({ name, path: base.value + parts.slice(0, i + 1).join('/') + '/' })),
   ]
 })
@@ -90,7 +116,7 @@ async function load(path = base.value, append = false) {
   busy.value = true
   error.value = ''
   try {
-    if (!root.value) {
+    if (!bucket.value) {
       const defaults = await request<{ rootPrefix: string; bucket: string }>(
         '/api/artifacts/defaults',
       )
@@ -133,7 +159,7 @@ async function load(path = base.value, append = false) {
 watch(
   () => [props.scopeId, scope.value],
   () => {
-    if (props.scopeId || scope.value === 'shared') void load()
+    void load()
   },
   { immediate: true },
 )
@@ -152,6 +178,40 @@ function remove(id: string) {
     'update:modelValue',
     props.category === 'main' ? '' : selectedIds.value.filter((v) => v !== id),
   )
+}
+function confirmAddress() {
+  error.value = ''
+  try {
+    const raw = address.value.trim(),
+      uri = new URL(raw)
+    if (
+      !['http:', 'https:', 's3:'].includes(uri.protocol) ||
+      !uri.hostname ||
+      uri.username ||
+      uri.password ||
+      uri.search ||
+      uri.hash ||
+      raw.includes('..') ||
+      raw.includes('\\')
+    )
+      throw new Error('请填写不含凭据、查询参数和片段的 HTTP/HTTPS/S3 文件地址')
+    const filename = uri.pathname.split('/').pop() || ''
+    if (
+      !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(filename) ||
+      (props.category === 'main' && !filename.toLowerCase().endsWith('.jar'))
+    )
+      throw new Error(
+        props.category === 'main'
+          ? '地址须指向具体 .jar 文件'
+          : '地址最后一层须为文件名，仅支持字母、数字、点、下划线和连字符',
+      )
+    emit('uploaded', { id: raw, name: filename, filename, uri: raw })
+    if (props.category === 'main') emit('update:modelValue', raw)
+    else emit('update:modelValue', [...new Set([...selectedIds.value, raw])])
+    address.value = ''
+  } catch (e) {
+    error.value = (e as Error).message
+  }
 }
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement
@@ -234,11 +294,55 @@ async function upload(event: Event) {
       </div>
     </div>
 
-    <div class="picker-browser" :aria-busy="busy">
+    <div class="picker-source" role="group" :aria-label="label + '来源'">
+      <button
+        type="button"
+        class="button"
+        :class="{ active: source === 's3' }"
+        :disabled="disabled || uploading"
+        @click="source = 's3'"
+      >
+        S3 文件
+      </button>
+      <button
+        type="button"
+        class="button"
+        :class="{ active: source === 'address' }"
+        :disabled="disabled || uploading"
+        @click="source = 'address'"
+      >
+        HTTP / S3 地址
+      </button>
+    </div>
+    <div v-if="source === 'address'" class="picker-browser external-file">
+      <label
+        >{{ label }}地址<input
+          v-model="address"
+          :aria-label="label + '地址'"
+          :disabled="disabled || uploading"
+          placeholder="https://host/path/file.jar 或 s3://bucket/path/file.jar"
+          @keydown.enter.prevent="confirmAddress"
+      /></label>
+      <p class="muted">
+        填写具体文件地址后确认；文件名取地址最后一层。HTTP 主机须在平台下载白名单中，S3
+        使用平台连接与凭据。
+      </p>
+      <button
+        type="button"
+        class="button"
+        :disabled="disabled || uploading || !address.trim()"
+        @click="confirmAddress"
+      >
+        确认文件地址
+      </button>
+    </div>
+    <div v-else class="picker-browser" :aria-busy="busy">
       <div class="browser-toolbar">
         <select v-model="scope" aria-label="文件目录" :disabled="disabled || uploading || busy">
-          <option value="job">当前作业目录</option>
+          <option v-if="scopeId" value="job">当前作业目录</option>
           <option value="shared">共享目录</option>
+          <option v-if="runner" value="runner">SQL Runner 列表</option>
+          <option value="all">全部文件</option>
         </select>
         <span class="browser-count">{{ dirs.length }} 个目录 · {{ files.length }} 个文件</span>
       </div>
@@ -307,7 +411,7 @@ async function upload(event: Event) {
           ><small>{{ fileSize(a.size) }}</small>
         </label>
         <div v-if="!visibleDirs.length && !choices.length" class="browser-empty">
-          <Folder :size="26" aria-hidden="true" />
+          <Folder :size="20" aria-hidden="true" />
           <span>{{
             busy ? '正在读取目录…' : query ? '没有匹配的文件或目录' : '当前目录暂无可选文件'
           }}</span>
@@ -338,7 +442,9 @@ async function upload(event: Event) {
         selected.length
           ? '已选择 ' + selected.length + ' 个文件'
           : category === 'main'
-            ? '当前使用镜像内 JAR 路径'
+            ? runner
+              ? '请选择 Runner 或确认 HTTP/S3 地址'
+              : '当前使用镜像内 JAR 路径'
             : '尚未选择附加文件'
       }}</small>
       <button
@@ -348,7 +454,7 @@ async function upload(event: Event) {
         :disabled="disabled || uploading"
         @click="emit('update:modelValue', '')"
       >
-        改用镜像内 JAR
+        {{ runner ? '清除选择' : '改用镜像内 JAR' }}
       </button>
     </div>
     <div class="file-chips">
@@ -370,6 +476,28 @@ async function upload(event: Event) {
 <style scoped>
 .picker-heading {
   flex-wrap: wrap;
+}
+.picker-source {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.picker-source .button {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.picker-source .active {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--color-primary-soft, #eef5ff);
+}
+.external-file .button {
+  justify-self: start;
+}
+.external-file p {
+  margin: 0;
+  line-height: 1.6;
 }
 .picker-actions {
   display: flex;
@@ -510,8 +638,8 @@ async function upload(event: Event) {
 .browser-empty {
   display: grid;
   place-items: center;
-  gap: 8px;
-  padding: 22px 8px;
+  gap: 4px;
+  padding: 10px 8px;
   color: var(--muted);
   font-size: 13px;
   text-align: center;

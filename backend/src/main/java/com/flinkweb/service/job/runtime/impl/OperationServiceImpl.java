@@ -96,7 +96,7 @@ public class OperationServiceImpl implements OperationService {
         .createObjectNode()
         .put("valid", true)
         .put("dryRun", dryRun)
-        .put("yaml", yaml.dump(resource))
+        .put("yaml", yaml.dump(variables.preview(resource)))
         .put("message", dryRun ? "本地验证及 Kubernetes dry-run 通过" : "本地验证通过；提交时仍需 Kubernetes dry-run");
   }
 
@@ -345,7 +345,7 @@ public class OperationServiceImpl implements OperationService {
             client.call(method, path + "?dryRun=All&fieldValidation=Strict", resource);
         assertPreserved(resource.path("spec"), checked.path("spec"));
         if (rendered != null) {
-          var release = releases.capture(job, resource);
+          var release = releases.capture(job, variables.preview(resource));
           operation.put("releaseId", release.path("id").asText());
           metadata
               .withObject("/annotations")
@@ -363,7 +363,12 @@ public class OperationServiceImpl implements OperationService {
       log.info("Operation accepted jobId={} action={} requestId={}", id, action, key);
     } catch (BusinessException ex) {
       log.warn(
-          "Operation rejected jobId={} action={} requestId={} code={}", id, action, key, ex.code());
+          "Operation rejected jobId={} action={} requestId={} code={}",
+          id,
+          action,
+          key,
+          ex.code(),
+          ex);
       operation
           .put("state", ex.code().equals("KUBERNETES_UNAVAILABLE") ? "UNKNOWN" : "REJECTED")
           .put("message", ex.getMessage())

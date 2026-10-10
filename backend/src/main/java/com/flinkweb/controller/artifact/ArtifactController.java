@@ -14,10 +14,20 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/artifacts")
 public class ArtifactController {
   private final ArtifactService s3;
+  private final com.flinkweb.service.artifact.support.JarEntryInspector inspector;
 
   /** 注入制品业务服务，供上传、目录及下载接口使用。 */
-  public ArtifactController(ArtifactService s3) {
+  public ArtifactController(
+      ArtifactService s3, com.flinkweb.service.artifact.support.JarEntryInspector inspector) {
     this.s3 = s3;
+    this.inspector = inspector;
+  }
+
+  /** 静态分析用户选中的主 JAR 入口类，不执行用户代码。 */
+  @PostMapping("/entry-classes")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> entryClasses(@RequestBody ObjectNode input) {
+    return ApiResponse.ok(inspector.inspect(input.path("reference").asText()));
   }
 
   /** 接收 S3 目录和分页参数，返回制品目录。 */
@@ -39,13 +49,22 @@ public class ArtifactController {
 
   /** 返回不含凭证的 S3 默认连接配置。 */
   @GetMapping("/defaults")
-  public ApiResponse<ObjectNode> defaults() { return ApiResponse.ok(s3.defaults()); }
+  public ApiResponse<ObjectNode> defaults() {
+    return ApiResponse.ok(s3.defaults());
+  }
 
   /** 创建允许范围内的对象目录。 */
   @PostMapping("/directories")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
   public ApiResponse<ObjectNode> mkdir(@RequestBody ObjectNode input) {
     return ApiResponse.ok(s3.mkdir(input.path("prefix").asText()));
+  }
+
+  /** 删除明确选中的目录及当前对象，禁止删除桶根目录。 */
+  @DeleteMapping("/directories")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> deleteDirectory(@RequestParam String prefix) {
+    return ApiResponse.ok(s3.deleteDirectory(prefix));
   }
 
   /** 删除明确指定的单个对象。 */

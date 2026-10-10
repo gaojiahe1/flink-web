@@ -435,18 +435,35 @@ test('旧作业复制可选择 JAR 表单，解析失败保留副本 YAML', asyn
   await expect(page.getByRole('textbox', {name:'YAML 编辑器',exact:true})).toContainText('unknown/legacy:old')
 })
 
-test('历史 Metaspace 回填且调整后进入 Flink 配置', async ({page}) => {
+test('移除 Metaspace 独立输入仍保留历史 Flink 配置', async ({page}) => {
   const legacy = source.replace('  job:', '  flinkConfiguration:\n    jobmanager.memory.jvm-metaspace.size: 32m\n  job:')
   const calls = await fixture(page, legacy)
   await page.goto('/#/jobs/job-one/edit')
   await page.getByRole('button', {name:'JAR 表单',exact:true}).click()
   const metaspace = page.getByRole('spinbutton', {name:'JobManager Metaspace',exact:true})
-  await expect(metaspace).toHaveValue('32')
-  await metaspace.fill('512')
+  await expect(metaspace).toHaveCount(0)
+  await expect(page.getByRole('spinbutton', {name:'TaskManager Metaspace',exact:true})).toHaveCount(0)
   await page.getByRole('spinbutton', {name:'JobManager 内存',exact:true}).fill('2048')
   await page.getByRole('button', {name:'本地验证与预览'}).click()
-  await expect.poll(() => calls.renders.at(-1)?.flinkConfiguration?.['jobmanager.memory.jvm-metaspace.size']).toBe('512m')
+  await expect.poll(() => calls.renders.at(-1)?.flinkConfiguration?.['jobmanager.memory.jvm-metaspace.size']).toBe('32m')
   expect(calls.renders.at(-1)?.jmMemory).toBe('2048m')
-  await metaspace.scrollIntoViewIfNeeded()
-  await page.screenshot({path:'test-results/metaspace-form.png'})
+})
+
+
+test('S3 读取失败不显示空目录，恢复后清除失败提示并启用上传', async ({ page }) => {
+  await fixture(page)
+  let failed = true
+  await page.route('**/api/artifacts/objects?*', async route => {
+    if (failed) await route.fulfill({ status: 503, json: { error: { code: 'S3_UNCONFIGURED', message: '请配置对象存储' } } })
+    else await route.fulfill({ json: { data: { bucket: 'flink-web', rootPrefix: 'artifacts/', prefix: 'artifacts/', directories: [], objects: [] } } })
+  })
+  await page.goto('/#/artifacts')
+  await expect(page.getByRole('heading', { name: '无法读取当前目录' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '当前目录为空' })).toHaveCount(0)
+  await expect(page.getByLabel('上传文件', { exact: true })).toBeDisabled()
+  failed = false
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '当前目录为空' })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByLabel('上传文件', { exact: true })).toBeEnabled()
 })

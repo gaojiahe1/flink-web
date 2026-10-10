@@ -17,6 +17,7 @@ test('JAR form preserves container JAR and arguments without artifact registrati
   await login(page)
   const suffix=Date.now(), image='jar-image-'+suffix
   await catalog(page,'images',image,{name:'Browser Flink',repository:'registry.test/flink',version:'1.20',flinkVersion:'1.20'})
+  await page.goto('/#/jar')
   await page.getByRole('link',{name:'＋ 新建 JAR 作业',exact:true}).click()
   await expect(page.getByRole('heading',{name:'新建 JAR 作业'})).toBeVisible()
   await page.getByLabel('作业名称',{exact:false}).first().fill('jar-e2e-'+suffix)
@@ -37,17 +38,17 @@ test('JAR form preserves container JAR and arguments without artifact registrati
 test('SQL studio saves, checks and publishes without background cluster requests', async ({ page }) => {
   await login(page)
   const suffix=Date.now(), image='sql-image-'+suffix, name='sql-e2e-'+suffix
-  await catalog(page,'images',image,{name:'SQL Runtime',repository:'registry.test/flink-sql',version:'1.20',flinkVersion:'1.20'})
+  await catalog(page,'images',image,{name:'SQL Runtime',repository:'registry.test/flink',version:'1.20',flinkVersion:'1.20'})
   let refreshes=0
   page.on('request',req=>{ if(req.url().endsWith('/api/jobs/refresh')) refreshes++ })
   await page.getByRole('link',{name:'SQL 开发',exact:true}).click()
   await expect(page.getByRole('heading',{name:'SQL 开发',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'部署配置',exact:true}).click()
   await page.getByLabel('SQL 作业名称',{exact:false}).fill(name)
-  await page.getByLabel('运行镜像',{exact:false}).selectOption(image)
+  await page.getByRole('combobox',{name:'运行镜像',exact:true}).selectOption(image)
   await page.getByLabel('SQL 编辑器',{exact:true}).fill("CREATE TEMPORARY TABLE output_table (n INT) WITH ('connector' = 'blackhole');\nINSERT INTO output_table VALUES (1);")
   await page.getByRole('button',{name:'SQL 检查',exact:true}).click()
-  await expect(page.getByRole('status')).toContainText('仅通过基础检查')
+  await expect(page.locator('.sql-diagnostics')).toContainText('仅通过基础检查')
   await page.getByRole('button',{name:'保存 SQL',exact:true}).click()
   await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
   await page.getByRole('button',{name:'预览 YAML',exact:true}).click()

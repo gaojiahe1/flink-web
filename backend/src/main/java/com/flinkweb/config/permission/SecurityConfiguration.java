@@ -22,6 +22,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfiguration {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(SecurityConfiguration.class);
+
   /** 创建 BCrypt 密码编码器，用于密码存储与登录校验。 */
   @Bean
   PasswordEncoder passwordEncoder() {
@@ -52,11 +55,27 @@ public class SecurityConfiguration {
             errors ->
                 errors
                     .authenticationEntryPoint(
-                        (req, res, ex) ->
-                            write(mapper, res, 401, ApiResponse.fail("UNAUTHENTICATED", "请先登录")))
+                        (req, res, ex) -> {
+                          log.warn(
+                              "Authentication required method={} resource={}",
+                              req.getMethod(),
+                              safe(req.getRequestURI()),
+                              ex);
+                          write(mapper, res, 401, ApiResponse.fail("UNAUTHENTICATED", "请先登录"));
+                        })
                     .accessDeniedHandler(
-                        (req, res, ex) ->
-                            write(mapper, res, 403, ApiResponse.fail("FORBIDDEN", "请求无权限或安全令牌失效"))))
+                        (req, res, ex) -> {
+                          log.warn(
+                              "Security access denied method={} resource={} actor={} errorType={}",
+                              req.getMethod(),
+                              safe(req.getRequestURI()),
+                              req.getUserPrincipal() == null
+                                  ? "anonymous"
+                                  : safe(req.getUserPrincipal().getName()),
+                              ex.getClass().getSimpleName(),
+                              safeDenied(ex));
+                          write(mapper, res, 403, ApiResponse.fail("FORBIDDEN", "请求无权限或安全令牌失效"));
+                        }))
         .formLogin(
             form ->
                 form.loginProcessingUrl("/api/auth/login")
@@ -86,5 +105,30 @@ public class SecurityConfiguration {
     response.setContentType("application/json");
     response.setCharacterEncoding("UTF-8");
     mapper.writeValue(response.getWriter(), body);
+  }
+
+  /** 只记录路径和身份，去除换行并限制长度；不记录查询参数或安全令牌。 */
+  private static String safe(String value) {
+    String text = value.replaceAll("[\\r\\n\\t]", "_");
+    return text.substring(0, Math.min(text.length(), 512));
+  }
+
+  /** CSRF 异常消息会带入实际令牌，遮蔽令牌但保留异常类型、全部栈帧与原因链。 */
+  private static org.springframework.security.access.AccessDeniedException safeDenied(
+      org.springframework.security.access.AccessDeniedException failure) {
+    org.springframework.security.access.AccessDeniedException copy;
+    if (failure instanceof org.springframework.security.web.csrf.InvalidCsrfTokenException) {
+      copy =
+          new org.springframework.security.web.csrf.InvalidCsrfTokenException(
+              new org.springframework.security.web.csrf.DefaultCsrfToken(
+                  "X-CSRF-TOKEN", "_csrf", "[REDACTED]"),
+              "[REDACTED]");
+    } else if (failure instanceof org.springframework.security.web.csrf.MissingCsrfTokenException) {
+      copy = new org.springframework.security.web.csrf.MissingCsrfTokenException("[REDACTED]");
+    } else return failure;
+    copy.setStackTrace(failure.getStackTrace());
+    if (failure.getCause() != null) copy.initCause(failure.getCause());
+    for (Throwable suppressed : failure.getSuppressed()) copy.addSuppressed(suppressed);
+    return copy;
   }
 }

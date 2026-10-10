@@ -14,8 +14,12 @@ RUN yum install -y nginx shadow-utils \
     && useradd --uid 10001 --gid 10001 --no-create-home flinkweb
 COPY nginx-main.conf /etc/nginx/nginx.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.sh /usr/local/bin/flink-web-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/flink-web-entrypoint.sh \
+    && chmod 755 /usr/local/bin/flink-web-entrypoint.sh
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080
 
 USER 10001:10001
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/flink-web-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

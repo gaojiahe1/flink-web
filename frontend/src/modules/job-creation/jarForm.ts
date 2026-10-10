@@ -59,10 +59,13 @@ export function hydrateJar(
       !Array.isArray(value) ||
       value.some(
         (v: any) =>
-          typeof v.uri !== 'string' || !v.uri.startsWith('s3://') || !v.filename || v.tokenEnv,
+          typeof v.uri !== 'string' ||
+          !/^(https?|s3):\/\//.test(v.uri) ||
+          !v.filename ||
+          v.tokenEnv,
       )
     )
-      throw new Error('历史下载配置不能映射到 S3 文件选择')
+      throw new Error('历史下载配置不能映射到 HTTP/S3 文件选择')
     if (manifest && JSON.stringify(value) !== JSON.stringify(manifest))
       throw new Error('JM/TM 下载配置不一致')
     manifest = value
@@ -70,10 +73,12 @@ export function hydrateJar(
   const references = (manifest || [])
     .filter((item) => !item.managedPlugin)
     .map((item) => {
+      if (/^https?:\/\//.test(item.uri))
+        return { id: item.uri, filename: item.filename, uri: item.uri }
       const match = /^s3:\/\/[^/]+\/(.+)$/.exec(item.uri)
       if (!match) throw new Error('对象地址无法解析')
-      if (!storage || !item.uri.startsWith('s3://' + storage.bucket + '/' + storage.rootPrefix))
-        throw new Error('历史文件不在当前对象存储范围内，请使用 YAML 修改')
+      if (!storage || !item.uri.startsWith('s3://' + storage.bucket + '/'))
+        return { id: item.uri, filename: item.filename, uri: item.uri }
       return { id: 's3:' + match[1], filename: item.filename, uri: item.uri }
     })
   const main = references.find(

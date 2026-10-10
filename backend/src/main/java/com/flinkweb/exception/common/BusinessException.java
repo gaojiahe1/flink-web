@@ -9,7 +9,12 @@ public class BusinessException extends RuntimeException {
 
   /** 保存 HTTP 状态、业务错误码及用户可读说明。 */
   public BusinessException(HttpStatus status, String code, String message) {
-    super(message);
+    this(status, code, message, null);
+  }
+
+  /** 保存原始异常链，供后端日志定位根因；客户端仍只收到业务说明。 */
+  public BusinessException(HttpStatus status, String code, String message, Throwable cause) {
+    super(message, cause);
     this.status = status;
     this.code = code;
   }

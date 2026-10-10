@@ -17,6 +17,7 @@ public class FormServiceImpl implements FormService {
   private final ObjectMapper mapper;
   private final PlatformProperties properties;
   private final ArtifactPodBuilder artifacts;
+  private final com.flinkweb.service.artifact.support.ArtifactReferences references;
   private final com.flinkweb.service.job.creation.support.S3PluginPodBuilder s3Plugin;
 
   /** 注入模板、镜像及制品渲染依赖，并读取工作负载默认参数。 */
@@ -26,6 +27,7 @@ public class FormServiceImpl implements FormService {
       ObjectMapper mapper,
       PlatformProperties properties,
       ArtifactPodBuilder artifacts,
+      com.flinkweb.service.artifact.support.ArtifactReferences references,
       com.flinkweb.service.job.creation.support.S3PluginPodBuilder s3Plugin) {
     this.s3Plugin = s3Plugin;
     this.yaml = yaml;
@@ -33,6 +35,7 @@ public class FormServiceImpl implements FormService {
     this.mapper = mapper;
     this.properties = properties;
     this.artifacts = artifacts;
+    this.references = references;
   }
 
   /** 读取模板和镜像版本，填入表单参数、PodTemplate 及制品下载配置，返回 YAML。 */
@@ -110,6 +113,10 @@ public class FormServiceImpl implements FormService {
   /** 在生成 YAML 前校验表单字段，避免非整数并行度被隐式截断。 */
   private void checkInput(ObjectNode input) {
     if (input.path("imageId").asText().isBlank()) yaml.fail("请选择已登记的运行镜像");
+    if ("savepoint".equals(input.path("upgradeMode").asText())
+        && input.at("/flinkConfiguration/state.savepoints.dir").asText().isBlank()
+        && input.at("/flinkConfiguration/execution.checkpointing.savepoint-dir").asText().isBlank())
+      yaml.fail("upgradeMode: savepoint 模式需要配置 Savepoint 存储目录；无状态作业请选择 stateless");
     for (String key : java.util.List.of("parallelism", "slots")) {
       JsonNode value = input.get(key);
       if (value != null
@@ -155,10 +162,7 @@ public class FormServiceImpl implements FormService {
     for (JsonNode id : result) if (!unique.add(id.asText())) yaml.fail("主 JAR 和附加依赖不能重复选择");
     if (!main.isBlank() || (input.has("artifactIds") && !result.isEmpty())) {
       String reference = result.get(0).asText();
-      String filename =
-          reference.startsWith("s3:")
-              ? reference.substring(3)
-              : records.require("artifacts", reference).path("filename").asText();
+      String filename = references.describe(reference).path("filename").asText();
       if (!filename.toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
         yaml.fail("主制品必须是 .jar 文件；源码和配置文件只能作为附加文件");
     }

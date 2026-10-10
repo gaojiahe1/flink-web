@@ -239,6 +239,46 @@ class WorkbenchIntegrationTest {
     verifyNoInteractions(kubernetes);
   }
 
+  /** 已轮换的历史密钥也不能作为环境变量字面值进入发布历史。 */
+  @Test
+  void releaseManifestMasksHistoricalEnvironmentValues() {
+    var job = draft();
+    var resource = yaml.parse(job.yaml());
+    resource
+        .withObject("/spec/podTemplate/spec")
+        .putArray("containers")
+        .addObject()
+        .put("name", "flink-main-container")
+        .putArray("env")
+        .addObject()
+        .put("name", "PASSWORD")
+        .put("value", "historical-secret-no-longer-in-config");
+    var captured = releases.capture(job, resource);
+    assertThat(captured.toString()).doesNotContain("historical-secret-no-longer-in-config");
+    assertThat(resource.toString()).contains("historical-secret-no-longer-in-config");
+  }
+
+  /** 停止前的原配置加密保存，重建仍能还原当时密钥而非未发布草稿。 */
+  @Test
+  void stopSnapshotEncryptsLiteralCredentialsAndRestoresOriginalConfiguration() {
+    var job = draft();
+    var resource = savepointStopFixture(job);
+    resource
+        .withObject("/spec/podTemplate/spec")
+        .putArray("containers")
+        .addObject()
+        .put("name", "flink-main-container")
+        .putArray("env")
+        .addObject()
+        .put("name", "PASSWORD")
+        .put("value", "deployed-secret-at-stop");
+    stops.stop(job.id(), "stateless", resource);
+    var stored = records.require("stop-intents", job.id());
+    assertThat(stored.has("encryptedDeployment")).isTrue();
+    assertThat(stored.toString()).doesNotContain("deployed-secret-at-stop");
+    assertThat(stops.restartResource(job.id()).toString()).contains("deployed-secret-at-stop");
+  }
+
   /** SQL 保存历史恢复形成新修订且不更改另一个 SQL 草稿。 */
   @Test
   void sqlRestoreCreatesANewRevisionWithoutPublishing() {
@@ -343,11 +383,15 @@ class WorkbenchIntegrationTest {
         .addObject()
         .put("kind", "FlinkDeployment")
         .put("uid", "uid-" + job.id());
-    when(kubernetes.text(anyString(), eq(262144)))
+    when(kubernetes.text(anyString(), eq(4 * 1024 * 1024)))
         .thenReturn("password=should-not-show Bearer hidden-token https://user:secret@host/");
     String text = diagnostics.log(job.id(), "pod-test", "main", 10000, false).path("text").asText();
     assertThat(text).doesNotContain("should-not-show", "hidden-token", "user:secret");
-    verify(kubernetes).text(contains("tailLines=1000"), eq(262144));
+    verify(kubernetes).text(contains("tailLines=10000"), eq(4 * 1024 * 1024));
+    verify(kubernetes)
+        .text(
+            argThat(path -> !path.contains("limitBytes=") && path.contains("previous=false")),
+            eq(4 * 1024 * 1024));
   }
 
   /** 编号稳定递增，名称预检不能通过不可见作业绕过唯一性。 */

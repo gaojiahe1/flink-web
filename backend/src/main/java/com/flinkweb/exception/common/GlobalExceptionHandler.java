@@ -1,6 +1,7 @@
 package com.flinkweb.exception.common;
 
 import com.flinkweb.dto.common.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -20,7 +21,16 @@ public class GlobalExceptionHandler {
 
   /** 将业务异常转换为其指定的 HTTP 状态和错误响应。 */
   @ExceptionHandler(BusinessException.class)
-  ResponseEntity<ApiResponse<Void>> business(BusinessException ex) {
+  ResponseEntity<ApiResponse<Void>> business(BusinessException ex, HttpServletRequest request) {
+    if (ex.status().is5xxServerError() || ex.status() == HttpStatus.FORBIDDEN)
+      log.warn(
+          "API failed method={} resource={} actor={} status={} code={}",
+          request.getMethod(),
+          safe(request.getRequestURI()),
+          actor(request),
+          ex.status().value(),
+          ex.code(),
+          ex);
     return ResponseEntity.status(ex.status()).body(ApiResponse.fail(ex.code(), ex.getMessage()));
   }
 
@@ -50,7 +60,14 @@ public class GlobalExceptionHandler {
 
   /** 将越权访问转换为禁止访问响应。 */
   @ExceptionHandler(AccessDeniedException.class)
-  ResponseEntity<ApiResponse<Void>> denied() {
+  ResponseEntity<ApiResponse<Void>> denied(AccessDeniedException ex, HttpServletRequest request) {
+    log.warn(
+        "API access denied method={} resource={} actor={} errorType={}",
+        request.getMethod(),
+        safe(request.getRequestURI()),
+        actor(request),
+        ex.getClass().getSimpleName(),
+        ex);
     return ResponseEntity.status(HttpStatus.FORBIDDEN)
         .body(ApiResponse.fail("FORBIDDEN", "没有执行此操作的权限"));
   }
@@ -58,6 +75,7 @@ public class GlobalExceptionHandler {
   /** 屏蔽数据库异常细节并返回持久化失败响应。 */
   @ExceptionHandler(DataAccessException.class)
   ResponseEntity<ApiResponse<Void>> storage(DataAccessException ex) {
+    log.error("Storage operation failed errorType={}", ex.getClass().getSimpleName());
     // 不记录 SQL 参数或用户提交的 YAML，避免敏感配置进入日志。
     for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
       if (cause instanceof java.sql.SQLException sql) {
@@ -76,5 +94,18 @@ public class GlobalExceptionHandler {
     }
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
         .body(ApiResponse.fail("STORAGE_ERROR", "存储操作失败，请检查服务端存储配置"));
+  }
+
+  /** 记录请求身份，不读取会话令牌或请求参数。 */
+  private String actor(HttpServletRequest request) {
+    return request.getUserPrincipal() == null
+        ? "anonymous"
+        : safe(request.getUserPrincipal().getName());
+  }
+
+  /** 限制日志字段长度并清除换行，避免日志注入。 */
+  private String safe(String value) {
+    String text = value.replaceAll("[\\r\\n\\t]", "_");
+    return text.substring(0, Math.min(text.length(), 512));
   }
 }

@@ -48,6 +48,7 @@ public class ReleaseServiceImpl implements ReleaseService {
     if (manifest.path("metadata").isObject())
       ((ObjectNode) manifest.get("metadata"))
           .remove(List.of("uid", "resourceVersion", "managedFields", "creationTimestamp"));
+    hideEnvironmentValues(manifest);
     entry.set("manifest", manifest);
     entry.put("image", rendered.path("spec").path("image").asText());
     var refs = entry.putArray("configReferences");
@@ -74,6 +75,22 @@ public class ReleaseServiceImpl implements ReleaseService {
       }
     entry.put("contentSha256", sha(entry.toString()));
     return records.save("releases", UUID.randomUUID().toString(), entry, 0);
+  }
+
+  /** 环境变量字面值可能来自已轮换的历史密钥，一律隐藏；引用占位符保留。 */
+  private void hideEnvironmentValues(JsonNode node) {
+    if (node.isObject()) {
+      if (node.path("env").isArray())
+        for (JsonNode variable : node.path("env"))
+          if (variable.isObject()
+              && variable.path("value").isTextual()
+              && !variable
+                  .path("value")
+                  .asText()
+                  .matches("^\\{\\{(?:secret|config):[a-z0-9_.-]+}}$"))
+            ((ObjectNode) variable).put("value", "******");
+      for (JsonNode child : node) hideEnvironmentValues(child);
+    } else if (node.isArray()) for (JsonNode child : node) hideEnvironmentValues(child);
   }
 
   /** 从实际下载器清单中提取精确制品地址和 SHA，不以最新目录记录冒充历史。 */

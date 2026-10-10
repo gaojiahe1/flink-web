@@ -1,40 +1,112 @@
-<script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { X, RefreshCw, Box, Server, CircleAlert } from '@lucide/vue'
+﻿<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { X, RefreshCw, Box, Server, CircleAlert, FileText } from '@lucide/vue'
 import { workbenchApi } from '../api/workbench'
+import LogViewer from '../../../shared/components/editor/LogViewer.vue'
 import { useManualRefresh } from '../../../shared/composables/useManualRefresh'
 import type { JobDraft } from '../../../shared/types/api'
-import type { Diagnostic } from '../../../shared/types/workbench'
-const props = defineProps<{ job: JobDraft }>()
+import type { Diagnostic, DiagnosticPod } from '../../../shared/types/workbench'
+const props = defineProps<{ job: JobDraft; canReadLogs: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-const dialog = ref<HTMLDialogElement>(),
-  data = ref<Diagnostic | null>(null),
+const dialog = ref<HTMLDialogElement>()
+const data = ref<Diagnostic | null>(null),
   error = ref(''),
-  selected = ref('')
+  selected = ref(''),
+  tab = ref('status')
+const container = ref(''),
+  previous = ref(false),
+  log = ref(''),
+  logError = ref(''),
+  logTime = ref(''),
+  logLoaded = ref(false)
+let logEpoch = 0,
+  disposed = false
+const pod = computed(() => data.value?.pods.find((p) => p.name === selected.value))
+function needsAttention(p: DiagnosticPod) {
+  return (
+    p.phase === 'Failed' ||
+    p.states.some(
+      (s) => s.state === 'waiting' || (s.exitCode ?? 0) !== 0 || (!s.init && s.ready === false),
+    )
+  )
+}
+const warnings = computed(() => data.value?.pods.filter(needsAttention).length || 0)
+const time = (value?: string) => (value ? new Date(value).toLocaleString() : '—')
+function clearLog() {
+  logEpoch++
+  log.value = ''
+  logError.value = ''
+  logTime.value = ''
+  logLoaded.value = false
+}
+watch(
+  selected,
+  () => {
+    container.value =
+      pod.value?.containers.find((name) => !pod.value?.states.find((s) => s.name === name)?.init) ||
+      pod.value?.containers[0] ||
+      ''
+    previous.value = false
+    clearLog()
+  },
+  { flush: 'sync' },
+)
+watch([container, previous], clearLog, { flush: 'sync' })
 const { refresh, busy, disabled, remaining } = useManualRefresh(async () => {
   error.value = ''
-  data.value = null
+  clearLog()
   try {
     const result = await workbenchApi.diagnostics(props.job.id)
+    if (disposed) return
     data.value = result
     if (!result.pods.some((p) => p.name === selected.value))
       selected.value = result.pods[0]?.name || ''
+    if (!pod.value?.containers.includes(container.value))
+      container.value = pod.value?.containers[0] || ''
   } catch (e) {
-    error.value = (e as Error).message
+    if (!disposed) {
+      error.value = (e as Error).message
+      data.value = null
+    }
   }
 })
-const pod = computed(() => data.value?.pods.find((p) => p.name === selected.value))
-const warnings = computed(
-  () =>
-    data.value?.pods.filter(
-      (p) =>
-        p.phase === 'Failed' ||
-        p.states.some((s) => s.state === 'waiting' || (s.exitCode ?? 0) !== 0),
-    ).length || 0,
-)
+const {
+  refresh: readLog,
+  busy: logBusy,
+  disabled: logDisabled,
+  remaining: logRemaining,
+} = useManualRefresh(async () => {
+  if (!props.canReadLogs || !selected.value || !container.value) return
+  clearLog()
+  const epoch = logEpoch
+  try {
+    const result = await workbenchApi.logs(props.job.id, {
+      pod: selected.value,
+      container: container.value,
+      lines: 10000,
+      previous: previous.value,
+    })
+    if (disposed || epoch !== logEpoch) return
+    log.value = result.text
+    logTime.value = result.queriedAt || new Date().toISOString()
+    logLoaded.value = true
+  } catch (e) {
+    if (!disposed && epoch === logEpoch) logError.value = (e as Error).message
+  }
+})
+function showLog(name: string) {
+  container.value = name
+  previous.value = false
+  tab.value = 'logs'
+  void readLog()
+}
 onMounted(() => {
   dialog.value?.showModal()
   void refresh()
+})
+onUnmounted(() => {
+  disposed = true
+  logEpoch++
 })
 </script>
 <template>
@@ -56,108 +128,172 @@ onMounted(() => {
       </button>
     </header>
     <div class="drawer-summary">
-      <span><Box :size="16" /> {{ data?.pods.length ?? '—' }} 个 Pod</span
-      ><span :class="{ danger: warnings }"><CircleAlert :size="16" /> {{ warnings }} 个待检查</span>
+      <span><Box :size="16" />{{ data?.pods.length ?? '—' }} 个 Pod</span>
+      <span :class="{ danger: warnings }"><CircleAlert :size="16" />{{ warnings }} 个待检查</span>
       <button class="button" :disabled="disabled" @click="refresh">
         <RefreshCw :size="14" />{{
           busy ? '查询中…' : remaining ? remaining + ' 秒后刷新' : '刷新 Pod'
         }}
       </button>
     </div>
-    <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <div class="drawer-scroll">
-      <p v-if="busy" class="empty-state">正在读取 Pod 与容器状态…</p>
-      <template v-else-if="data">
-        <div v-if="data.error" class="notice error">
-          <strong>部署错误</strong>
-          <p class="error-detail">{{ data.error }}</p>
-        </div>
-        <div v-if="!data.pods.length" class="empty-state">
-          <Server :size="32" />
-          <h3>当前没有关联 Pod</h3>
-          <p>资源可能尚未创建或已被删除，请结合部署错误和事件查看。</p>
-        </div>
-        <template v-else>
-          <label class="pod-selector"
-            >选择 Pod<select v-model="selected">
-              <option v-for="p in data.pods" :key="p.name" :value="p.name">
-                {{ p.name }} · {{ p.phase }}
-              </option>
-            </select></label
+      <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+      <div v-if="data?.error" class="notice error">
+        <strong>部署错误</strong>
+        <p class="error-detail">{{ data.error }}</p>
+      </div>
+      <p v-if="busy && !data" class="empty-state">正在读取 Pod 与容器状态…</p>
+      <div v-else-if="data && !data.pods.length" class="empty-state">
+        <Server :size="32" />
+        <h3>当前没有关联 Pod</h3>
+        <p>资源可能尚未创建或已被删除，请结合部署错误和事件查看。</p>
+      </div>
+      <div v-if="data?.pods.length" class="pod-layout">
+        <aside class="pod-list" aria-label="Pod 列表">
+          <h3>关联 Pod</h3>
+          <button
+            v-for="p in data.pods"
+            :key="p.name"
+            class="pod-choice"
+            :class="{ active: selected === p.name }"
+            :aria-pressed="selected === p.name"
+            @click="selected = p.name"
           >
-          <section v-if="pod" class="pod-card">
-            <div class="pod-card-heading">
-              <strong>{{ pod.name }}</strong
-              ><span
-                class="badge"
-                :class="
-                  pod.phase === 'Running'
-                    ? 'running'
-                    : pod.phase === 'Failed'
-                      ? 'failed'
-                      : 'neutral'
-                "
-                >{{ pod.phase }}</span
-              >
-            </div>
-            <p class="muted">
-              节点 {{ pod.node || '尚未调度' }} · 创建时间
-              {{ pod.createdAt ? new Date(pod.createdAt).toLocaleString() : '—' }}
-            </p>
-            <p v-if="pod.message" class="notice error">{{ pod.reason }} {{ pod.message }}</p>
-            <h3>容器状态</h3>
-            <div class="container-list">
-              <article v-for="state in pod.states" :key="state.name">
-                <div>
-                  <strong>{{ state.name }}</strong
-                  ><span class="version-pill">{{ state.init ? '初始化容器' : '运行容器' }}</span
-                  ><span
-                    class="badge"
-                    :class="
-                      state.ready
-                        ? 'running'
-                        : state.reason && state.reason !== 'Completed'
-                          ? 'failed'
-                          : 'neutral'
-                    "
-                    >{{ state.reason || state.state || (state.ready ? 'Ready' : '未就绪') }}</span
-                  >
-                </div>
-                <small
-                  >重启 {{ state.restarts }} 次<span v-if="state.exitCode !== undefined">
-                    · 退出码 {{ state.exitCode }}</span
-                  ></small
-                >
-                <p v-if="state.message" class="error-detail">{{ state.message }}</p>
-              </article>
-              <p v-if="!pod.states.length" class="muted">尚未报告容器状态</p>
-            </div>
-            <details v-if="pod.conditions?.length">
-              <summary>Pod 条件</summary>
-              <p v-for="c in pod.conditions" :key="c.type">
-                <strong>{{ c.type }}：{{ c.status }}</strong
-                ><br />{{ c.reason }} {{ c.message }}
+            <strong>{{ p.name }}</strong
+            ><span
+              class="badge"
+              :class="needsAttention(p) ? 'failed' : p.phase === 'Running' ? 'running' : 'neutral'"
+              >{{ p.phase }}</span
+            >
+            <small
+              >已就绪 {{ p.states.filter((s) => !s.init && s.ready).length }} 个运行容器 · 重启
+              {{ p.states.reduce((n, s) => n + s.restarts, 0) }} 次</small
+            >
+          </button>
+        </aside>
+        <main v-if="pod" class="pod-detail">
+          <div class="pod-detail-heading">
+            <div>
+              <h3>{{ pod.name }}</h3>
+              <p class="muted">
+                节点 {{ pod.node || '尚未调度' }} · 创建 {{ time(pod.createdAt) }}
               </p>
-            </details>
+            </div>
+            <span
+              class="badge"
+              :class="
+                needsAttention(pod) ? 'failed' : pod.phase === 'Running' ? 'running' : 'neutral'
+              "
+              >{{ pod.phase }}</span
+            >
+          </div>
+          <div class="segmented" aria-label="Pod 诊断页签">
+            <button :class="{ active: tab === 'status' }" @click="tab = 'status'">状态与事件</button
+            ><button v-if="canReadLogs" :class="{ active: tab === 'logs' }" @click="tab = 'logs'">
+              <FileText :size="14" />容器日志
+            </button>
+          </div>
+          <template v-if="tab === 'status'">
+            <p v-if="pod.message" class="notice error">{{ pod.reason }} {{ pod.message }}</p>
+            <section class="pod-card">
+              <h3>容器状态</h3>
+              <div class="container-list">
+                <article v-for="state in pod.states" :key="state.name">
+                  <div class="container-heading">
+                    <strong>{{ state.name }}</strong
+                    ><span class="version-pill">{{ state.init ? '初始化容器' : '运行容器' }}</span
+                    ><span
+                      class="badge"
+                      :class="
+                        state.ready
+                          ? 'running'
+                          : state.reason && state.reason !== 'Completed'
+                            ? 'failed'
+                            : 'neutral'
+                      "
+                      >{{ state.reason || state.state || (state.ready ? 'Ready' : '未就绪') }}</span
+                    >
+                  </div>
+                  <small
+                    >重启 {{ state.restarts }} 次<span v-if="state.exitCode !== undefined">
+                      · 退出码 {{ state.exitCode }}</span
+                    ></small
+                  >
+                  <p v-if="state.message" class="error-detail">{{ state.message }}</p>
+                  <button
+                    v-if="canReadLogs"
+                    class="button small"
+                    :disabled="logDisabled || busy"
+                    @click="showLog(state.name)"
+                  >
+                    <FileText :size="14" />查看最新日志
+                  </button>
+                </article>
+                <p v-if="!pod.states.length" class="muted">
+                  尚未报告容器状态，可在容器日志页签选择容器。
+                </p>
+              </div>
+            </section>
+            <section v-if="pod.conditions?.length" class="pod-card">
+              <h3>Pod 条件</h3>
+              <div v-for="c in pod.conditions" :key="c.type" class="condition-row">
+                <strong>{{ c.type }}</strong
+                ><span class="badge" :class="c.status === 'True' ? 'running' : 'neutral'">{{
+                  c.status
+                }}</span>
+                <p v-if="c.reason || c.message" class="muted">{{ c.reason }} {{ c.message }}</p>
+              </div>
+            </section>
+          </template>
+          <section v-else-if="canReadLogs" class="pod-logs">
+            <div class="log-controls">
+              <label
+                >日志容器<select v-model="container">
+                  <option v-for="name in pod.containers" :key="name" :value="name">
+                    {{ name }}
+                  </option>
+                </select></label
+              ><label class="inline-check"
+                ><input v-model="previous" type="checkbox" />上一实例</label
+              ><button
+                class="button"
+                :disabled="!container || logDisabled || busy"
+                @click="readLog"
+              >
+                <RefreshCw :size="14" />{{
+                  logBusy
+                    ? '读取中…'
+                    : logRemaining
+                      ? logRemaining + ' 秒后刷新'
+                      : '读取最新 10000 行'
+                }}
+              </button>
+            </div>
+            <p class="muted log-hint">最多最近 10000 行，内容超过 4 MiB 时保留末尾；按需读取。</p>
+            <p v-if="logError" class="notice error" role="alert">{{ logError }}</p>
+            <p v-if="logBusy" class="empty-state">正在读取容器日志…</p>
+            <template v-else-if="logLoaded"
+              ><p class="muted">日志查询：{{ time(logTime) }}</p>
+              <LogViewer v-if="log" :text="log" />
+              <p v-else class="empty-state">该容器暂无日志输出</p></template
+            >
+            <p v-else-if="!logError" class="empty-state">选择容器后读取最新日志</p>
           </section>
-        </template>
-        <section class="pod-events">
-          <h3>最近事件</h3>
-          <p v-if="!data.events.length" class="muted">暂无事件</p>
-          <article v-for="(event, index) in data.events" :key="index">
-            <span class="badge" :class="event.type === 'Warning' ? 'failed' : 'neutral'">{{
-              event.reason || event.type
-            }}</span
-            ><small>{{ event.time ? new Date(event.time).toLocaleString() : '—' }}</small>
-            <p>{{ event.message }}</p>
-          </article>
-        </section>
-      </template>
+        </main>
+      </div>
+      <section v-if="data && tab === 'status'" class="pod-events">
+        <h3>最近事件</h3>
+        <p v-if="!data.events.length" class="muted">暂无事件</p>
+        <article v-for="(event, index) in data.events" :key="index">
+          <span class="badge" :class="event.type === 'Warning' ? 'failed' : 'neutral'">{{
+            event.reason || event.type
+          }}</span
+          ><small>{{ time(event.time) }}</small>
+          <p>{{ event.message }}</p>
+        </article>
+      </section>
     </div>
-    <footer>
-      最近查询：{{ data?.queriedAt ? new Date(data.queriedAt).toLocaleString() : '尚未查询' }} ·
-      按需刷新
-    </footer>
+    <footer>最近状态查询：{{ data ? time(data.queriedAt) : '尚未查询' }} · 按需刷新</footer>
   </dialog>
 </template>
 <style scoped>
@@ -165,14 +301,15 @@ onMounted(() => {
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0;
-  width: min(780px, 95vw);
+  width: min(1120px, 96vw);
   height: 100dvh;
   max-height: 100dvh;
-  max-width: 95vw;
+  max-width: 96vw;
   padding: 0;
   border: 0;
-  border-radius: 12px 0 0 12px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
   color: var(--text);
+  background: var(--color-background);
 }
 .pod-drawer[open] {
   display: flex;
@@ -184,19 +321,30 @@ onMounted(() => {
 .drawer-heading {
   display: flex;
   justify-content: space-between;
-  padding: 24px;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
 }
 h2 {
   margin: 6px 0;
-  font-size: 19px;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+h3 {
+  font-size: 14px;
+  margin: 0 0 12px;
 }
 .drawer-summary {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 16px 24px;
-  background: var(--surface-soft, #f7f9fc);
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
 }
 .drawer-summary span,
 .drawer-summary button {
@@ -211,32 +359,93 @@ h2 {
   padding: 20px 24px;
   overflow: auto;
   flex: 1;
+  min-height: 0;
 }
-.pod-selector {
-  display: block;
-  margin-bottom: 16px;
+.pod-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
 }
-.pod-card {
-  padding: 16px;
+.pod-list,
+.pod-detail,
+.pod-events {
+  min-width: 0;
+  background: var(--color-surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
+  padding: 16px;
 }
-.pod-card-heading,
-.container-list article > div {
+.pod-choice {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+.pod-choice.active {
+  border-color: var(--blue);
+  background: #f1f6ff;
+}
+.pod-choice strong,
+.pod-choice small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.pod-choice .badge {
+  margin: 8px 0;
+}
+.pod-choice small,
+.container-list small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pod-detail-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.pod-detail-heading h3 {
+  overflow-wrap: anywhere;
+  margin-bottom: 6px;
+}
+.pod-detail-heading p {
+  font-size: 12px;
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.segmented {
+  margin: 12px 0 20px;
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pod-card + .pod-card {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.container-list article {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.container-heading {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   overflow-wrap: anywhere;
 }
-.container-list article {
-  border-top: 1px solid var(--line);
-  padding: 12px 0;
-}
 .container-list small {
   display: block;
-  margin-top: 6px;
-  color: var(--muted);
+  margin: 8px 0;
 }
 .error-detail {
   white-space: pre-wrap;
@@ -245,8 +454,22 @@ h2 {
   overflow: auto;
   font-size: 12px;
 }
+.condition-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.condition-row p {
+  width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .pod-events {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .pod-events article {
   border-left: 2px solid var(--line);
@@ -256,14 +479,59 @@ h2 {
 .pod-events small {
   margin-left: 10px;
   color: var(--muted);
+  font-size: 12px;
 }
 .pod-events p {
   overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.log-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.log-controls > label:first-child {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.log-controls select {
+  width: 100%;
+}
+.log-controls .inline-check {
+  padding-bottom: 7px;
+}
+.log-hint {
+  font-size: 12px;
 }
 footer {
-  padding: 14px 24px;
+  padding: 12px 24px;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
+  background: var(--color-surface);
+}
+@media (max-width: 760px) {
+  .pod-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pod-list {
+    max-height: 240px;
+    overflow: auto;
+  }
+  .drawer-heading,
+  .drawer-summary,
+  .drawer-scroll {
+    padding: 16px;
+  }
+  .drawer-summary {
+    gap: 10px;
+  }
+  .drawer-summary button {
+    margin-left: 0;
+  }
+  .pod-detail {
+    padding: 12px;
+  }
 }
 </style>

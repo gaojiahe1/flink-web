@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 /** 响应显式刷新请求，采集 FlinkDeployment 和快照状态；不创建轮询、监听器或共享缓存。 */
 @Component
 public class FlinkStateCollector {
+  private static final org.slf4j.Logger log =
+      org.slf4j.LoggerFactory.getLogger(FlinkStateCollector.class);
   private final KubernetesClient client;
   private final ObjectMapper mapper;
   private final String namespace;
@@ -31,19 +33,17 @@ public class FlinkStateCollector {
   /** 每次直接查询部署及快照资源，提取运行状态和可纳管信息，不读写状态缓存。 */
   public ObjectNode collect() {
     var result = mapper.createArrayNode();
+    var snapshotQuery = mapper.createObjectNode();
     JsonNode deployments = client.call("GET", client.base(), null);
     if (deployments.isMissingNode())
       throw new BusinessException(
           HttpStatus.SERVICE_UNAVAILABLE,
           "CRD_UNAVAILABLE",
           "未找到目标 namespace 或 FlinkDeployment CRD");
-    JsonNode snapshots =
-        client.call(
-            "GET",
-            "/apis/flink.apache.org/v1beta1/namespaces/" + namespace + "/flinkstatesnapshots",
-            null);
+    JsonNode snapshots = collectSnapshots(snapshotQuery);
     var secrets = yamlSnapshot.secrets();
     for (var item : deployments.path("items")) {
+      if (!item.path("spec").path("job").isObject()) continue;
       var row =
           mapper
               .createObjectNode()
@@ -115,9 +115,36 @@ public class FlinkStateCollector {
       row.put("yaml", yamlSnapshot.render(item, secrets));
       result.add(row);
     }
-    return mapper
-        .createObjectNode()
-        .put("queriedAt", java.time.Instant.now().toString())
-        .set("items", result);
+    var response = mapper.createObjectNode().put("queriedAt", java.time.Instant.now().toString());
+    response.set("snapshotQuery", snapshotQuery);
+    return response.set("items", result);
+  }
+
+  /** 快照独立查询，旧版缺少 CRD 或读取失败时保留已成功取得的部署状态。 */
+  private JsonNode collectSnapshots(ObjectNode query) {
+    String path = "/apis/flink.apache.org/v1beta1/namespaces/" + namespace + "/flinkstatesnapshots";
+    try {
+      JsonNode snapshots = client.call("GET", path, null);
+      if (snapshots.isMissingNode()) {
+        query
+            .put("state", "UNSUPPORTED")
+            .put("message", "集群未提供 FlinkStateSnapshot 资源，继续读取部署中的旧版快照状态");
+        return mapper.createObjectNode();
+      }
+      query.put("state", "AVAILABLE").put("message", "");
+      return snapshots;
+    } catch (BusinessException ex) {
+      log.warn(
+          "Snapshot query failed namespace={} resource=flinkstatesnapshots code={}; deployment"
+              + " status retained",
+          namespace,
+          ex.code(),
+          ex);
+      query
+          .put("state", "UNAVAILABLE")
+          .put("code", ex.code())
+          .put("message", "快照资源查询失败，作业状态已更新；" + ex.getMessage());
+      return mapper.createObjectNode();
+    }
   }
 }

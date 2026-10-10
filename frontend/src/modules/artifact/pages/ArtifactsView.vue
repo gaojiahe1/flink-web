@@ -24,6 +24,7 @@ const canWrite = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
 )
 const bucket = ref(''),
+  managedPrefix = ref(''),
   root = ref(''),
   prefix = ref(''),
   query = ref(''),
@@ -49,9 +50,14 @@ const shownDirs = computed(() =>
   ),
 )
 const chosen = computed(() => objects.value.find((o) => o.key === selected.value[0]))
+const chosenDirectory = computed(() =>
+  selected.value.length === 1 && selected.value[0]?.endsWith('/') ? selected.value[0] : '',
+)
+const shownKeys = computed(() => [...shownDirs.value, ...shown.value.map((o) => o.key)])
 watch(query, () => {
   selected.value = []
 })
+const loadFailed = ref(false)
 let loadEpoch = 0
 const crumbs = computed(() => prefix.value.slice(root.value.length).split('/').filter(Boolean))
 async function load(path?: string, append = false) {
@@ -63,6 +69,7 @@ async function load(path?: string, append = false) {
     const data = await request<{
       bucket: string
       rootPrefix: string
+      managedPrefix?: string
       prefix: string
       directories: string[]
       objects: FileEntry[]
@@ -70,20 +77,25 @@ async function load(path?: string, append = false) {
     }>(
       '/api/artifacts/objects?' +
         new URLSearchParams({
-          ...(path ? { prefix: path } : {}),
+          prefix: path ?? '',
           ...(append && nextToken.value ? { token: nextToken.value } : {}),
         }),
     )
     if (epoch !== loadEpoch) return
+    loadFailed.value = false
     bucket.value = data.bucket
     root.value = data.rootPrefix
+    managedPrefix.value = data.managedPrefix ?? data.rootPrefix
     prefix.value = data.prefix
     dirs.value = append ? [...new Set([...dirs.value, ...data.directories])] : data.directories
     objects.value = append ? [...objects.value, ...data.objects] : data.objects
     nextToken.value = data.nextToken || ''
     selected.value = []
   } catch (e) {
-    if (epoch === loadEpoch) error.value = (e as Error).message
+    if (epoch === loadEpoch) {
+      loadFailed.value = true
+      error.value = (e as Error).message
+    }
   } finally {
     if (epoch === loadEpoch) busy.value = false
   }
@@ -133,6 +145,7 @@ async function mkdir() {
     folderDialog.value?.close()
     folder.value = ''
     await load(prefix.value)
+    message.value = '目录已创建'
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -140,26 +153,47 @@ async function mkdir() {
   }
 }
 async function remove() {
+  if (busy.value || !selected.value.length) return
+  const keys = [...selected.value]
+  const directoryCount = keys.filter((key) => key.endsWith('/')).length
   if (
     !(await confirmDialog(
-      '删除选中的 ' + selected.value.length + ' 个文件？正在运行或后续启动的作业可能引用这些文件。',
+      '删除选中的 ' +
+        keys.length +
+        ' 项？' +
+        (directoryCount
+          ? '其中 ' + directoryCount + ' 个目录及其全部子目录和文件将一起删除，无法撤销。'
+          : '') +
+        '正在运行或后续启动的作业可能引用这些文件。',
+      directoryCount ? '删除目录与文件' : '删除文件',
     ))
   )
     return
   busy.value = true
   error.value = ''
+  message.value = ''
   try {
-    for (const key of selected.value)
-      await request('/api/artifacts/objects?' + new URLSearchParams({ key }), { method: 'DELETE' })
+    for (const key of keys)
+      await request(
+        key.endsWith('/')
+          ? '/api/artifacts/directories?' + new URLSearchParams({ prefix: key })
+          : '/api/artifacts/objects?' + new URLSearchParams({ key }),
+        { method: 'DELETE' },
+      )
     await load(prefix.value)
-    message.value = '所选文件已删除'
+    message.value = '所选目录与文件已删除'
   } catch (e) {
-    error.value = (e as Error).message
+    const failure = (e as Error).message
+    await load(prefix.value)
+    error.value = failure + '；可能已有部分内容删除，请刷新结果后重试。'
   } finally {
     busy.value = false
   }
 }
 onMounted(() => load())
+watch(folder, () => {
+  if (folderDialog.value?.open) error.value = ''
+})
 function openFolderDialog() {
   folder.value = ''
   error.value = ''
@@ -180,7 +214,9 @@ function openFolderDialog() {
       <div class="bucket-symbol"><Database :size="23" /></div>
       <div class="bucket-title">
         <h2>{{ bucket || '对象存储' }}</h2>
-        <small>{{ root || '正在读取存储目录' }}</small>
+        <small>{{
+          loadFailed ? '存储连接不可用' : bucket ? '桶根目录' : '正在读取存储目录'
+        }}</small>
       </div>
       <span class="storage-count"
         >{{ dirs.length }} 个目录 ·
@@ -193,17 +229,21 @@ function openFolderDialog() {
         <button
           v-if="canWrite"
           class="button"
-          :disabled="busy || !prefix"
+          :disabled="busy || !bucket || loadFailed"
           @click="openFolderDialog"
         >
           <FolderPlus :size="14" />新建目录
         </button>
-        <label v-if="canWrite" class="button primary upload-button" :class="{ disabled: busy }"
+        <label
+          v-if="canWrite"
+          class="button primary upload-button"
+          :class="{ disabled: busy || !bucket || loadFailed }"
+          :aria-disabled="busy || !bucket || loadFailed"
           ><Upload :size="14" />上传文件<input
             aria-label="上传文件"
             type="file"
             multiple
-            :disabled="busy || !prefix"
+            :disabled="busy || !bucket || loadFailed"
             @change="upload"
         /></label>
       </div>
@@ -213,16 +253,16 @@ function openFolderDialog() {
         <Database :size="14" />全部文件
       </button>
       <button
-        :class="{ active: prefix.startsWith(root + 'jobs/') }"
-        :disabled="busy || !root"
-        @click="load(root + 'jobs/')"
+        :class="{ active: prefix.startsWith(managedPrefix + 'jobs/') }"
+        :disabled="busy || !bucket"
+        @click="load(managedPrefix + 'jobs/')"
       >
         <Folder :size="14" />作业目录
       </button>
       <button
-        :class="{ active: prefix.startsWith(root + 'shared/') }"
-        :disabled="busy || !root"
-        @click="load(root + 'shared/')"
+        :class="{ active: prefix.startsWith(managedPrefix + 'shared/') }"
+        :disabled="busy || !bucket"
+        @click="load(managedPrefix + 'shared/')"
       >
         <Folder :size="14" />共享目录
       </button>
@@ -265,13 +305,13 @@ function openFolderDialog() {
                 <th>
                   <input
                     type="checkbox"
-                    aria-label="选择当前页文件"
-                    :disabled="busy || !shown.length"
-                    :checked="shown.length > 0 && shown.every((o) => selected.includes(o.key))"
+                    aria-label="选择当前页目录与文件"
+                    :disabled="busy || !shownKeys.length"
+                    :checked="
+                      shownKeys.length > 0 && shownKeys.every((key) => selected.includes(key))
+                    "
                     @change="
-                      selected = ($event.target as HTMLInputElement).checked
-                        ? shown.map((o) => o.key)
-                        : []
+                      selected = ($event.target as HTMLInputElement).checked ? [...shownKeys] : []
                     "
                   />
                 </th>
@@ -281,8 +321,21 @@ function openFolderDialog() {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="dir in shownDirs" :key="dir" class="folder-row">
-                <td></td>
+              <tr
+                v-for="dir in shownDirs"
+                :key="dir"
+                class="folder-row"
+                :class="{ selected: selected.includes(dir) }"
+              >
+                <td>
+                  <input
+                    v-model="selected"
+                    type="checkbox"
+                    :value="dir"
+                    :aria-label="'选择目录 ' + dir"
+                    :disabled="busy"
+                  />
+                </td>
                 <td>
                   <button class="object-name" :disabled="busy" :title="dir" @click="load(dir)">
                     <Folder :size="18" /><span>{{
@@ -319,13 +372,31 @@ function openFolderDialog() {
           </table>
           <div v-if="!shown.length && !shownDirs.length" class="empty-state">
             <Folder :size="36" />
-            <h3>{{ busy ? '正在加载文件…' : query ? '没有匹配的文件' : '当前目录为空' }}</h3>
-            <p>{{ query ? '更换关键词再试。' : '上传文件或创建子目录后，会显示在这里。' }}</p>
+            <h3>
+              {{
+                busy
+                  ? '正在加载文件…'
+                  : loadFailed
+                    ? '无法读取当前目录'
+                    : query
+                      ? '没有匹配的文件'
+                      : '当前目录为空'
+              }}
+            </h3>
+            <p>
+              {{
+                loadFailed
+                  ? '检查存储配置和连接后，点击刷新重试。'
+                  : query
+                    ? '更换关键词再试。'
+                    : '上传文件或创建子目录后，会显示在这里。'
+              }}
+            </p>
           </div>
         </div>
         <div class="object-footer">
           <span>{{
-            selected.length ? '已选择 ' + selected.length + ' 个文件' : '选择文件查看详情和操作'
+            selected.length ? '已选择 ' + selected.length + ' 项' : '选择目录或文件查看详情和操作'
           }}</span
           ><button v-if="nextToken" class="button" :disabled="busy" @click="load(prefix, true)">
             加载更多
@@ -338,7 +409,19 @@ function openFolderDialog() {
             selected.length ? '已选择 ' + selected.length + ' 项' : '文件信息'
           }}
         </h3>
-        <template v-if="selected.length === 1 && chosen"
+        <template v-if="chosenDirectory">
+          <Folder class="detail-file-icon" :size="36" /><strong class="selected-name">{{
+            chosenDirectory.slice(0, -1).split('/').pop()
+          }}</strong>
+          <dl>
+            <dt>类型</dt>
+            <dd>目录</dd>
+            <dt>对象路径</dt>
+            <dd class="object-key">{{ chosenDirectory }}</dd>
+          </dl>
+          <p class="inspector-placeholder">删除此目录会同时删除全部子目录和文件。</p>
+        </template>
+        <template v-else-if="selected.length === 1 && chosen"
           ><File class="detail-file-icon" :size="36" /><strong class="selected-name">{{
             chosen.key.split('/').pop()
           }}</strong>
@@ -354,12 +437,12 @@ function openFolderDialog() {
         <p v-else class="inspector-placeholder">
           {{
             selected.length
-              ? '可批量删除选中的文件，下载请只选一个文件。'
-              : '选中一个文件，查看大小、修改时间和完整路径。'
+              ? '可批量删除选中的目录与文件，下载请只选一个文件。'
+              : '选中目录或文件，查看完整路径和可用操作。'
           }}
         </p>
         <div class="object-actions">
-          <a v-if="selected.length === 1" class="button" :href="downloadUrl(selected[0]!)"
+          <a v-if="selected.length === 1 && chosen" class="button" :href="downloadUrl(selected[0]!)"
             ><Download :size="14" />下载</a
           ><button
             v-if="canWrite"
@@ -367,10 +450,12 @@ function openFolderDialog() {
             :disabled="busy || !selected.length"
             @click="remove"
           >
-            <Trash2 :size="14" />删除所选文件
+            <Trash2 :size="14" />删除所选{{
+              selected.some((key) => key.endsWith('/')) ? '目录与文件' : '文件'
+            }}
           </button>
         </div>
-        <small>同名文件不会覆盖。删除文件前请确认没有作业依赖。</small>
+        <small>同名文件不会覆盖。目录删除包含全部子目录与文件，请先确认没有作业依赖。</small>
       </aside>
     </div>
   </section>

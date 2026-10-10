@@ -62,7 +62,7 @@ async function load() {
     const result = await request<Row[]>(path)
     if (path === api.value) rows.value = result
   } catch (e) {
-    error.value = showValidationError((e as Error).message)
+    if (path === api.value) error.value = showValidationError((e as Error).message)
   }
 }
 watch(
@@ -137,6 +137,19 @@ async function remove(row: Row) {
   } catch (e) {
     error.value = showValidationError((e as Error).message)
   }
+}
+function summary(row: Row): string {
+  if (type.value === 'configs')
+    return row.kind === 'secret'
+      ? '••••••••（已加密）'
+      : row.kind === 'secretRef'
+        ? row.secretName + '/' + row.secretKey
+        : typeof row.value === 'object'
+          ? JSON.stringify(row.value)
+          : String(row.value ?? '—')
+  if (type.value === 'images') return row.repository + ':' + row.version
+  if (type.value === 'users') return row.enabled === false ? '禁用' : '启用'
+  return row.description || '—'
 }
 function resetFilters() {
   query.value = ''
@@ -247,7 +260,7 @@ function resetFilters() {
       </div>
     </div>
     <div v-if="!filtered.length" class="empty-state">暂无记录</div>
-    <div v-else class="table-wrap">
+    <div v-else class="table-wrap catalog-records">
       <table v-if="type === 'audit'">
         <thead>
           <tr>
@@ -272,9 +285,19 @@ function resetFilters() {
         <thead>
           <tr>
             <th>标识</th>
-            <th>名称/角色</th>
-            <th>信息</th>
-            <th>版本</th>
+            <th>{{ type === 'users' ? '角色' : '名称' }}</th>
+            <th>
+              {{
+                type === 'images'
+                  ? '镜像地址'
+                  : type === 'configs'
+                    ? '值 / 引用'
+                    : type === 'users'
+                      ? '账户状态'
+                      : '说明'
+              }}
+            </th>
+            <th>记录版本</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -283,15 +306,10 @@ function resetFilters() {
             <td class="mono">{{ row.id }}</td>
             <td>{{ row.name || row.role }}</td>
             <td>
-              {{
-                type === 'configs'
-                  ? row.kind === 'secret'
-                    ? '••••••••（已加密）'
-                    : row.kind === 'secretRef'
-                      ? row.secretName + '/' + row.secretKey
-                      : row.value
-                  : row.version || row.description || (row.enabled === false ? '禁用' : '—')
-              }}
+              {{ summary(row) }}
+              <small v-if="type === 'images' && row.flinkVersion" class="muted table-description"
+                >Flink {{ row.flinkVersion }}</small
+              >
             </td>
             <td>{{ row.revision }}</td>
             <td>
