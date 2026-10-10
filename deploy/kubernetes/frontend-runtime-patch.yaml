@@ -1,0 +1,9 @@
+# 合并 StatefulSet：kubectl -n flink-kubernetes-operator patch statefulset flink-web --type=strategic --patch-file frontend-runtime-patch.yaml
+# 旧版独立前端 Deployment 仍可用相同补丁，迁移后以 application.yaml 为准。
+spec:
+  template:
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: frontend
+          imagePullPolicy: Always

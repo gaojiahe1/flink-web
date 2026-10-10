@@ -1,0 +1,15 @@
+{
+  "flinkImage": "192.168.68.1:5000/flink:1.20.5-scala_2.12",
+  "jobId": "62983bd3e227446d9b4c1d1676fbb21d",
+  "dynamicDependencies": [
+    "filesystem connector",
+    "CSV format"
+  ],
+  "originalSinkUsed": false,
+  "rows": 100,
+  "logRange": {
+    "status": 200,
+    "bytes": 60133,
+    "contentRange": null
+  }
+}
