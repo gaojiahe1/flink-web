@@ -23,3 +23,6 @@ sql-runner/target/
 # Local deployment credentials
 deploy/kubernetes/secrets.local.yaml
 /test-results/
+
+# SQL Parser generated output (runtime installation stays tracked)
+sql-validator/target/

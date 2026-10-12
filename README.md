@@ -6,6 +6,8 @@ Spring Boot / JDK 17 + Vue 3 / TypeScript 的 Flink 管理平台。通过运维�
 
 ## 文档
 
+- [项目知识索引](docs/agent/INDEX.md)：新会话按需恢复、模块代码定位、需求/决策与当前状态。
+
 - [功能说明](docs/features.md)：作业管理、JAR/YAML/SQL、数据源与 Catalog、权限、密钥、Operator 版本筛选及功能边界。
 - [部署指南](docs/deployment.md)：本地启动、环境变量、容器/RBAC、数据库、SQL 运行镜像、S3、备份与排障。
 

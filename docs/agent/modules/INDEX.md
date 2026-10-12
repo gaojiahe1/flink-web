@@ -1,0 +1,9 @@
+# 模块索引
+
+更新：2026-10-12。只读当前任务相关项。
+
+- [作业生命周期](job-lifecycle.md)：REQ-001。
+- [作业配置与表单](job-authoring.md)：REQ-002。
+- [SQL 与 Session](sql-session.md)：REQ-003。
+- [制品与运行文件](storage-runtime.md)：REQ-004。
+- [元数据、权限与数据管理](metadata-security.md)：REQ-004。

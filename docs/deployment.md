@@ -460,7 +460,7 @@ npm run test:e2e
 
 浏览器默认访问 127.0.0.1:5173；可设 E2E_BASE_URL、E2E_BROWSER。端口诊断测试可用 E2E_API_PORT 指定后端监听端口；纳管用例需要 E2E_K8S_FIXTURE 指向 [本地 Kubernetes 替身](../scripts/mock_kubernetes.py)。不要以生产数据库/集群作为自动化测试目标。
 
-功能、参数或行为变化时直接更新这两份文档，不另建按轮次命名的升级报告、聊天缓存或截图记录。版本筛选数据及出处维护在 [operator-compatibility.json](../backend/src/main/resources/operator-compatibility.json)，数据库结构以增量 SQL 为准。
+功能、参数或行为变化时更新这两份文档相关段落，并按 [知识索引](agent/INDEX.md) 增量维护受影响模块/需求/状态；不另建按轮次命名的升级报告、聊天缓存或截图记录。版本筛选数据及出处维护在 [operator-compatibility.json](../backend/src/main/resources/operator-compatibility.json)，数据库结构以增量 SQL 为准。
 
 2026-10-02：S3 插件初始化结构依据 [Flink S3 文件系统说明](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/filesystems/s3/)。本地 Flink 1.20.5 镜像已验证非 root 读取和复制实际插件 JAR；共享 PodTemplate、重复渲染、关闭清理和挂载冲突通过自动化测试，尚未在实际 Kubernetes 集群验收本次新增功能。
 
@@ -493,3 +493,11 @@ SQL Application 和验证专用 Session 的 Runner 改为手动选择：在 SQL 
 验证结果：后端 163 项全部通过，含实际精确版本 SQL Parser、隔离 MinIO 上传/复制/整目录删除、批量删除 XML/Content-MD5 匹配、目录边界与幂等、完整异常栈/原因/suppressed 及凭据遮蔽。前端类型检查、生产构建、全源格式和 14 项受影响浏览器回归通过。实际 app/web 镜像通过只读根文件系统启动、临时 SQLite 健康检查、加密登录、完整后端异常栈输出和 14 项页面回归；代理/DNS 恢复检查通过。下载器实际镜像通过 8 项测试及 cn-north-4 区域 S3v4 真实下载。Java 分层、172 个类及 842 个方法/构造器的中文注释和补丁检查通过。
 
 临时容器、网络、测试数据库和打包副本已清理，构建缓存已回收，保留已标记镜像及校验记录。未更新实际 Kubernetes 工作负载，未在华为 OBS 或现场 Kubernetes/Flink 作业中验证本次部署效果；已有 Pod 按授权流程重新拉取镜像后生效。
+
+### 项目治理验证（2026-10-12）
+
+运行源码、Dockerfile、依赖与实际工作负载配置未改动。本轮仅治理受跟踪 Parser 构建输出、历史生成日志和项目知识/维护检查入口，因此没有受影响的应用镜像内容，不重新构建或覆盖发布。已只读重新核对 app/web/downloader 的现有 0.0.4 manifest 正文 SHA-256、Docker-Content-Digest 与本地 config ID，均匹配上表；没有更新 latest 或实际 Kubernetes 工作负载。
+
+后端 167 项（含真实 Parser 和隔离 MinIO）、Runner 7 项、下载器 8 项全部通过；Parser 重建、前端类型/生产构建/格式、Java 分层/中文注释和当前 Web 镜像的 DNS/代理恢复回归通过。Windows JUnit 子进程须显式设置独占可写临时目录，首轮默认系统临时目录权限问题已通过重跑解决。记录与维护入口见 [治理验收](agent/validation.md)；真实 MySQL、生产 Kubernetes/Flink 和其他 S3 厂商本轮未验收。
+
+治理收尾例外：首轮JUnit在系统TEMP留下的两个测试目录受Windows删除权限限制，具体路径见 [待确认事项](agent/open-questions.md)；项目内临时验证目录与Docker资源均已清理，未修改系统ACL。
