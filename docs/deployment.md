@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-10。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-12。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -82,7 +82,7 @@ npm run format:check
 | FLINK_WEB_OPERATOR_NAMESPACE | Operator 所在 namespace，默认同作业 namespace |
 | FLINK_WEB_OPERATOR_DEPLOYMENT | 查询的 Deployment，默认 flink-kubernetes-operator |
 | FLINK_WEB_OPERATOR_CONTAINER | 取镜像版本的容器名，默认 flink-kubernetes-operator |
-| FLINK_WEB_WORKLOAD_SA | 新作业运行身份，默认 flink；不同于平台身份 |
+| FLINK_WEB_WORKLOAD_SA | 2026-10-12 起不再读取；作业/Session 表单默认填写 `{namespace}-flink`，用户可以修改，后端不替换显式账号 |
 | FLINK_WEB_STATE_ROOT | 页面 S3 状态目录建议值，默认 s3://flink-state；不再强制写入作业 |
 | FLINK_WEB_S3_BUCKET / FLINK_WEB_S3_ENDPOINT | 制品桶及可选 S3 兼容端点 |
 | FLINK_WEB_S3_PREFIX | 平台作业/共享文件管理前缀，默认 artifacts/；全部文件从桶根目录浏览 |
@@ -133,12 +133,20 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:25643ca4e2cd6cba2fd98232f553fcb54013be29c22c73046a873ae930861296 |
+| 192.168.68.1:5000/flink-web/app | sha256:efc8feed9793a518357e7f26e635b30ca8b5671a30eef62bb89aa6fd46055c85 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:f14531d87be753bee3dd83304a80a1e49aa8cad6dcb93dce9bc94e4563947b5d |
+| 192.168.68.1:5000/flink-web/web | sha256:e3ec6c5b7eb61c6a69232cc7996fd205f753dec68c93e3512007e7bf52013981 |
 
 
 本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a`。已有运行中的作业不会随仓库标签更新自动变更。
+
+2026-10-12 账号与 PodTemplate 发布：已构建、验证并覆盖发布 app/web 的 0.0.4 标签，摘要见上表；下载器沿用原版本，未更新 latest。后端使用全量测试通过的本地离线产物和已验证 Parser 产物，运行阶段与原 Dockerfile 相同；前端按原 Dockerfile 构建。两份镜像均为 linux/amd64、Kylin SP3、UID 10001。Docker 配置的 127.0.0.1:7800 代理不可用，因此通过同一个 registry 的 localhost:15000 映射入口推送；随后从指定的 192.168.68.1:5000 地址实际核对 manifest 正文 SHA-256、Docker-Content-Digest 与本地 config 镜像 ID，一致。
+
+校验结果：后端 167 项全部通过，包含真实精确版本 Parser、隔离 MinIO、三处模板的独立保留/编辑/清空、显式账号保留及角色挂载冲突。前端类型检查、生产构建、全源格式、Java 分层/中文注释和补丁检查通过；实际新 Web 镜像上 20 项受影响浏览器回归通过，桌面与 390px 模板/搜索面板截图已检查。实际 app/web 在非 root、只读根文件系统下通过临时 SQLite 健康检查、真实加密登录、代理、作业 YAML 生成/验证/草稿保存与 Session 账号/模板回填；Web DNS/代理恢复回归通过。验证仅使用隔离测试数据和接口替身，未更新实际 Kubernetes 工作负载，未验收现场 Operator/Flink Pod 调度或用户填写账号的 RBAC。
+
+运行账号由 JAR、SQL、Session 表单显式填写，前端默认 `{namespace}-flink`，既有 YAML/模板账号保留；后端不再读取 FLINK_WEB_WORKLOAD_SA 或补固定账号。请在目标 namespace 预先创建所选账号并授予 Flink 所需权限。共享及 JM/TM PodTemplate 分别保留，由 Operator 合并；平台托管下载器、插件或 AWS 环境变量与角色覆盖共存时启用 `kubernetes.operator.pod-template.merge-arrays-by-name=true`，显式关闭会报错，以防按位置合并覆盖容器/挂载。依据 [Operator 1.9 模板说明](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.9/zh/docs/custom-resource/pod-template/)。
+
+本次临时容器、网络、本地页面服务、测试数据库/凭据和离线打包副本已清理；构建缓存回收 817.6 MB，本机推送入口的临时镜像标签已移除，保留指定仓库的已标记镜像及校验记录。
 
 部署步骤：
 
@@ -334,7 +342,7 @@ SQL Application 和 Session 均通过现有 fw-download initContainer 下载 Run
 
 ### Session 验证准备（2026-10-09）
 
-2026-10-09 表单优化：新建/配置 Session 使用与作业编辑相同的分区卡片、字段网格及保存操作栏，桌面双列、窄屏单列；保存后返回集群列表，仍需显式启动。PodTemplate 使用可折叠代码编辑器并校验 JSON 对象。JAR 页面移除 JM/TM Metaspace 独立输入，已有值保留，可通过 Flink 配置编辑器修改；不改变既有运行资源。
+2026-10-09 表单优化：新建/配置 Session 使用与作业编辑相同的分区卡片、字段网格及保存操作栏，桌面双列、窄屏单列；保存后返回集群列表，仍需显式启动。2026-10-12 起三处 PodTemplate 使用默认折叠的 YAML 高亮编辑器，保存为对象并兼容已有 JSON 配置；JAR 页面移除 JM/TM Metaspace 独立输入，已有值保留，可通过 Flink 配置编辑器修改；不改变既有运行资源。
 
 本轮界面和删除入口验收：30 项受影响浏览器回归、19 项后端 Session/草稿删除/存储生命周期检查通过，生产构建、全源格式及补丁空白检查通过；已核对桌面与 390px 页面截图。浏览器采用接口模拟，后端使用隔离 SQLite，未操作生产集群。本轮前端镜像已按用户要求发布，实际镜像检查及摘要见第 4 节。
 

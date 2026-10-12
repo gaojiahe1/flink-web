@@ -198,11 +198,11 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
   await runner.getByRole('button', { name: 'HTTP / S3 地址', exact: true }).click()
   await runner.getByLabel('SQL Runner 文件地址', { exact: true }).fill('s3://test/sql-runner/runner.jar')
   await runner.getByRole('button', { name: '确认文件地址', exact: true }).click()
-  await page.locator('.session-pod summary').click()
-  await page.getByRole('textbox', { name: 'PodTemplate（JSON）', exact: true }).fill('{bad')
+  await page.locator('[data-field="podTemplate"] summary').click()
+  await page.getByRole('textbox', { name: '共享 PodTemplate（YAML）', exact: true }).fill('spec: [bad')
   await page.getByRole('button', { name: '保存配置', exact: true }).click()
-  await expect(page.locator('.notice.error')).toContainText('PodTemplate 必须为有效 JSON 对象')
-  await page.getByRole('textbox', { name: 'PodTemplate（JSON）', exact: true }).fill('{}')
+  await expect(page.locator('.notice.error')).toContainText('修正 PodTemplate YAML')
+  await page.getByRole('textbox', { name: '共享 PodTemplate（YAML）', exact: true }).fill('{}')
   await page.getByRole('button', { name: '保存配置', exact: true }).click()
   await expect(page.getByRole('row').filter({ hasText: 'validation' })).toContainText(
     'SQL 验证 · 唯一',

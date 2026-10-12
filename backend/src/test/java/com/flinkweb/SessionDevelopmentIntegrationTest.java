@@ -272,6 +272,27 @@ class SessionDevelopmentIntegrationTest {
     assertThatThrownBy(() -> sessions.stop("sql-validation")).hasMessageContaining("身份");
   }
 
+  /** 普通 Session 保留用户账号、共享模板与独立角色覆盖，保存不会启动资源。 */
+  @Test
+  void ordinarySessionRetainsAccountAndThreePodTemplates() {
+    var options = runtime().put("serviceAccount", "session-custom");
+    options.remove("runnerArtifactId");
+    options.withObject("/podTemplate/metadata/labels").put("scope", "shared");
+    options.withObject("/jmPodTemplate/spec/nodeSelector").put("role", "jm");
+    options.withObject("/tmPodTemplate/spec/nodeSelector").put("role", "tm");
+    var saved =
+        sessions.save("custom-pods", new SessionRequest("custom-pods", "", false, options, 0));
+    assertThat(saved.at("/runtime/serviceAccount").asText()).isEqualTo("session-custom");
+    sessions.start("custom-pods", saved.path("revision").asLong());
+    assertThat(cluster.get().at("/spec/serviceAccount").asText()).isEqualTo("session-custom");
+    assertThat(cluster.get().at("/spec/podTemplate/metadata/labels/scope").asText())
+        .isEqualTo("shared");
+    assertThat(cluster.get().at("/spec/jobManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("jm");
+    assertThat(cluster.get().at("/spec/taskManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("tm");
+  }
+
   /** 提交进行二次 SQL 检查，重复请求只提交一次；日志保留重复业务行且只收集本次一百条。 */
   @Test
   void validationIsIdempotentAndWaitsForCancelConfirmation() {

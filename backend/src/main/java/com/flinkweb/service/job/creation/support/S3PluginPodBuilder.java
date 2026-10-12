@@ -26,9 +26,30 @@ public class S3PluginPodBuilder {
     this.mapper = mapper;
   }
 
-  /** 迁移历史插件下载配置，并确保公共模板只有一个托管初始化容器。 */
+  /** 分别迁移三处模板的托管下载器，保留各角色的自定义字段和下载清单。 */
   public void apply(ObjectNode spec) {
-    templates.normalize(spec);
+    templates.validateStructure(spec);
+    var original = spec.deepCopy();
+    applyCommon(spec);
+    for (String role : List.of("jobManager", "taskManager")) {
+      JsonNode template = original.path(role).path("podTemplate");
+      boolean managed = false;
+      for (JsonNode init : template.path("spec").path("initContainers"))
+        if (List.of("fw-download", "fw-s3-plugin").contains(init.path("name").asText()))
+          managed = true;
+      if (!managed) continue;
+      var isolated = original.deepCopy();
+      isolated.remove(List.of("jobManager", "taskManager"));
+      isolated.set("podTemplate", template.deepCopy());
+      applyCommon(isolated);
+      spec.withObject("/" + role).set("podTemplate", isolated.path("podTemplate"));
+    }
+    for (JsonNode init : spec.path("podTemplate").path("spec").path("initContainers"))
+      if ("fw-download".equals(init.path("name").asText())) templates.configureManagedMerge(spec);
+  }
+
+  /** 在指定模板中迁移插件及下载器，不把角色配置扩散到共享模板。 */
+  private void applyCommon(ObjectNode spec) {
     boolean enabled = false;
     for (String key :
         List.of(
@@ -107,6 +128,7 @@ public class S3PluginPodBuilder {
     for (String name : List.of("fw-s3-plugin", "fw-bootstrap")) {
       String path =
           name.equals("fw-bootstrap") ? "/flink-bootstrap" : "/opt/flink/plugins/s3-fs-presto";
+      templates.checkManagedMount(spec, path, name);
       for (JsonNode container : pod.path("containers"))
         if ("flink-main-container".equals(container.path("name").asText()))
           for (JsonNode mount : container.path("volumeMounts"))

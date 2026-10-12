@@ -24,6 +24,7 @@ public class VariableRenderer {
   private final SecretCipher cipher;
   private final ObjectMapper mapper;
   private final PlatformProperties properties;
+  private final PodTemplates podTemplates;
 
   /** 注入配置记录、加密器与 JSON 映射器，并读取目标 Namespace。 */
   public VariableRenderer(
@@ -32,7 +33,9 @@ public class VariableRenderer {
       ObjectMapper mapper,
       PlatformProperties properties,
       com.flinkweb.service.artifact.support.ArtifactPodBuilder artifacts,
-      S3PluginPodBuilder s3Plugin) {
+      S3PluginPodBuilder s3Plugin,
+      PodTemplates podTemplates) {
+    this.podTemplates = podTemplates;
     this.s3Plugin = s3Plugin;
     this.store = store;
     this.artifacts = artifacts;
@@ -67,6 +70,10 @@ public class VariableRenderer {
     }
     ObjectNode spec = deployment.withObject("/spec");
     injectS3Environment(spec.withObject("/podTemplate"), access, secret);
+    for (String role : List.of("jobManager", "taskManager"))
+      if (spec.path(role).path("podTemplate").isObject())
+        injectS3Environment((ObjectNode) spec.path(role).get("podTemplate"), access, secret);
+    podTemplates.configureManagedMerge(spec);
     ((ObjectNode) config).remove(List.of("s3.access-key", "s3.secret-key"));
   }
 

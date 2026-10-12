@@ -11,6 +11,7 @@ export interface SessionCluster {
   message?: string
   runtime: {
     imageId: string
+    serviceAccount?: string
     runnerArtifactId?: string
     slots: number
     parallelism: number
@@ -21,6 +22,8 @@ export interface SessionCluster {
     dependencyArtifactIds: string[]
     flinkConfiguration: Record<string, string>
     podTemplate: Record<string, unknown>
+    jmPodTemplate?: Record<string, unknown>
+    tmPodTemplate?: Record<string, unknown>
   }
 }
 export const sessionsApi = {

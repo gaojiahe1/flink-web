@@ -133,6 +133,33 @@ class S3PluginPodTest {
     assertThatCode(() -> builder().apply(spec)).doesNotThrowAnyException();
   }
 
+  /** 角色模板与下载器共存时按名称合并，保留边车并阻止角色覆盖插件目录。 */
+  @Test
+  void roleTemplatesKeepSidecarsAndRejectManagedMountConflicts() {
+    var spec = spec();
+    spec.withObject("/jobManager/podTemplate/spec")
+        .putArray("containers")
+        .addObject()
+        .put("name", "sidecar")
+        .put("image", "busybox");
+    builder().apply(spec);
+    assertThat(spec.at("/jobManager/podTemplate/spec/containers/0/name").asText())
+        .isEqualTo("sidecar");
+    assertThat(
+            spec.at("/flinkConfiguration/kubernetes.operator.pod-template.merge-arrays-by-name")
+                .asText())
+        .isEqualTo("true");
+    spec.withObject("/taskManager/podTemplate/spec")
+        .putArray("containers")
+        .addObject()
+        .put("name", "flink-main-container")
+        .putArray("volumeMounts")
+        .addObject()
+        .put("name", "custom")
+        .put("mountPath", "/opt/flink/plugins/s3-fs-presto");
+    assertThatThrownBy(() -> builder().apply(spec)).hasMessageContaining("已有自定义挂载");
+  }
+
   /** 自定义入口在重复生成及禁用插件后仍可恢复。 */
   @Test
   void preservesCustomEntrypoint() {

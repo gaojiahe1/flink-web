@@ -7,29 +7,24 @@ import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.service.job.creation.YamlService;
 import com.flinkweb.service.job.creation.support.PodTemplates;
 import java.util.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.yaml.snakeyaml.*;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
-/** 安全解析和校验 FlinkDeployment YAML，应用默认 Namespace、运行账号并保留用户的状态存储配置。 */
+/** 安全解析和校验 FlinkDeployment YAML，应用目标 Namespace 并保留用户的运行账号和模板。 */
 @Service
 public class YamlServiceImpl implements YamlService {
   private final ObjectMapper mapper;
-  private final String namespace, serviceAccount;
+  private final String namespace;
   private final PodTemplates podTemplates;
 
-  /** 注入 JSON 映射器并读取 Namespace 和工作负载账号。 */
+  /** 注入 JSON 映射器、模板工具并读取目标 Namespace。 */
   public YamlServiceImpl(
-      ObjectMapper mapper,
-      PlatformProperties properties,
-      PodTemplates podTemplates,
-      @Value("${platform.workload.service-account:flink}") String serviceAccount) {
+      ObjectMapper mapper, PlatformProperties properties, PodTemplates podTemplates) {
     this.mapper = mapper;
     this.podTemplates = podTemplates;
     this.namespace = properties.namespace();
-    this.serviceAccount = serviceAccount;
   }
 
   /** 限制 YAML 大小、标签、重复键及别名，将单个文档安全转换为对象。 */
@@ -82,9 +77,7 @@ public class YamlServiceImpl implements YamlService {
     if (!spec.path("flinkVersion").asText().matches("v(1_(16|17|18|19|20)|2_[0-3])"))
       fail("Flink 版本必须在 1.16 至 2.3 范围内");
     if (spec.path("image").asText().isBlank()) fail("必须指定镜像");
-    if (spec.has("serviceAccount") && !spec.path("serviceAccount").asText().equals(serviceAccount))
-      fail("只能使用运维配置的 Flink 工作负载 ServiceAccount");
-    spec.put("serviceAccount", serviceAccount);
+    if (spec.has("serviceAccount")) validateServiceAccount(spec.get("serviceAccount"));
     ObjectNode job = object(spec, "job");
     if (!job.path("jarURI").asText().startsWith("local:///")
         || !job.path("jarURI").asText().toLowerCase().endsWith(".jar"))
@@ -117,8 +110,7 @@ public class YamlServiceImpl implements YamlService {
             "kubernetes.service-account",
             "kubernetes.jobmanager.service-account",
             "kubernetes.taskmanager.service-account"))
-      if (config.has(key) && !config.path(key).asText().equals(serviceAccount))
-        fail("Flink 配置不能覆盖工作负载 ServiceAccount");
+      if (config.has(key)) validateServiceAccount(config.get(key));
     for (String key : List.of("rest.port", "rest.bind-port"))
       if (config.has(key) && !config.path(key).asText().equals("8081"))
         fail("平台内部 Flink REST 端口固定为 8081");
@@ -164,7 +156,7 @@ public class YamlServiceImpl implements YamlService {
                 && config.path("high-availability").asText("").isBlank())
             || config.path("high-availability.storageDir").asText("").isBlank()))
       fail("upgradeMode: last-state 模式需要启用状态存储并配置 Kubernetes HA 及 HA 存储目录");
-    podTemplates.normalize(spec);
+    podTemplates.validateStructure(spec);
     for (String key : List.of("podTemplate")) if (spec.has(key)) validatePod(spec.get(key));
     for (String key : List.of("jobManager", "taskManager"))
       if (spec.path(key).has("podTemplate")) validatePod(spec.get(key).get("podTemplate"));
@@ -177,8 +169,7 @@ public class YamlServiceImpl implements YamlService {
         && !pod.path("metadata").path("namespace").asText().equals(namespace))
       fail("PodTemplate 不能指定其他 namespace");
     JsonNode spec = pod.path("spec");
-    if (spec.has("serviceAccount") && !spec.path("serviceAccount").asText().equals(serviceAccount))
-      fail("Pod ServiceAccount 与平台配置不一致");
+    if (spec.has("serviceAccount")) validateServiceAccount(spec.get("serviceAccount"));
     for (JsonNode ref : spec.findValues("secretName"))
       if (ref.asText().startsWith("flink-web")) fail("工作负载不能挂载平台自身 Secret");
     for (String key : List.of("secretKeyRef", "secretRef"))
@@ -186,9 +177,7 @@ public class YamlServiceImpl implements YamlService {
         if (ref.path("name").asText().startsWith("flink-web")) fail("工作负载不能引用平台自身 Secret");
     for (String key : List.of("hostNetwork", "hostPID", "hostIPC"))
       if (spec.path(key).asBoolean()) fail("不允许 " + key);
-    if (spec.has("serviceAccountName")
-        && !spec.path("serviceAccountName").asText().equals(serviceAccount))
-      fail("Pod ServiceAccount 与平台配置不一致");
+    if (spec.has("serviceAccountName")) validateServiceAccount(spec.get("serviceAccountName"));
     for (JsonNode volume : spec.path("volumes")) if (volume.has("hostPath")) fail("不允许 hostPath 卷");
     for (String key : List.of("containers", "initContainers"))
       for (JsonNode container : spec.path(key)) {
@@ -196,6 +185,16 @@ public class YamlServiceImpl implements YamlService {
         if (security.path("privileged").asBoolean() || security.path("capabilities").has("add"))
           fail("不允许特权容器或添加 Linux capabilities");
       }
+  }
+
+  /** 校验用户指定的运行账号名称，不替换为后端固定身份。 */
+  private void validateServiceAccount(JsonNode value) {
+    if (!value.isTextual()
+        || value.asText().length() > 253
+        || !value
+            .asText()
+            .matches("[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*"))
+      fail("serviceAccount: ServiceAccount 必须是合法 DNS 子域名称");
   }
 
   /** 将 JSON 资源对象序列化为可编辑的 YAML。 */

@@ -14,6 +14,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { parseDocument } from 'yaml'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
+import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
+import { emptyPodTemplates, readPodTemplates } from '../../../shared/utils/podTemplates'
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
@@ -41,6 +44,7 @@ const form = reactive<DraftInput>({
   revision: 0,
 })
 const options = reactive({
+  serviceAccount: '',
   templateId: '',
   imageId: '',
   mainArtifactId: '',
@@ -55,6 +59,8 @@ const options = reactive({
   jmCpu: 1,
   tmCpu: 1,
 })
+const pods = ref(emptyPodTemplates()),
+  podValid = ref(true)
 const workspaceId = ref(requestId())
 const entryClasses = ref<string[]>([]),
   inspectingEntry = ref(false),
@@ -198,6 +204,8 @@ async function switchMethod(next: string) {
   switchingMethod.value = true
   error.value = ''
   try {
+    if (next === 'yaml' && !podValid.value)
+      throw new Error('请先修正 PodTemplate YAML 再切换编辑方式')
     const legacy = next === 'form' && yamlOnly.value && !formRewriteConfirmed.value
     if (
       legacy &&
@@ -214,6 +222,7 @@ async function switchMethod(next: string) {
         ).catch(() => undefined)
         const mapped = hydrateJar(form.yaml, images.value, storage)
         Object.assign(options, mapped.options)
+        pods.value = readPodTemplates(parseDocument(form.yaml).toJS()?.spec)
         args.value = mapped.args
         config.value = mapped.config
         baseYaml.value = form.yaml
@@ -273,6 +282,8 @@ function applyTemplate() {
       if (doc.errors.length) throw new Error('模板 YAML 无法解析')
       if (method.value === 'form') {
         const spec = doc.toJS()?.spec || {}
+        pods.value = readPodTemplates(spec)
+        if (spec.serviceAccount) options.serviceAccount = spec.serviceAccount
         baseYaml.value = item.yaml
         config.value = { ...(spec.flinkConfiguration || {}) }
         if (spec.job?.args) {
@@ -310,6 +321,10 @@ function uploaded(a: Artifact) {
 }
 function valid() {
   submitted.value = true
+  if (method.value === 'form' && !podValid.value) {
+    error.value = '请先修正 PodTemplate YAML'
+    return false
+  }
   if (method.value === 'form' && !configValid.value) {
     error.value = '请先修正 Flink 配置'
     return false
@@ -333,6 +348,7 @@ async function render() {
     method: 'POST',
     ...jsonBody({
       ...options,
+      ...pods.value,
       baseYaml: baseYaml.value,
       jobId: id.value,
       allowFormRewrite: formRewriteConfirmed.value,
@@ -345,7 +361,7 @@ async function render() {
   form.flinkVersion = result.flinkVersion
 }
 watch(
-  [form, options, args, config],
+  [form, options, args, config, pods, podValid],
   () => {
     clearValidationErrors(formElement.value || document)
     error.value = ''
@@ -487,6 +503,11 @@ async function save(deploy = false) {
               maxlength="500"
               placeholder="说明作业用途"
           /></label>
+          <ServiceAccountField
+            v-if="method === 'form'"
+            v-model="options.serviceAccount"
+            :disabled="busy || loading"
+          />
         </div>
       </section>
       <template v-if="method === 'form'">
@@ -633,6 +654,7 @@ async function save(deploy = false) {
             :readonly="busy"
             @valid="configValid = $event"
           />
+          <PodTemplateFields v-model="pods" :readonly="busy" @valid="podValid = $event" />
         </section>
       </template>
     </div>

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
-import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
+import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
+import { emptyPodTemplates } from '../../../shared/utils/podTemplates'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import ArtifactPicker from '../../artifact/components/ArtifactPicker.vue'
 import { currentUser } from '../../permission/stores/auth'
@@ -27,13 +29,15 @@ const editing = ref(false),
   selected = ref(''),
   uploading = ref(false),
   configValid = ref(true),
-  pod = ref('{}')
+  pods = ref(emptyPodTemplates()),
+  podValid = ref(true)
 const defaults = () => ({
   name: '',
   description: '',
   validation: false,
   revision: 0,
   runtime: {
+    serviceAccount: '',
     imageId: '',
     runnerArtifactId: '',
     slots: 2,
@@ -47,7 +51,7 @@ const defaults = () => ({
       string,
       string
     >,
-    podTemplate: {},
+    ...emptyPodTemplates(),
   },
 })
 const form = reactive(defaults())
@@ -93,28 +97,37 @@ function open(item?: SessionCluster) {
   message.value = ''
   configValid.value = true
   selected.value = item?.id || ''
-  Object.assign(form, defaults(), item ? JSON.parse(JSON.stringify(item)) : {})
-  pod.value = JSON.stringify(form.runtime.podTemplate || {}, null, 2)
+  const initial = defaults()
+  Object.assign(form, initial, item ? JSON.parse(JSON.stringify(item)) : {})
+  form.runtime = { ...initial.runtime, ...form.runtime }
+  pods.value = {
+    podTemplate: form.runtime.podTemplate || {},
+    jmPodTemplate: form.runtime.jmPodTemplate || {},
+    tmPodTemplate: form.runtime.tmPodTemplate || {},
+  }
+  podValid.value = true
   editing.value = true
 }
 async function save() {
   await run(async () => {
     if (!configValid.value) throw new Error('请先修正 Flink 配置')
-    let parsed
-    try {
-      parsed = JSON.parse(pod.value)
-    } catch {
-      throw new Error('PodTemplate 必须为有效 JSON 对象')
-    }
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object')
-      throw new Error('PodTemplate 必须为 JSON 对象')
-    form.runtime.podTemplate = parsed
+    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
+    Object.assign(form.runtime, pods.value)
     await sessionsApi.save(selected.value || (form.validation ? 'sql-validation' : form.name), form)
     editing.value = false
     await load()
     message.value = 'Session 配置已保存，请点击启动。'
   })
 }
+watch(
+  [form, pods, podValid],
+  () => {
+    clearValidationErrors()
+    error.value = ''
+    message.value = ''
+  },
+  { deep: true },
+)
 async function start(item: SessionCluster) {
   await run(async () => {
     const result = await sessionsApi.start(item)
@@ -291,6 +304,7 @@ onMounted(async () => {
                 placeholder="sql-check" /><HelpTip
                 text="小写字母、数字和连字符，最多 45 字符；保存后名称不可修改。"
             /></label>
+            <ServiceAccountField v-model="form.runtime.serviceAccount" />
             <label
               >运行镜像<FlinkImageSelect
                 data-field="imageId"
@@ -400,16 +414,12 @@ onMounted(async () => {
             :readonly="busy || uploading"
             @valid="configValid = $event"
           />
+          <PodTemplateFields
+            v-model="pods"
+            :readonly="busy || uploading"
+            @valid="podValid = $event"
+          />
         </section>
-        <details class="panel form-panel compact-form session-pod">
-          <summary>
-            <span class="section-number">05</span> PodTemplate <span class="muted">高级配置</span>
-          </summary>
-          <p class="muted session-hint">填写 JSON 对象，可配置 Secret 环境变量、卷和调度规则。</p>
-          <div data-field="podTemplate">
-            <CodeEditor v-model="pod" label="PodTemplate（JSON）" :readonly="busy || uploading" />
-          </div>
-        </details>
       </div>
     </fieldset>
     <div class="form-actions editor-actionbar">
@@ -447,22 +457,6 @@ onMounted(async () => {
 }
 .session-dependencies {
   margin-top: 16px;
-}
-.session-pod summary {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  cursor: pointer;
-  font-weight: 600;
-}
-.session-pod summary .muted {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 400;
-}
-.session-pod .code-editor {
-  height: 240px;
-  margin-top: 12px;
 }
 @media (max-width: 1100px) {
   .session-form-grid {

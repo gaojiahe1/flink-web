@@ -131,3 +131,94 @@ onBeforeUnmount(() => {
     <div v-if="issues.length" class="editor-errors" role="alert">{{ issues[0] }}</div>
   </div>
 </template>
+<style scoped>
+:deep(.cm-panels) {
+  background: var(--color-background);
+  color: var(--text);
+}
+:deep(.cm-panels-bottom) {
+  border-top: 1px solid var(--line);
+}
+:deep(.cm-search.cm-panel) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 36px 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: inherit;
+  position: relative;
+}
+:deep(.cm-search.cm-panel > *) {
+  margin: 0;
+}
+:deep(.cm-search .cm-textfield) {
+  flex: 1 1 150px;
+  width: 150px;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--text);
+  font: inherit;
+}
+:deep(.cm-search .cm-textfield:focus) {
+  outline: 2px solid #2468ee26;
+  border-color: var(--blue);
+}
+:deep(.cm-search .cm-button) {
+  height: var(--control-height);
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--text);
+  font: inherit;
+  text-transform: none;
+  cursor: pointer;
+}
+:deep(.cm-search .cm-button:hover) {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: #2468ee08;
+}
+:deep(.cm-search label) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-weight: 400;
+}
+:deep(.cm-search input[type='checkbox']) {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+:deep(.cm-search.cm-panel [name='close']) {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  width: 24px;
+  height: var(--control-height);
+  padding: 0;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+}
+:deep(.cm-search.cm-panel [name='close']:hover) {
+  color: var(--blue);
+  background: #2468ee0a;
+}
+:deep(.cm-searchMatch) {
+  background: #fef3c7;
+  outline: 1px solid #fbbf24;
+}
+:deep(.cm-searchMatch-selected) {
+  background: #bfdbfe;
+  outline: 1px solid var(--blue);
+}
+</style>

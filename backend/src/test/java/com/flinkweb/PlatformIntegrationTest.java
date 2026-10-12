@@ -1052,7 +1052,7 @@ class PlatformIntegrationTest {
         .andExpect(status().isForbidden());
   }
 
-  /** 历史双角色下载器重渲染统一镜像并注入 S3 Secret，去除校验和及区域变量。 */
+  /** 历史双角色下载器各自保留、更新镜像并注入 S3 Secret，去除校验和及区域变量。 */
   @Test
   void legacyDownloadersNormalizeAndResolveCredentialsWithoutStateStorage() {
     for (String id : java.util.List.of("s3-access-key", "s3-secret-key")) {
@@ -1084,10 +1084,10 @@ class PlatformIntegrationTest {
       env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", "obsolete-literal");
     }
     var result = renderer.render(source).deployment();
-    assertThat(result.at("/spec/podTemplate/spec/initContainers/0/image").asText())
-        .isEqualTo("registry.test/downloader:kylin-sp3");
-    assertThat(result.at("/spec/jobManager/podTemplate").isMissingNode()).isTrue();
-    assertThat(result.at("/spec/taskManager/podTemplate").isMissingNode()).isTrue();
+    for (String role : java.util.List.of("jobManager", "taskManager"))
+      assertThat(result.at("/spec/" + role + "/podTemplate/spec/initContainers/0/image").asText())
+          .isEqualTo("registry.test/downloader:kylin-sp3");
+    assertThat(result.at("/spec/podTemplate").isMissingNode()).isTrue();
     assertThat(result.at("/spec/flinkConfiguration").isMissingNode()).isTrue();
     assertThat(result.toString())
         .contains("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "download-s3", "secretKeyRef")
@@ -1095,7 +1095,7 @@ class PlatformIntegrationTest {
     assertThat(source.toString()).contains("old-jobManager", "sha256");
   }
 
-  /** 不同角色的自定义配置不能被静默删除或扩散到另一角色。 */
+  /** 不同角色的自定义配置分别保留，不能被静默删除或扩散到另一角色。 */
   @Test
   void incompatibleRoleTemplatesAreRejectedWithoutMutatingSource() {
     var source = yaml.parse(source("custom-pods"));
@@ -1104,10 +1104,87 @@ class PlatformIntegrationTest {
         .putObject("nodeSelector")
         .put("role", "jm");
     var copy = source.deepCopy();
-    assertThatThrownBy(() -> renderer.render(source))
-        .isInstanceOf(BusinessException.class)
-        .hasMessageContaining("无法无损合并");
+    var rendered = renderer.render(source).deployment();
+    assertThat(rendered.at("/spec/jobManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("jm");
+    assertThat(rendered.at("/spec/podTemplate").isMissingNode()).isTrue();
+    assertThat(rendered.at("/spec/taskManager/podTemplate").isMissingNode()).isTrue();
     assertThat(source).isEqualTo(copy);
+  }
+
+  /** 表单分别回填、编辑和清空三处模板，并保留资源字段与自定义账号。 */
+  @Test
+  void formPreservesServiceAccountAndIndependentPodTemplates() {
+    var base = yaml.parse(source("editable-pods"));
+    base.withObject("/spec/jobManager/resource").put("memory", "3g");
+    base.withObject("/spec/jobManager").put("replicas", 2);
+    base.withObject("/spec/jobManager/podTemplate/spec/nodeSelector").put("zone", "old");
+    String imageId = "editable-pods-" + UUID.randomUUID();
+    records.save(
+        "images",
+        imageId,
+        mapper
+            .createObjectNode()
+            .put("repository", "registry.test/flink")
+            .put("version", "1.20.5")
+            .put("flinkVersion", "1.20.5"),
+        0);
+    var input = mapper.createObjectNode().put("name", "editable-pods").put("imageId", imageId);
+    input
+        .put("baseYaml", yaml.dump(base))
+        .put("serviceAccount", "custom.runner")
+        .put("upgradeMode", "stateless");
+    input.withObject("/podTemplate/metadata/labels").put("scope", "shared");
+    input.withObject("/jmPodTemplate/spec/nodeSelector").put("role", "jm");
+    input.withObject("/tmPodTemplate/spec/nodeSelector").put("role", "tm");
+    var resource =
+        yaml.validate(yaml.parse(forms.render(input).path("yaml").asText()), "editable-pods");
+    assertThat(resource.at("/spec/serviceAccount").asText()).isEqualTo("custom.runner");
+    assertThat(resource.at("/spec/podTemplate/metadata/labels/scope").asText()).isEqualTo("shared");
+    assertThat(resource.at("/spec/jobManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("jm");
+    assertThat(resource.at("/spec/taskManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("tm");
+    assertThat(resource.at("/spec/jobManager/replicas").asInt()).isEqualTo(2);
+    input.put("baseYaml", yaml.dump(resource));
+    input.putObject("jmPodTemplate");
+    var cleared = yaml.parse(forms.render(input).path("yaml").asText());
+    assertThat(cleared.at("/spec/jobManager/podTemplate").isMissingNode()).isTrue();
+    assertThat(cleared.at("/spec/taskManager/podTemplate/spec/nodeSelector/role").asText())
+        .isEqualTo("tm");
+  }
+
+  /** YAML 保留显式账号，不自动补固定值，三处模板同样执行账号、类型与安全校验。 */
+  @Test
+  void yamlValidatesAccountsAndAllTemplateLocationsWithoutReplacingThem() {
+    var resource = yaml.parse(source("account-check"));
+    resource.withObject("/spec").put("serviceAccount", "team-flink");
+    resource
+        .withObject("/spec/flinkConfiguration")
+        .put("kubernetes.taskmanager.service-account", "worker-flink");
+    resource
+        .withObject("/spec/taskManager/podTemplate/spec")
+        .put("serviceAccountName", "worker-flink");
+    assertThat(yaml.validate(resource.deepCopy(), "account-check").path("spec"))
+        .isEqualTo(resource.path("spec"));
+    for (String path :
+        java.util.List.of(
+            "/spec/podTemplate", "/spec/jobManager/podTemplate", "/spec/taskManager/podTemplate")) {
+      var invalid = resource.deepCopy();
+      invalid.withObject(path + "/spec").put("hostNetwork", true);
+      assertThatThrownBy(() -> yaml.validate(invalid, "account-check"))
+          .hasMessageContaining("hostNetwork");
+      var badAccount = resource.deepCopy();
+      badAccount.withObject(path + "/spec").put("serviceAccountName", "Bad_Account");
+      assertThatThrownBy(() -> yaml.validate(badAccount, "account-check"))
+          .hasMessageContaining("ServiceAccount");
+    }
+    var missing = yaml.parse(source("no-account"));
+    assertThat(yaml.validate(missing, "no-account").at("/spec/serviceAccount").isMissingNode())
+        .isTrue();
+    resource.withObject("/spec/jobManager").put("podTemplate", "invalid");
+    assertThatThrownBy(() -> yaml.validate(resource, "account-check"))
+        .hasMessageContaining("必须为对象");
   }
 
   /** 已有或纳管资源始终仅限 YAML，新表单来源标签由后端保存且复制时继承。 */

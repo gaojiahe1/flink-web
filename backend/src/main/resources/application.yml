@@ -40,8 +40,6 @@ platform:
     namespace: ${FLINK_WEB_OPERATOR_NAMESPACE:${FLINK_WEB_NAMESPACE:flink-jobs}}
     deployment: ${FLINK_WEB_OPERATOR_DEPLOYMENT:flink-kubernetes-operator}
     container: ${FLINK_WEB_OPERATOR_CONTAINER:flink-kubernetes-operator}
-  workload:
-    service-account: ${FLINK_WEB_WORKLOAD_SA:flink}
     state-root: ${FLINK_WEB_STATE_ROOT:s3://flink-state}
   artifacts:
     downloader-image: ${FLINK_WEB_DOWNLOADER_IMAGE:}

@@ -109,10 +109,9 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     if (!runtime.path("imageId").asText().equals(clusterRuntime.path("imageId").asText()))
       fail("VALIDATION_IMAGE_MISMATCH", "SQL 与验证 Session 必须选择相同运行镜像，确保 Flink 和 Connector 版本一致");
     // Session 不能临时注入另一套环境变量，必须在创建集群时配置对应 Secret 引用。
-    if (!runtime.path("podTemplate").isMissingNode()
-        && runtime.path("podTemplate").size() > 0
-        && !runtime.path("podTemplate").equals(clusterRuntime.path("podTemplate")))
-      fail("VALIDATION_ENV_MISMATCH", "请在验证 Session 配置中同步 SQL 的 PodTemplate 和 Secret 环境变量后重启");
+    for (String field : List.of("podTemplate", "jmPodTemplate", "tmPodTemplate"))
+      if (runtime.path(field).size() > 0 && !runtime.path(field).equals(clusterRuntime.path(field)))
+        fail("VALIDATION_ENV_MISMATCH", "请在验证 Session 配置中同步 SQL 的 PodTemplate 和 Secret 环境变量后重启");
     List<String> references = new ArrayList<>();
     references.add(artifacts.runner(runtime));
     if (runtime.path("dependencyArtifactIds").size() > 50)

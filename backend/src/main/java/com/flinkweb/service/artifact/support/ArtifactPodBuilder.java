@@ -76,7 +76,8 @@ public class ArtifactPodBuilder {
   public void install(ObjectNode spec, ArrayNode manifest, ArrayNode env) {
     clearManaged(spec);
     if (manifest.isEmpty() && !bootstrapEnabled(env)) return;
-    templates.normalize(spec);
+    templates.validateStructure(spec);
+    templates.configureManagedMerge(spec);
     configureEnvironment(env, manifest);
     ObjectNode pod = spec.withObject("/podTemplate/spec");
     ObjectNode init =
@@ -100,6 +101,7 @@ public class ArtifactPodBuilder {
       String name = target.equals("artifacts") ? "fw-artifacts" : "fw-s3-plugin";
       String path =
           target.equals("artifacts") ? "/opt/flink/usrlib" : "/opt/flink/plugins/s3-fs-presto";
+      templates.checkManagedMount(spec, path, name);
       for (JsonNode container : pod.path("containers"))
         if ("flink-main-container".equals(container.path("name").asText()))
           for (JsonNode mount : container.path("volumeMounts"))
@@ -207,7 +209,7 @@ public class ArtifactPodBuilder {
         init.put("image", settings.requireImage());
       }
     }
-    templates.normalize(spec);
+    templates.validateStructure(spec);
   }
 
   /** 拒绝无法生成下载配置的输入。 */

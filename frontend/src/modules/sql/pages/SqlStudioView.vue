@@ -15,6 +15,13 @@ import {
 } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
+import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
+import {
+  emptyPodTemplates,
+  readPodTemplates,
+  type PodTemplateOptions,
+} from '../../../shared/utils/podTemplates'
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
@@ -25,6 +32,7 @@ import { request, jsonBody, ApiError } from '../../../shared/api/http'
 import { verificationApi, verificationTerminal, type SqlVerification } from '../api/verification'
 import { currentUser } from '../../permission/stores/auth'
 import { requestId } from '../../../shared/utils/requestId'
+import { systemInfo } from '../../system/stores/system'
 import type { JobDraft } from '../../../shared/types/api'
 type Catalog = {
   id: string
@@ -35,6 +43,7 @@ type Catalog = {
   yaml?: string
 }
 type Runtime = {
+  serviceAccount: string
   workspaceId: string
   imageId: string
   runnerArtifactId: string
@@ -50,6 +59,8 @@ type Runtime = {
   dependencyArtifactIds: string[]
   flinkConfiguration: Record<string, string>
   podTemplate: Record<string, unknown>
+  jmPodTemplate: Record<string, unknown>
+  tmPodTemplate: Record<string, unknown>
 }
 type SqlDraft = {
   id: string
@@ -90,6 +101,7 @@ async function blurName() {
 const example =
   "-- 数据生成 → 控制台输出；运行镜像需包含 datagen / print 连接器\nCREATE TEMPORARY TABLE source_events (\n  id BIGINT,\n  payload STRING\n) WITH (\n  'connector' = 'datagen',\n  'rows-per-second' = '1'\n);\n\nCREATE TEMPORARY TABLE sink_events (\n  id BIGINT,\n  payload STRING\n) WITH ('connector' = 'print');\n\nINSERT INTO sink_events\nSELECT id, payload FROM source_events;"
 const initialRuntime = (): Runtime => ({
+  serviceAccount: systemInfo.value?.namespace ? systemInfo.value.namespace + '-flink' : '',
   workspaceId: requestId(),
   catalogId: '',
   database: '',
@@ -104,10 +116,23 @@ const initialRuntime = (): Runtime => ({
   upgradeMode: 'savepoint',
   dependencyArtifactIds: [],
   flinkConfiguration: {},
-  podTemplate: {},
+  ...emptyPodTemplates(),
 })
 const form = reactive({ name: '', description: '', sql: example, revision: 0 })
 const runtime = reactive<Runtime>(initialRuntime())
+const podValid = ref(true)
+const podOptions = computed<PodTemplateOptions>({
+  get: () => ({
+    podTemplate: JSON.parse(pod.value),
+    jmPodTemplate: runtime.jmPodTemplate,
+    tmPodTemplate: runtime.tmPodTemplate,
+  }),
+  set: (value) => {
+    pod.value = JSON.stringify(value.podTemplate)
+    runtime.jmPodTemplate = value.jmPodTemplate
+    runtime.tmPodTemplate = value.tmPodTemplate
+  },
+})
 const records = ref<SqlDraft[]>([]),
   images = ref<Catalog[]>([]),
   artifacts = ref<Artifact[]>([])
@@ -209,7 +234,16 @@ const verificationLabels: Record<string, string> = {
   CANCELING: '正在取消',
 }
 watch(
-  [() => form.sql, () => form.name, () => form.description, runtime, config, pod, podTemplateId],
+  [
+    () => form.sql,
+    () => form.name,
+    () => form.description,
+    runtime,
+    config,
+    pod,
+    podTemplateId,
+    podValid,
+  ],
   () => {
     clearValidationErrors()
     error.value = ''
@@ -229,8 +263,19 @@ const filtered = computed(() =>
 )
 const bytes = computed(() => new TextEncoder().encode(form.sql).length)
 const savedSnapshot = ref('')
-const snapshot = () => JSON.stringify({ form, runtime, config: config.value, pod: pod.value })
+const snapshot = () =>
+  JSON.stringify({ form, runtime, config: config.value, pod: pod.value, podValid: podValid.value })
 const dirty = computed(() => savedSnapshot.value !== snapshot())
+watch(
+  () => systemInfo.value?.namespace,
+  (namespace) => {
+    if (!namespace || runtime.serviceAccount) return
+    const pristine = !dirty.value
+    runtime.serviceAccount = namespace + '-flink'
+    if (pristine) savedSnapshot.value = snapshot()
+  },
+  { immediate: true },
+)
 async function load() {
   records.value = await request<SqlDraft[]>('/api/sql/jobs')
   if (selected.value) {
@@ -335,21 +380,28 @@ async function applyPodTemplate() {
     error.value = '模板 YAML 存在语法错误'
     return
   }
-  const value = doc.toJS()?.spec?.podTemplate
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    error.value = '模板不包含 spec.podTemplate'
+  let value: PodTemplateOptions
+  try {
+    value = readPodTemplates(doc.toJS()?.spec)
+  } catch (e) {
+    error.value = (e as Error).message
+    return
+  }
+  if (!Object.values(value).some((pod) => Object.keys(pod).length)) {
+    error.value = '模板不包含 PodTemplate'
     return
   }
   if (
-    pod.value.trim() !== '{}' &&
+    (Object.values(podOptions.value).some((pod) => Object.keys(pod).length) || !podValid.value) &&
     !(await confirmDialog('替换当前 PodTemplate？已注入的数据源环境变量也会被替换。'))
   )
     return
-  pod.value = JSON.stringify(value, null, 2)
+  podOptions.value = value
   message.value = '已复制模板 PodTemplate，可继续编辑'
   error.value = ''
 }
 function payload() {
+  if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
   if (!configValid.value) throw new Error('请先修正 Flink 配置')
   return {
     ...form,
@@ -876,7 +928,7 @@ watch(
         </div>
       </section>
     </div>
-    <aside v-if="sideTab === 'runtime'" class="sql-runtime">
+    <aside v-show="sideTab === 'runtime'" class="sql-runtime">
       <div class="field-heading">
         <h3>部署配置</h3>
         <button class="text-button" aria-label="收起部署配置" @click="sideTab = ''">×</button>
@@ -912,6 +964,11 @@ watch(
             label="运行镜像" /><HelpTip
             text="与 JAR 作业共用 Flink 镜像；Runner 和依赖通过下载器挂载，镜像需包含 Table Planner。"
         /></label>
+        <ServiceAccountField
+          v-model="runtime.serviceAccount"
+          :disabled="busy || !editable"
+          :auto-default="false"
+        />
         <StateStorageForm
           v-model="configValues"
           :version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || '1.20'"
@@ -1007,15 +1064,14 @@ watch(
             :disabled="!podTemplateId || busy"
             @click="applyPodTemplate"
           >
-            应用 PodTemplate</button
-          ><label
-            >PodTemplate<textarea
-              data-field="podTemplate"
-              v-model="pod"
-              rows="6"
-              class="code-input" /><HelpTip
-              text="JSON 对象，可注入 Secret 环境变量；应用时复制模板 spec.podTemplate；已有内容会提示确认。"
-          /></label>
+            应用 PodTemplate
+          </button>
+          <PodTemplateFields
+            v-model="podOptions"
+            :key="runtime.workspaceId"
+            :readonly="busy || !editable"
+            @valid="podValid = $event"
+          />
         </details>
       </fieldset>
       <div v-if="editable" class="sql-publish">

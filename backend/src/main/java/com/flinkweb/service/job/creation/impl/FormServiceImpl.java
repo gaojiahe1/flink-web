@@ -52,6 +52,8 @@ public class FormServiceImpl implements FormService {
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
     ObjectNode spec = resource.withObject("/spec");
+    if (input.has("serviceAccount"))
+      spec.set("serviceAccount", input.get("serviceAccount").deepCopy());
     var image = records.require("images", input.path("imageId").asText());
     String version = image.path("flinkVersion").asText().replaceAll("^(\\d+\\.\\d+).*", "$1");
     spec.put("image", image.path("repository").asText() + (":" + image.path("version").asText()));
@@ -81,8 +83,9 @@ public class FormServiceImpl implements FormService {
       spec.withObject("/flinkConfiguration")
           .putIfAbsent("jobmanager.memory.jvm-metaspace.size", TextNode.valueOf("512m"));
 
-    if (input.path("podTemplate").isObject())
-      spec.set("podTemplate", input.get("podTemplate").deepCopy());
+    applyPodTemplate(input, "podTemplate", spec);
+    applyPodTemplate(input, "jmPodTemplate", spec.withObject("/jobManager"));
+    applyPodTemplate(input, "tmPodTemplate", spec.withObject("/taskManager"));
     if (!image.path("pullSecret").asText("").isEmpty())
       spec.withObject("/podTemplate")
           .withObject("/spec")
@@ -138,8 +141,20 @@ public class FormServiceImpl implements FormService {
       for (JsonNode argument : input.path("args"))
         if (!argument.isTextual()) yaml.fail("每个程序参数必须是字符串");
     }
-    for (String key : java.util.List.of("flinkConfiguration", "podTemplate"))
+    if (input.has("serviceAccount")
+        && (!input.path("serviceAccount").isTextual()
+            || input.path("serviceAccount").asText().isBlank()))
+      yaml.fail("serviceAccount: 请填写 ServiceAccount");
+    for (String key :
+        java.util.List.of("flinkConfiguration", "podTemplate", "jmPodTemplate", "tmPodTemplate"))
       if (input.has(key) && !input.path(key).isObject()) yaml.fail(key + " 必须是 JSON 对象");
+  }
+
+  /** 显式空对象移除对应模板；未提交的字段保留原 YAML，角色模板互不覆盖。 */
+  private void applyPodTemplate(ObjectNode input, String key, ObjectNode target) {
+    if (!input.has(key)) return;
+    if (input.path(key).isEmpty()) target.remove("podTemplate");
+    else target.set("podTemplate", input.get(key).deepCopy());
   }
 
   /** 明确区分主 JAR 与附加文件，同时兼容旧版首项为主 JAR 的数组输入。 */
