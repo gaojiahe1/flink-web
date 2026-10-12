@@ -4,7 +4,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.function.Function;
 import java.util.regex.*;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.GlobalConfiguration;
+import org.apache.flink.configuration.PipelineOptions;
 import org.apache.flink.table.api.*;
 
 /** 在 Application 主进程中注册表和视图，将全部 INSERT 合并为一个 Flink 作业。 */
@@ -21,11 +23,19 @@ public final class SqlRunner {
     TableEnvironment environment =
         TableEnvironment.create(
             EnvironmentSettings.newInstance()
-                .withConfiguration(GlobalConfiguration.loadConfiguration())
+                .withConfiguration(executionConfiguration(GlobalConfiguration.loadConfiguration()))
                 .inStreamingMode()
                 .build());
     if (validation == null) prepare(environment, decode(statements), System::getenv).execute();
     else prepareValidation(environment, decode(statements), System::getenv, validation).execute();
+  }
+
+  /** 保留业务配置；用户 JAR 与类路径沿用 Flink 提交上下文，避免磁盘 local URI 覆盖已解析的 URL。 */
+  static Configuration executionConfiguration(Configuration global) {
+    Configuration configuration = new Configuration(global);
+    configuration.removeConfig(PipelineOptions.JARS);
+    configuration.removeConfig(PipelineOptions.CLASSPATHS);
+    return configuration;
   }
 
   /** 将每个写入目标替换成临时 Print 表；原 Sink 不发生写入，每个输出最多一百条。 */
@@ -49,7 +59,8 @@ public final class SqlRunner {
       Matcher match = insert.matcher(sql);
       if (match.matches()) {
         String target = match.group(1);
-        var schema = environment.from(target).getResolvedSchema();
+        org.apache.flink.table.catalog.ResolvedSchema schema =
+            environment.from(target).getResolvedSchema();
         Schema.Builder printSchema = Schema.newBuilder();
         schema.getColumns().stream()
             .filter(c -> c.isPhysical())

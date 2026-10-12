@@ -5,7 +5,7 @@
   <artifactId>flink-web-sql-validator</artifactId>
   <version>0.1.0</version>
   <properties>
-    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.release>8</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <flink.version>1.20.3</flink.version>
     <calcite.version>1.32.0</calcite.version>

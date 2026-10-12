@@ -50,6 +50,35 @@ class SqlParserServiceTest {
         .hasMessageContaining("第 1 条语句");
   }
 
+  /** 精确 1.20.5 校验器运行初始 SQL，并拒绝实际语法错误。 */
+  @Test
+  @org.junit.jupiter.api.condition.EnabledIfSystemProperty(
+      named = "flink.test.validator.1205",
+      matches = ".+")
+  void exact1205ParserChecksInitialSqlAndRejectsInvalidSyntax() throws Exception {
+    Files.createDirectories(directory.resolve("1.20.5"));
+    Files.copy(
+        Path.of(System.getProperty("flink.test.validator.1205")),
+        directory.resolve("1.20.5/validator.jar"));
+    var records = mock(RecordRepository.class);
+    when(records.require("images", "image"))
+        .thenReturn(mapper.createObjectNode().put("flinkVersion", "1.20.5"));
+    var parser = new SqlParserServiceImpl(records, mapper, directory.toString());
+    var statements =
+        List.of(
+            "CREATE TEMPORARY TABLE source_events (id BIGINT, payload STRING) WITH"
+                + " ('connector'='datagen', 'rows-per-second'='1')",
+            "CREATE TEMPORARY TABLE sink_events (id BIGINT, payload STRING) WITH"
+                + " ('connector'='print')",
+            "INSERT INTO sink_events SELECT id, payload FROM source_events");
+    assertThat(
+            parser.check(new SqlCheckResult(true, "BASIC", 3, 1, "", statements), "image").level())
+        .isEqualTo("PARSER");
+    assertThatThrownBy(() -> parser.check(sample("INSERT INTO sink SELECT FROM"), "image"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("第 1 条语句");
+  }
+
   /** 构建已经过基础结构检查的语句集合。 */
   private SqlCheckResult sample(String sql) {
     return new SqlCheckResult(true, "BASIC", 1, 1, "basic", List.of(sql));

@@ -152,6 +152,50 @@ const canBrowse = computed(() =>
 const sideTab = ref(''),
   sources = ref<{ id: string; name: string; connectorType: string }[]>([]),
   sourceQuery = ref('')
+const workbench = ref<HTMLElement>()
+const inspectorWidth = ref(Math.min(380, Math.max(300, window.innerWidth * 0.26)))
+const inspectorMax = ref(860)
+const resizing = ref(false)
+let resizeObserver: ResizeObserver | undefined
+let resizeStart = { x: 0, width: 0 }
+function clampInspector(width = inspectorWidth.value) {
+  const element = workbench.value
+  if (!element) return
+  const explorer = parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
+  inspectorMax.value = Math.max(300, Math.min(860, element.clientWidth - explorer - 42 - 8 - 320))
+  inspectorWidth.value = Math.round(Math.min(inspectorMax.value, Math.max(300, width)))
+}
+function startResize(event: PointerEvent) {
+  if (event.button !== 0) return
+  clampInspector()
+  resizeStart = { x: event.clientX, width: inspectorWidth.value }
+  resizing.value = true
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+function resizeInspector(event: PointerEvent) {
+  if (resizing.value) clampInspector(resizeStart.width + resizeStart.x - event.clientX)
+}
+function resizeWithKeys(event: KeyboardEvent) {
+  const widths: Record<string, number> = {
+    ArrowLeft: inspectorWidth.value + 40,
+    ArrowRight: inspectorWidth.value - 40,
+    Home: 300,
+    End: inspectorMax.value,
+  }
+  if (!(event.key in widths)) return
+  event.preventDefault()
+  clampInspector(widths[event.key])
+}
+function resetInspector() {
+  clampInspector(Math.min(380, Math.max(300, window.innerWidth * 0.26)))
+}
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => clampInspector())
+  if (workbench.value) resizeObserver.observe(workbench.value)
+})
+onUnmounted(() => resizeObserver?.disconnect())
+watch(explorerCollapsed, () => nextTick(() => clampInspector()))
 const filteredSources = computed(() =>
   sources.value.filter((s) =>
     (s.name + s.id + s.connectorType).toLowerCase().includes(sourceQuery.value.toLowerCase()),
@@ -673,11 +717,14 @@ watch(
     >
   </div>
   <section
+    ref="workbench"
     class="sql-workbench"
+    :style="{ '--inspector-width': inspectorWidth + 'px' }"
     :class="{
       'with-inspector': !!sideTab,
       'explorer-collapsed': explorerCollapsed,
       'studio-maximized': maximized,
+      'inspector-resizing': resizing,
     }"
   >
     <aside class="sql-explorer">
@@ -849,6 +896,21 @@ watch(
           SQL 中可用 <code v-pre>'{{env:DB_PASSWORD}}'</code> 引用 Pod
           环境变量。密钥在配置管理注册，通过 PodTemplate 的 Secret 引用注入。
         </p>
+        <details class="sql-runtime-guide">
+          <summary>SQL Runner 与语法验证器怎么用？</summary>
+          <p>
+            SQL 检查使用平台内置的精确版本语法验证器，检查结果为 PARSER；没有对应版本时显示 BASIC。
+          </p>
+          <p>
+            SQL Runner 用于实际执行 SQL。先在部署配置选择
+            Runner，再生成部署草稿或部署并启动；运行状态和日志在作业管理查看。
+          </p>
+          <p>
+            试运行使用 SQL 验证：管理员先配置并启动与 SQL 镜像相同的 SQL 验证专用
+            Session。检查通过后点击 SQL 验证，结果在本页下方查看，最多 100
+            条、两分钟，并将写入目标换为控制台输出。
+          </p>
+        </details>
       </div>
       <details v-if="catalogPreview" class="sql-preview" open>
         <summary>Catalog 初始化 SQL（发布时自动前置）</summary>
@@ -928,6 +990,25 @@ watch(
         </div>
       </section>
     </div>
+    <div
+      v-if="sideTab"
+      class="sql-inspector-resizer"
+      role="separator"
+      aria-label="调整辅助面板宽度"
+      aria-orientation="vertical"
+      :aria-valuemin="300"
+      :aria-valuemax="inspectorMax"
+      :aria-valuenow="inspectorWidth"
+      tabindex="0"
+      title="拖动调整宽度，方向键微调，双击恢复"
+      @pointerdown="startResize"
+      @pointermove="resizeInspector"
+      @pointerup="resizing = false"
+      @pointercancel="resizing = false"
+      @lostpointercapture="resizing = false"
+      @keydown="resizeWithKeys"
+      @dblclick="resetInspector"
+    />
     <aside v-show="sideTab === 'runtime'" class="sql-runtime">
       <div class="field-heading">
         <h3>部署配置</h3>
@@ -935,8 +1016,9 @@ watch(
       </div>
       <p class="muted runtime-intro">发布后统一在作业管理页启停、刷新状态和创建快照。</p>
       <fieldset :disabled="!editable || busy || loading">
+        <h4>基本信息</h4>
         <label
-          >SQL 作业名称<input
+          >作业名称<input
             data-field="name"
             ref="sqlNameInput"
             v-model="form.name"
@@ -954,14 +1036,14 @@ watch(
             data-field="description"
             v-model="form.description"
             maxlength="500"
-            placeholder="描述数据流用途"
+            placeholder="说明作业用途"
         /></label>
         <label
-          >运行镜像<FlinkImageSelect
+          >镜像版本<FlinkImageSelect
             data-field="imageId"
             v-model="runtime.imageId"
             :images="images"
-            label="运行镜像" /><HelpTip
+            label="镜像版本" /><HelpTip
             text="与 JAR 作业共用 Flink 镜像；Runner 和依赖通过下载器挂载，镜像需包含 Table Planner。"
         /></label>
         <ServiceAccountField
@@ -976,6 +1058,7 @@ watch(
           @busy="stateConfigBusy = $event"
           :disabled="busy || !editable"
         />
+        <h4>运行资源</h4>
         <div class="runtime-grid">
           <label
             >并行度<input
@@ -985,7 +1068,7 @@ watch(
               min="1"
               step="1" /></label
           ><label
-            >每个 TM Slot<input
+            >每个 TaskManager 的 Slot 数<input
               data-field="slots"
               v-model.number="runtime.slots"
               type="number"
@@ -997,19 +1080,23 @@ watch(
           <MemoryInput
             data-field="jmMemory"
             v-model="runtime.jmMemory"
-            label="JM 内存"
-          /><MemoryInput data-field="tmMemory" v-model="runtime.tmMemory" label="TM 内存" />
+            label="JobManager 内存"
+          /><MemoryInput
+            data-field="tmMemory"
+            v-model="runtime.tmMemory"
+            label="TaskManager 内存"
+          />
         </div>
         <div class="runtime-grid">
           <label
-            >JM CPU<input
+            >JobManager CPU<input
               data-field="jmCpu"
               v-model.number="runtime.jmCpu"
               type="number"
               min="0.1"
               step="any" /></label
           ><label
-            >TM CPU<input
+            >TaskManager CPU<input
               data-field="tmCpu"
               v-model.number="runtime.tmCpu"
               type="number"
@@ -1025,7 +1112,7 @@ watch(
           </select></label
         >
         <details class="runtime-advanced">
-          <summary>附加依赖与高级配置</summary>
+          <summary>程序与依赖及 Flink 配置</summary>
           <ArtifactPicker
             data-field="runnerArtifactId"
             v-model="runtime.runnerArtifactId"
@@ -1044,7 +1131,7 @@ watch(
             @uploaded="uploaded"
             @uploading="artifactUploading = $event"
           />
-          <h4>Flink 运行配置</h4>
+          <h4>Flink 配置</h4>
           <FlinkConfigEditor
             data-field="flinkConfiguration"
             v-model="configValues"

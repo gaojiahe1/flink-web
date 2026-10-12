@@ -11,6 +11,7 @@
 - 删除部署草稿解除SQL关联，编辑进入关联SQL草稿；保存不自动执行。
 - BASIC、精确版本Parser、真实Planner三个层次清楚；缺少适配器不冒充语法通过。
 - 专用Session仅一个，输出最多100条、两分钟取消，不写原Sink；修改SQL使检查失效，Runner明确选择。
+- 2026-10-12：初始SQL在Flink1.20.5 Application正常执行，磁盘local URI不覆盖提交上下文；Runner/Parser产物兼容JDK8/17，精确1.20.3/1.20.5 Parser可用。SQL辅助面板可拖动/键盘缩放，窄屏保持上下布局，共同配置名称与JAR一致，页面给出实际使用入口。
 
 关联：[模块](../modules/sql-session.md)、[ADR](../decisions/ADR-001-on-demand.md)。关键代码及测试由模块链接定位，不维护第二份路径清单。
 

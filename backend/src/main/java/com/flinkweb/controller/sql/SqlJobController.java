@@ -19,15 +19,36 @@ public class SqlJobController {
   private final SqlJobService jobs;
   private final SqlValidationService validation;
   private final com.flinkweb.service.sql.SqlParserService parser;
+  private final java.nio.file.Path runnerJar;
 
   /** 注入 SQL 草稿管理和基础校验服务。 */
   public SqlJobController(
       SqlJobService jobs,
       SqlValidationService validation,
-      com.flinkweb.service.sql.SqlParserService parser) {
+      com.flinkweb.service.sql.SqlParserService parser,
+      @org.springframework.beans.factory.annotation.Value(
+              "${platform.sql-validation.runner-jar:./sql-runner/target/flink-web-sql-runner.jar}")
+          String runnerJar) {
     this.jobs = jobs;
     this.validation = validation;
     this.parser = parser;
+    this.runnerJar = java.nio.file.Path.of(runnerJar).toAbsolutePath().normalize();
+  }
+
+  /** 下载平台随版本发布的 Runner；用户仍需上传并显式选择文件，既有作业不自动替换。 */
+  @GetMapping("/runner/download")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> runner() {
+    if (!java.nio.file.Files.isRegularFile(runnerJar))
+      throw new com.flinkweb.exception.common.BusinessException(
+          org.springframework.http.HttpStatus.NOT_FOUND,
+          "SQL_RUNNER_NOT_INSTALLED",
+          "平台未安装 SQL Runner，请按部署指南构建并上传");
+    return org.springframework.http.ResponseEntity.ok()
+        .header("Content-Disposition", "attachment; filename=flink-web-sql-runner.jar")
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+        .body(new org.springframework.core.io.FileSystemResource(runnerJar));
   }
 
   /** 返回 SQL 草稿列表。 */

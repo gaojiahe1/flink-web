@@ -66,6 +66,8 @@ Flink 配置支持逐行 key:value、常用键提示、中文说明、重复键�
 
 SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署配置。支持保存、修订控制、历史对比/恢复、SQL 检查、YAML 预览和发布为 Application 作业。
 
+2026-10-12：桌面辅助面板左侧分隔线可拖动调整宽度，支持左右方向键、Home/End 和双击复位；窗口缩小时限制宽度，全屏保留调整结果，窄屏采用上下布局。共同配置名称与 JAR 表单统一为“作业名称”“镜像版本”“运行资源”“JobManager / TaskManager 内存、CPU”“每个 TaskManager 的 Slot 数”“Flink 配置”。检查结果区新增 Runner/语法验证器/Session 验证的使用说明。
+
 - 支持基础 CREATE CATALOG / DATABASE、USE CATALOG / DATABASE、CREATE TABLE / VIEW 和 INSERT INTO / OVERWRITE，具体语法以选定 Flink 版本为准。
 - 初始化语句须位于 INSERT 之前；多个 INSERT 合并为一个 StatementSet 作业。
 - 当前 Catalog、数据库、运行镜像、Flink 配置、依赖及 PodTemplate 随草稿保存。选择已登记 Catalog 时自动生成初始化前缀，不必重复手写相同初始化。
@@ -95,6 +97,10 @@ SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署�
 | Flink Runner / Planner | 运行镜像中的真实语义和依赖验证；运行失败通过作业状态反馈 |
 
 Kubernetes dry-run 只校验提交资源，不能替代 SQL Planner。SQL Runner、Parser 与插件的准备方式见 [部署指南](deployment.md#6-sql-runnerparser-与运行镜像)。
+
+2026-10-12：Runner 加载磁盘配置时保留状态、S3 和业务配置，用户 JAR/类路径使用 Flink 提交上下文，避免 `local:///` 覆盖已解析 URL 导致初始 SQL 启动失败。Runner 与独立 Parser 产物使用 Java 8 字节码；已实测 JDK 8/17 下的 Runner 1.20.3 API 执行及 Parser 1.20.3/1.20.5，另在 Flink 1.20.5/JDK 17 容器实测 Application 与 Session。其他版本须单独验收。Parser 强制有效非空语句数组、100 条/32 KiB 脚本和 128 KiB 协议输入上限，JSON 输出固定 UTF-8。平台后端保持 JDK 17。
+
+SQL/Session 的 Runner 选择区提供“下载平台 SQL Runner”：管理员/开发者从当前后端下载随版本发布的文件，再上传并显式选择；既有作业和已运行 Session 不自动替换。后端镜像内置两份精确版本 Parser，SQL 检查按镜像版本自动调用，无需在作业依赖中选择 Parser。
 
 ## 5. 数据源与 Flink Catalog
 

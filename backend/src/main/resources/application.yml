@@ -20,6 +20,7 @@ management:
 platform:
   sql-validation:
     directory: ${FLINK_WEB_SQL_VALIDATOR_DIR:./sql-validators}
+    runner-jar: ${FLINK_WEB_SQL_RUNNER_JAR:./sql-runner/target/flink-web-sql-runner.jar}
   namespace: ${FLINK_WEB_NAMESPACE:flink-jobs}
   storage:
     type: ${FLINK_WEB_STORAGE_TYPE:local}

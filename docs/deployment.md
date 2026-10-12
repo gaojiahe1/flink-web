@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:76915db91701fcf02f1d90ab9ecd5614b1d58612bd6526ce299628dc2fad5fa0 |
+| 192.168.68.1:5000/flink-web/app | sha256:c6ab7136306103310cfb24f0cd54a9248e7654f3c410eb44a73e0127789dc2f8 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:113f1059206a7d0da2bafc5a5ba13045fb4d118e5d21bc6b0a48eaa93cf56c58 |
+| 192.168.68.1:5000/flink-web/web | sha256:59ef738da139370e0f08939b978c04dc369f22082f547f03dfdf75618e0156f1 |
 
 
 本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a`。已有运行中的作业不会随仓库标签更新自动变更。
@@ -330,13 +330,17 @@ jdbc:mysql://mysql:3306/flink_web?useUnicode=true&characterEncoding=utf8&serverT
 
 **Runner 运行作业，Parser 校验语法，两者不能互相替代。**
 
-Runner 默认使用 Flink 1.20.3 构建，运行产物面向 Java 11+，平台后端使用 JDK 17。按实际 Flink 版本构建并验收，不把默认构建当作 1.16–2.3 全版本认证：
+2026-10-12：Runner 默认使用 Flink 1.20.3 API 构建，Runner 和 Parser 的运行产物均为 Java 8 字节码（major 52），支持已实测的 JDK 8/17。使用 JDK 17 构建并运行测试，平台后端继续使用 JDK 17。Parser 的 Flink/Calcite 版本须精确匹配；Runner 已验证 1.20.3 API 和 1.20.5 运行镜像，其他组合仍需按实际版本构建验收，不作为 1.16–2.3 全版本认证：
 
 ~~~sh
 mvn -f sql-runner/pom.xml -Dflink.version=1.20.3 package
 ~~~
 
 2026-10-10：可把生成的 sql-runner/target/flink-web-sql-runner.jar 上传到平台制品桶管理前缀下的 **shared/sql-runner/{精确Flink版本}/flink-web-sql-runner.jar**，例如 artifacts/shared/sql-runner/1.20.3/flink-web-sql-runner.jar；SQL/Session 表单从 sql-runner 列表手动选择文件，不再根据镜像版本自动取默认文件。其他位置可确认具体 HTTP/HTTPS/S3 地址，使用前须核对 Runner 与运行镜像兼容性。旧 Dockerfile 仅保留历史兼容，不属于默认部署流程。
+
+SQL 或验证专用 Session 的“SQL Runner 文件”区域现在提供“下载平台 SQL Runner”，通过受登录与管理员/开发者权限保护的 `/api/sql/runner/download` 下载当前平台产物。后端镜像从 `/opt/sql-runner/flink-web-sql-runner.jar` 提供文件；本地运行可用 `FLINK_WEB_SQL_RUNNER_JAR` 指定安装文件。下载后上传到 shared/sql-runner/1.20.5 等目录并重新选择，保存并重新发布 SQL；验证 Session 须停止后更新选择并重新启动。原 Runner 不自动覆盖，沿用旧文件仍会执行旧逻辑。
+
+本轮 Runner 修复磁盘 `pipeline.jars`/`pipeline.classpaths` 中的 `local:///` 覆盖 Flink 提交上下文的问题。保持生成 YAML 中用于声明容器内文件的 `local:///`，在 Runner 中沿用 Flink 已解析/分发的 JAR 和类路径，保留业务、状态和 S3 配置。可用 `python scripts/check_sql_application.py --image Flink镜像 --runner Runner文件` 在隔离 Application 中执行初始 datagen → print SQL，脚本自动清理自己的容器及网络。
 
 SQL Application 和 Session 均通过现有 fw-download initContainer 下载 Runner、依赖到共享 emptyDir，挂载 /opt/flink/usrlib，并使用与 JAR 作业相同的登记镜像。需配置系统下载器镜像、工作负载 S3 访问凭据；缺少 Runner 对象时本地渲染/预览即失败。运行镜像仍需提供 Table API、Planner、Table Runtime 与 Print，Connector/驱动可以作为附加 JAR 下载；文件系统插件继续按第 7 节独立准备。不能把核心 Flink JAR 混入 Connector 包。
 
@@ -356,16 +360,23 @@ SQL Application 和 Session 均通过现有 fw-download initContainer 下载 Run
 
 本次验证记录（2026-10-09）：后端 140 项测试全部通过，包含实际精确版本 Parser 和隔离 MinIO 目录生命周期；Runner 7 项通过，浏览器 52 项通过，手机布局及提示修复后新增 4 项再次通过。前端生产构建、全源格式检查、后端分层/中文注释检查和补丁空白检查通过。验证只使用临时数据库、模拟 Kubernetes 和隔离 Docker Session，未改动生产作业；之后已按用户要求发布 app/web 镜像，摘要及镜像运行检查见第 4 节。可用 `python scripts/check_sql_session.py --image 已有Flink镜像 --runner Runner产物路径` 复查 Session 行为，脚本自动清理创建的测试容器和网络。
 
-后端镜像已内置 Flink 1.20.3 / Calcite 1.32.0 Parser。本地可安装：
+后端镜像已内置 Flink 1.20.3、1.20.5 / Calcite 1.32.0 Parser；本地安装目录为 sql-validators 下的对应精确版本。点击 SQL 检查时由平台自动调用，不将 validator.jar 上传为 SQL 主程序或 Connector。本地可重建安装：
 
 ~~~powershell
 mvn -f sql-validator/pom.xml package
 New-Item -ItemType Directory -Force sql-validators/1.20.3
 Copy-Item sql-validator/target/flink-web-sql-validator.jar sql-validators/1.20.3/validator.jar
+mvn -f sql-validator/pom.xml -Dflink.version=1.20.5 clean package
+New-Item -ItemType Directory -Force sql-validators/1.20.5
+Copy-Item sql-validator/target/flink-web-sql-validator.jar sql-validators/1.20.5/validator.jar
 $env:FLINK_WEB_SQL_VALIDATOR_DIR = (Resolve-Path sql-validators).Path
 ~~~
 
 镜像登记的 flinkVersion 必须为匹配的精确补丁版本，未安装对应适配器时返回 BASIC。其他版本需核对 Flink/Calcite 依赖后独立构建，不能只改目录名；以只读卷装入目录时不要遮蔽需保留的默认版本。每次校验使用受限独立 JVM，不继承平台数据库/S3 凭据，不加载用户连接器或探测 Catalog。
+
+2026-10-12 JDK 验收：JDK 8u361 和 JDK 17.0.10 下，两份 Parser 各通过有效初始 SQL、错误 SQL、空数组、非文本语句、101 条及超限输入六种检查；Runner 使用真实 Flink 1.20.3 Planner/MiniCluster 各执行并输出三条数据。Parser JSON 固定 UTF-8，避免 Windows JDK 8 默认编码影响协议。两份 Parser 的非多版本目录依赖字节码一并检查不高于 major 52。`scripts/check_sql_jars.py` 可复测；需传入对应 Flink 运行依赖的 classpath 文件，不能将测试类或 JUnit 当作运行依赖。
+
+本轮交付 SHA-256：Runner `b0ee60c2dc646aa95614d18c7c6101be1b57342c9da458b3137c49ff61952d69`；Parser 1.20.3 `a436aa7d84873afa44202979366355160a17c69ba87d03d8873736afda1882e1`；Parser 1.20.5 `df70333dcd526eb53a3d7dd67e5781680350017e8156b16edaf042ec13c613ac`。以上是本轮文件摘要，重建后以实际文件为准。
 
 ## 7. S3、下载器与状态存储
 
@@ -511,6 +522,16 @@ SQL Application 和验证专用 Session 的 Runner 改为手动选择：在 SQL 
 2026-10-12 状态根目录、S3凭据与旧作业账号修复发布：app/web 的 0.0.4 已构建、实际镜像验证并覆盖推送，最终摘要见上表；downloader 保留原摘要，未更新 latest。复用现有已验证的 Kylin/JRE 和 Nginx 运行层，分别替换离线测试通过的后端JAR和前端生产产物，依赖版本不变；均为 linux/amd64、UID 10001。使用同一registry的 localhost:15000 映射推送，随后从指定 192.168.68.1:5000 地址校验 manifest正文SHA-256、Docker-Content-Digest、本地config ID一致。
 
 最终校验：后端176项全部通过（含真实精确Parser、隔离MinIO、完整状态根绑定、Flink配置内密钥、Secret引用不可读/非法值拒绝与请求级读取、历史脱敏，以及旧资源直接启动/删除后重建的管理员、开发者和运维边界）。前端类型/生产构建/全源格式、Java分层及172类/858方法构造器中文注释检查通过。实际新app/web在非root、只读根文件系统、临时SQLite下通过真实加密登录、状态默认值、配置内AK/SK、无主容器AWS AK/SK、密钥安全预览、旧作业重新部署、停止后新账号启动及旧资源仍在的直接启动；Kubernetes写入使用隔离协议替身，未连接现场集群。实际Web上6项账号/模板页面回归、代理/DNS恢复检查通过。
+
+### SQL 启动、JDK 兼容与工作台发布（2026-10-12）
+
+已构建、验证并覆盖推送 app/web:0.0.4，不更新latest，downloader保持原版本；第4节摘要已通过指定仓库manifest正文、header和config ID核对。使用全量校验通过的本地后端、Java8字节码Runner、两份精确Parser与前端产物，复用已验证的Kylin SP3运行层；app/web均为linux/amd64、UID/GID10001。标准backend/Dockerfile同步构建和安装两份Parser及下载用Runner。
+
+验收：后端178项、Runner8项、实际Web15项交互回归；JDK8/17真实Runner与双版本Parser；Flink1.20.5/JDK17初始SQL Application及Session验证100条/动态依赖均通过。实际非root只读镜像通过加密登录、1.20.5 PARSER检查和Runner下载哈希匹配；Web DNS/代理、前端类型/构建/全源格式、Java分层及172类/863方法构造器中文注释检查通过。详情见[知识验收记录](agent/validation.md#sql-运行与-jdk-兼容验收2026-10-12)。
+
+未更新实际Kubernetes工作负载或已有SQL/Session资源；现有平台Pod须重新拉取镜像，旧SQL草稿须按第6节重新选择新版Runner并发布，验证Session须停止后更新Runner再启动。现场地址首页可达，浏览器工具启动失败，未读取登录后现场作业配置；本轮成功结果来自隔离真实Flink和本地协议/浏览器验证。
+
+本轮独占验证容器、网络、数据库、日志、临时凭据/打包副本及浏览器产物已清理；构建缓存回收513.2MB，保留已标记镜像、交付JAR与共享Maven依赖。
 
 旧草稿/运行资源的手工状态目录不会自动迁移；新建或显式重新启用状态存储使用完整新根目录。已有作业要采用新的S3配置表达方式，应检查草稿后显式重新部署。已保存ServiceAccount在具备编辑权限的启动/恢复操作中生效，仅运维权限继续用原账号。
 

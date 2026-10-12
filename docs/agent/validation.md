@@ -64,3 +64,15 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 - 本轮临时服务、网络、数据库及独占脚本/日志清理；共享依赖与原有数据/备份保留，已标记镜像保留。文件数量及执行清单见cleanup-report。
 
 系统临时目录例外：首轮JUnit的两个目录删除仍AccessDenied，未变更系统ACL；具体路径记在open-questions。项目内独占目录/隔离MinIO/代理容器与网络已清理，不把系统目录误记为清理成功。
+
+## SQL 运行与 JDK 兼容验收（2026-10-12）
+
+- 后端178项、Runner8项全部通过；包含真实精确1.20.3/1.20.5 Parser、隔离MinIO、权限控制下载、提交上下文与磁盘local路径冲突回归。
+- Runner与两份Parser的基础字节码及打包依赖不高于major52；JDK8u361/JDK17.0.10均执行真实Runner并输出3条，各版本Parser每个JDK通过6种有效/错误/限额输入用例。
+- 真实Flink1.20.5/JDK17 Application在pipeline.jars为local URI时运行初始datagen→print；隔离Session验证动态文件系统Connector/CSV、原Sink替换、固定JobID、100条和大日志响应。
+- 实际Web镜像15项交互回归通过，含拖动/键盘/窗口缩小/全屏/390px、共同配置名称、三处模板和SQL验证；前端类型/生产构建/全源格式、Java分层/中文注释通过。
+- 实际app/web非root只读运行、临时SQLite、真实加密登录、两份Parser安装、1.20.5初始SQL的PARSER结果及Runner下载SHA-256与本地一致；Web DNS/代理恢复通过。
+- app/web0.0.4已推送并通过指定192.168.68.1:5000仓库的manifest正文摘要、header摘要和config镜像ID核对；downloader保持原摘要。现场首页只读可达，但浏览器工具无法启动，未读登录后作业详情或更新生产资源。
+- 本轮独占临时资源与前端验证输出已清理，Docker构建缓存回收513.2MB；交付Runner/Parser、已标记镜像和共享依赖保留。
+
+验收范围限上述版本和隔离环境；实际Kubernetes/Operator、其他JDK/Flink/连接器组合仍须环境验收。复测入口见[SQL模块](modules/sql-session.md)，当前镜像摘要与旧作业更新Runner步骤见[部署指南](../deployment.md#6-sql-runnerparser-与运行镜像)。

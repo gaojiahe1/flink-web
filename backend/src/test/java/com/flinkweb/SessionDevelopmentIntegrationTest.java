@@ -56,6 +56,36 @@ class SessionDevelopmentIntegrationTest {
     registry.add(
         "platform.security.master-key", () -> "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
     registry.add("platform.artifacts.downloader-image", () -> "registry.test/downloader:current");
+    registry.add(
+        "platform.sql-validation.runner-jar",
+        () -> DATABASE.getParent().resolve("runner.jar").toString());
+  }
+
+  /** 下载入口使用固定文件及开发权限，缺失时明确报错，不允许访客下载。 */
+  @Test
+  void runnerDownloadRequiresInstalledFileAndDevelopmentPermission() throws Exception {
+    Path runnerFile = DATABASE.getParent().resolve("runner.jar");
+    mvc.perform(get("/api/sql/runner/download")).andExpect(status().isNotFound());
+    byte[] artifact = new byte[] {80, 75, 3, 4};
+    Files.write(runnerFile, artifact);
+    try {
+      mvc.perform(get("/api/sql/runner/download"))
+          .andExpect(status().isOk())
+          .andExpect(
+              header()
+                  .string("Content-Disposition", "attachment; filename=flink-web-sql-runner.jar"))
+          .andExpect(header().string("Cache-Control", "no-store"))
+          .andExpect(content().bytes(artifact));
+      mvc.perform(
+              get("/api/sql/runner/download")
+                  .with(
+                      org.springframework.security.test.web.servlet.request
+                          .SecurityMockMvcRequestPostProcessors.user("viewer")
+                          .roles("VIEWER")))
+          .andExpect(status().isForbidden());
+    } finally {
+      Files.deleteIfExists(runnerFile);
+    }
   }
 
   @Autowired RecordRepository records;

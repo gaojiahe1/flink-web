@@ -11,7 +11,25 @@
   overflow: hidden;
 }
 .sql-workbench.with-inspector {
-  grid-template-columns: var(--explorer-width) minmax(0, 1fr) clamp(300px, 26vw, 380px) 42px;
+  grid-template-columns: var(--explorer-width) minmax(0, 1fr) 8px var(--inspector-width) 42px;
+}
+.sql-inspector-resizer {
+  cursor: col-resize;
+  touch-action: none;
+  background: #f4f7fc;
+  border-inline: 1px solid var(--line);
+}
+.sql-inspector-resizer:hover,
+.sql-inspector-resizer:focus-visible,
+.inspector-resizing .sql-inspector-resizer {
+  background: #c7dbff;
+  outline: none;
+}
+.inspector-resizing {
+  user-select: none;
+}
+.sql-runtime-guide summary {
+  cursor: pointer;
 }
 .sql-workbench.explorer-collapsed {
   --explorer-width: 38px;
@@ -347,14 +365,14 @@
   .sql-workbench {
     --explorer-width: 140px;
   }
-  .sql-workbench.with-inspector {
-    grid-template-columns: var(--explorer-width) minmax(0, 1fr) 300px 42px;
-  }
   .sql-toolbar > .muted {
     display: none;
   }
 }
 @media (max-width: 1000px) {
+  .sql-inspector-resizer {
+    display: none;
+  }
   .sql-workbench,
   .sql-workbench.with-inspector {
     grid-template-columns: var(--explorer-width) minmax(0, 1fr) 42px;
