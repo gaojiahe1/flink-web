@@ -6,7 +6,7 @@
 
 SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接池1、DELETE回滚日志；MySQL另方言和连接池。V1–V5/全量DDL均保留，不把schema.sql当可删除重复文件。配置切换不迁移数据。原主密钥必须保留才能解密配置及停止前实际部署配置。
 
-浏览器敏感字段 RSA-OAEP-SHA256+AES-GCM，挑战绑定会话/用途/目标，120秒且一次消费；后端拒绝这些字段的明文提交。普通SQL/YAML手写内容不自动保护，字段加密不替代HTTPS。配置的加密值实际提交为env.value，不新建Secret；已有显式Secret引用保留，预览/发布历史各按规则脱敏。
+浏览器敏感字段 RSA-OAEP-SHA256+AES-GCM，挑战绑定会话/用途/目标，120秒且一次消费；后端拒绝这些字段的明文提交。普通SQL/YAML手写内容不自动保护，字段加密不替代HTTPS。普通容器密钥引用实际提交为env.value或保留显式Secret引用；2026-10-12起Flink S3 AK/SK例外，直接在flinkConfiguration展开，既有Secret配置引用按请求读取。均不新建Secret，预览/发布历史各按规则脱敏。
 
 角色与作业范围同时生效：ADMIN管理；DEVELOPER授权范围开发/部署；OPERATOR运行操作但不删平台草稿；VIEWER只读。新作业归创建者，旧无ACL沿用旧角色边界，不能擅自删除兼容路径。
 

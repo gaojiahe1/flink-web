@@ -22,3 +22,7 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 - [KubernetesClient.java](../../../backend/src/main/java/com/flinkweb/client/kubernetes/KubernetesClient.java)
 - [JobsView.vue](../../../frontend/src/modules/job-management/pages/JobsView.vue)
 - [WorkbenchIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/WorkbenchIntegrationTest.java)
+
+2026-10-12 账号规则：OperationServiceImpl 对有编辑权限操作者重建停止快照时，将已保存草稿显式 serviceAccount 合入；仅该字段例外，其余快照配置保持原规则。运维不可借启动发布草稿，显式 deploy 始终取最新草稿。
+
+补充适用范围：ServiceAccount 例外同时覆盖旧资源仍存在的直接启动/恢复和资源删除后的重建；平台编辑角色与作业编辑权限同时满足才采用草稿账号。最终176项后端回归和实际镜像闭环通过。

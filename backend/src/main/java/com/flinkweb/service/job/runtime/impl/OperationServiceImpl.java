@@ -70,7 +70,8 @@ public class OperationServiceImpl implements OperationService {
 
   /** 渲染配置引用并校验 YAML，可选择以 Kubernetes dry-run 检查集群是否保留提交字段。 */
   public ObjectNode validate(String source, String name, boolean dryRun) {
-    var rendered = variables.render(yaml.parse(source));
+    var sourceNode = yaml.parse(source);
+    var rendered = variables.render(sourceNode);
     var resource = yaml.validate(rendered.deployment(), name);
     if (dryRun) {
       var existing = client.call("GET", client.base() + "/" + name, null);
@@ -96,7 +97,7 @@ public class OperationServiceImpl implements OperationService {
         .createObjectNode()
         .put("valid", true)
         .put("dryRun", dryRun)
-        .put("yaml", yaml.dump(variables.preview(resource)))
+        .put("yaml", yaml.dump(variables.preview(resource, sourceNode)))
         .put("message", dryRun ? "本地验证及 Kubernetes dry-run 通过" : "本地验证通过；提交时仍需 Kubernetes dry-run");
   }
 
@@ -319,6 +320,22 @@ public class OperationServiceImpl implements OperationService {
                       Math.max(nonce, specJob.path("savepointRedeployNonce").asLong() + 1))
                   .put("state", "running");
             }
+          }
+        }
+        if (Set.of("start", "restore").contains(action)
+            && auth != null
+            && auth.getAuthorities().stream()
+                .anyMatch(
+                    a ->
+                        a.getAuthority().equals("ROLE_ADMIN")
+                            || a.getAuthority().equals("ROLE_DEVELOPER"))
+            && access.allowed(id, "edit")) {
+          JsonNode account = yaml.parse(job.yaml()).at("/spec/serviceAccount");
+          if (!account.isMissingNode()) {
+            if (!account.isTextual()
+                || !account.asText().matches("[a-z0-9]([-a-z0-9.]*[a-z0-9])?")
+                || account.asText().length() > 253) fail("serviceAccount: 运行账号格式无效");
+            resource.withObject("/spec").set("serviceAccount", account.deepCopy());
           }
         }
         if (rendered == null && Set.of("start", "restore").contains(action)) {

@@ -77,7 +77,7 @@ public class ReleaseServiceImpl implements ReleaseService {
     return records.save("releases", UUID.randomUUID().toString(), entry, 0);
   }
 
-  /** 环境变量字面值可能来自已轮换的历史密钥，一律隐藏；引用占位符保留。 */
+  /** 环境变量和 Flink S3 凭据可能来自已轮换的历史密钥，隐藏字面值并保留引用。 */
   private void hideEnvironmentValues(JsonNode node) {
     if (node.isObject()) {
       if (node.path("env").isArray())
@@ -89,6 +89,11 @@ public class ReleaseServiceImpl implements ReleaseService {
                   .asText()
                   .matches("^\\{\\{(?:secret|config):[a-z0-9_.-]+}}$"))
             ((ObjectNode) variable).put("value", "******");
+      if (node.path("flinkConfiguration") instanceof ObjectNode config)
+        for (String key : List.of("s3.access-key", "s3.secret-key"))
+          if (config.has(key)
+              && !config.path(key).asText().matches("^\\{\\{secret:[a-z0-9_.-]+}}$"))
+            config.put(key, "******");
       for (JsonNode child : node) hideEnvironmentValues(child);
     } else if (node.isArray()) for (JsonNode child : node) hideEnvironmentValues(child);
   }

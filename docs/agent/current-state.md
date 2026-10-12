@@ -1,11 +1,12 @@
 # 当前状态
 
-更新：2026-10-12；基线提交 `2e21351`，治理分支 `codex/project-governance-20261012`。
+更新：2026-10-12。当前修复分支 `codex/fix-state-root-s3-config`；治理基线已保存在先前本地提交。
 
-- 已完成低风险治理：8 个受跟踪 Parser 输出移出版本管理；43 份历史生成日志删除；运行 Parser、源码、迁移、部署与未知备份保留。详见 [清理报告](cleanup-report.md)。
-- 已完成索引与长期工作规则建设；运行源码/API/数据库模型没有变更。最近业务实现为可编辑 ServiceAccount 与三层 PodTemplate，仍以 [REQ-002](requirements/REQ-002-authoring.md) 为入口。
-- 本轮：后端 167 项、SQL Runner 7 项、下载器 8 项全部通过；Parser 重建、前端类型/构建/格式、Java 分层/注释及容器代理回归通过。知识校验与实际检索演示见 [验收记录](validation.md)。
-- 现有 app/web/downloader 的 0.0.4 仓库摘要已重新核对，匹配本地；本轮没有受影响的应用镜像内容，未重新发布镜像、未更改 Kubernetes 工作负载。
-- 无进行中的业务开发需求或必须输入才能继续的阻塞。需要后续处理的风险：[固定部署初始化凭据、未知备份/本地库、真实环境验收](open-questions.md)。
+- 已修复 FLINK_WEB_STATE_ROOT 属性读取错误，完整桶/前缀用于新建状态目录和专属清理；既有手工目录不自动迁移。
+- Flink S3 AK/SK 在 flinkConfiguration 原位置展开，清理主容器旧同名AWS变量，下载器鉴权保留；预览/历史仍隐藏密钥。对应 [REQ-004](requirements/REQ-004-storage-security.md)。
+- 旧作业的显式部署采用最新草稿；具备平台编辑角色与作业编辑权限的启动/恢复采用已保存草稿的显式ServiceAccount，覆盖旧资源直接启动和停止后重建；仅运维权限保持实际运行账号。对应 [REQ-002](requirements/REQ-002-authoring.md)。
+- 本轮后端176项、实际Web的6项账号/模板回归通过；真实Parser、隔离MinIO、构建/格式/分层及实际镜像加密登录/配置/提交闭环通过。真实Kubernetes/Operator/账号RBAC仍未验收。
+- app/web 0.0.4已发布并核对指定仓库摘要，downloader未改；发布方法与摘要见 [部署指南](../deployment.md)。未更新实际工作负载，现有Pod需按授权流程重新拉取镜像。
+- 安全治理结果与未知备份/数据库、固定部署凭据等待确认项继续保留，见 [清理报告](cleanup-report.md)、[待确认事项](open-questions.md)。
 
-下一次任务从 [INDEX](INDEX.md) 按关键词定位。不要把未确认项自动升级为待开发承诺。
+下一次任务从 [INDEX](INDEX.md) 按关键词定位，仅增量维护受影响内容。

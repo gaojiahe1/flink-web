@@ -24,3 +24,5 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 - [ArtifactPicker.vue](../../../frontend/src/modules/artifact/components/ArtifactPicker.vue)
 - [S3DirectoryLiveTest.java](../../../backend/src/test/java/com/flinkweb/S3DirectoryLiveTest.java)
 - [test_download.py](../../../downloader/test_download.py)
+
+2026-10-12：S3StorageClient 从 platform.operator.state-root 取得 FLINK_WEB_STATE_ROOT，默认值与 UUID 状态清理均保留完整前缀。VariableRenderer 将 Flink S3 AK/SK 在 flinkConfiguration 原位置展开并清理主容器旧 AWS AK/SK；下载器 env 鉴权保留。已有 Secret 引用须 GET 读取指定键，明文仅在本次提交内；预览和历史隐藏。

@@ -8,7 +8,7 @@ Flink Web 使用 Spring Boot / JDK 17 和 Vue 3 / TypeScript，通过运维已�
 
 - **按需查询**：首次进入作业和 Session 列表查询一次，其后手动刷新，前端冷却 3 秒。多用户、多标签独立请求，没有常驻状态轮询、watch、跨页面状态缓存或请求合并。提交和纳管时会进行必要的即时身份/状态检查。2026-10-09：SQL 验证是显式操作的例外，验证期间浏览器每两秒查询状态与日志，切页或终态停止监听；后端为每次验证安排两分钟截止取消，未确认取消时继续执行清理重试，重启后恢复未完成清理。
 - **状态语义**：草稿、期望状态和最近观测状态分别展示。操作返回 ACCEPTED 仅表示请求已受理，不代表作业运行成功；最终状态以手动刷新结果为准。JobManager ERROR、status.error 或失败状态优先显示为“部署异常”，保留原始 Flink 状态供 YAML/诊断查看；列表同时展示错误摘要。
-- **停止与删除**：停止最终删除 Kubernetes FlinkDeployment。支持“Savepoint 完成后删除”和“立即删除”，不提供 last-state 停止。前者要求正常 RUNNING 且已配置 Savepoint 目录，先由 Operator 挂起并生成新的保存点，持久化恢复路径后删除资源；手动刷新或再次停止会推进这个已授权的停止流程，后台不轮询，保存点未完成不删除。后者直接提交带 UID/resourceVersion 前置条件的删除，适用于启动中或异常作业。删除完成前停止仍可用，可从保留状态切换到立即删除。启动受理后禁用重复启动；快照只允许实际 RUNNING、期望 running、没有启停或升级中的作业。停止提交后立即显示停止意图；刷新先推进停止再采集状态，清除旧的提交提示，确认资源消失后显示已停止。停止提交后关闭弹窗，结果显示在页面，不再展示第二个结果弹窗。平台草稿仍须等集群资源消失后才能删除。停止前的实际配置同时落库，再次启动复用该配置，避免误发布未部署的编辑草稿；运维角色可以按原配置重建，首次部署仍需要编辑权限。
+- **停止与删除**：停止最终删除 Kubernetes FlinkDeployment。支持“Savepoint 完成后删除”和“立即删除”，不提供 last-state 停止。前者要求正常 RUNNING 且已配置 Savepoint 目录，先由 Operator 挂起并生成新的保存点，持久化恢复路径后删除资源；手动刷新或再次停止会推进这个已授权的停止流程，后台不轮询，保存点未完成不删除。后者直接提交带 UID/resourceVersion 前置条件的删除，适用于启动中或异常作业。删除完成前停止仍可用，可从保留状态切换到立即删除。启动受理后禁用重复启动；快照只允许实际 RUNNING、期望 running、没有启停或升级中的作业。停止提交后立即显示停止意图；刷新先推进停止再采集状态，清除旧的提交提示，确认资源消失后显示已停止。停止提交后关闭弹窗，结果显示在页面，不再展示第二个结果弹窗。平台草稿仍须等集群资源消失后才能删除。停止前的实际配置同时落库，再次启动复用该配置；2026-10-12：有编辑权限的操作者启动/恢复时，已保存草稿中显式填写的 ServiceAccount 优先于旧资源或停止快照旧账号，其余配置仍复用停止前值，未保存表单不生效。仅运维权限的操作者继续按原配置重建；首次部署与显式部署需要编辑权限。
 - **存储**：默认本地 SQLite，可挂 PVC；可切换 MySQL。切换配置不会迁移已有数据。当前按单后端实例部署。默认自动判断数据库文件：不存在时建库，已存在时保留数据并执行必要版本迁移，无需首次部署补丁或切换开关；启动报告区分本地库缺失与初始管理员密码配置错误，给出修复步骤。S3 不存储平台元数据库。
 - **平台工作负载（2026-10-09）**：前后端使用同一个单副本 StatefulSet/flink-web，每个 Pod 两个独立镜像容器；前端 8080、本机后端 8081，NodePort 30080 保留。SQLite 复用原 PVC，仅后端挂载 Kubernetes API 令牌。此清单变更不改变 Operator 管理的 Flink 作业和 Session 资源；旧 Deployment 迁移步骤见部署指南。
 - **范围**：不管理多 Kubernetes 集群、多作业 namespace 或 FlinkSessionJob；Session 中的 SQL 验证通过 Flink REST 提交。Operator 可以位于另一个已明确配置并授权的 namespace。
@@ -30,7 +30,7 @@ Flink Web 使用 Spring Boot / JDK 17 和 Vue 3 / TypeScript，通过运维已�
 
 运行 YAML 的 metadata/spec 中的密钥、环境变量字面值、命令参数及注解会隐藏，managedFields 不返回；按 2026-09-29 的展示要求，顶层 status 及其全部子字段保持原值（包括 error、lastReconciledSpec），不作脱敏替换。该副本不能直接用于重新部署。日志会遮蔽已知密钥与常见凭据模式，但不能保证识别任意应用输出中的所有敏感内容。
 
-状态存储由 JAR/SQL 页面显式开启；后台不再补入 checkpoint 间隔、S3 目录或保留数量。按 2026-09-30 最新要求，启用后默认使用 S3，自动将 endpoint、路径式访问、按作业 UUID 划分的 Checkpoint/Savepoint 路径写入 Flink 配置，同时生成 high-availability.type=kubernetes 与按作业 UUID 划分的 high-availability.storageDir（/ha）；关闭状态存储时移除托管的 Checkpoint/Savepoint、S3 和 HA 配置。不再生成 s3.region；表单不再要求填写这些连接项目，也不再展示存储实现或状态后端选择。页面提供 Checkpoint 周期、保留数量、外部 Checkpoint 存储策略（取消后保留、取消后删除、不保留外部 Checkpoint、Flink 默认）以及恢复策略的对应参数，提供各策略的介绍和适用场景；这些值与 Flink 配置编辑器共用同一份配置。启用时写入 s3.access-key / s3.secret-key，分别引用配置管理中的 {{secret:s3-access-key}} / {{secret:s3-secret-key}}；2026-10-10：部署渲染时将这两个引用转换为 Flink 主容器的 AWS 环境变量，加密密钥直接展开为实际值提交到目标 namespace，不为这些值新建 Kubernetes Secret。预览恢复密钥占位符，发布历史隐藏环境变量字面值；停止前配置加密保存供按原配置重建。用户明确登记的既有 Kubernetes Secret 引用仍保留。管理员需保留运行镜像的默认 S3 凭据链。所有表单时长采用数字与单位分离的输入，旧配置单位回填保留语义。Flink 1.x/2.x 按版本生成对应配置键，并展示已有旧键的值。纳管不改变既有状态目录与保留策略。快照台账只记录用户刷新时观测到的完成点，不补造遗漏记录；_metadata 存在不等于共享状态完整或升级兼容。last-state 校验同时要求 HA 类型及 HA 存储目录，运行身份还需具备 Kubernetes HA 所需权限。
+状态存储由 JAR/SQL 页面显式开启；后台不再补入 checkpoint 间隔、S3 目录或保留数量。按 2026-09-30 最新要求，启用后默认使用 S3，自动将 endpoint、路径式访问、按作业 UUID 划分的 Checkpoint/Savepoint 路径写入 Flink 配置，同时生成 high-availability.type=kubernetes 与按作业 UUID 划分的 high-availability.storageDir（/ha）；关闭状态存储时移除托管的 Checkpoint/Savepoint、S3 和 HA 配置。不再生成 s3.region；表单不再要求填写这些连接项目，也不再展示存储实现或状态后端选择。页面提供 Checkpoint 周期、保留数量、外部 Checkpoint 存储策略（取消后保留、取消后删除、不保留外部 Checkpoint、Flink 默认）以及恢复策略的对应参数，提供各策略的介绍和适用场景；这些值与 Flink 配置编辑器共用同一份配置。启用时写入 s3.access-key / s3.secret-key，分别引用配置管理中的 {{secret:s3-access-key}} / {{secret:s3-secret-key}}；2026-10-12：部署渲染时在 flinkConfiguration 中展开 s3.access-key / s3.secret-key 的实际值，不再转换为 Flink 主容器 AWS 环境变量，并清理三处主容器的旧 AK/SK 环境值。配置为既有 Secret 引用时按请求读取目标 namespace 的 Secret 并展开，平台身份需具备该 Secret 的 get 权限；普通容器 env.value 中的显式 Secret 引用继续保留。预览恢复源引用或隐藏字面值，发布历史隐藏 Flink S3 凭据与环境变量字面值；停止前配置加密保存。S3 文件下载器仍独立使用其鉴权环境变量，不为这些值新建 Kubernetes Secret。所有表单时长采用数字与单位分离的输入，旧配置单位回填保留语义。Flink 1.x/2.x 按版本生成对应配置键，并展示已有旧键的值。纳管不改变既有状态目录与保留策略。快照台账只记录用户刷新时观测到的完成点，不补造遗漏记录；_metadata 存在不等于共享状态完整或升级兼容。last-state 校验同时要求 HA 类型及 HA 存储目录，运行身份还需具备 Kubernetes HA 所需权限。
 
 2026-09-29：作业列表展示数据库自增编号；新作业 FlinkDeployment 名称为至少七位补零编号（flink-0000001 起，超过七位继续增长），作业显示名称仍独立且唯一。UUID 继续用于平台 API/权限关联；编号删除后不复用。升级自动为已有作业补编号；纳管和数据库升级本身保留原资源名及 UID。按 2026-09-30 决策，旧资源停止并确认删除后，再次启动会切换到 flink-0000001 形式的编号；展示名只用于平台，平台 UUID 与编号保持稳定。旧资源尚在时须先停止，不能同时创建第二份。名称输入失焦查询全局重名，保存时由数据库唯一约束兜底。列表展开区已移除重复的部署/启停/指定路径恢复和原始快照信息，保留操作记录及工作台。
 
@@ -132,7 +132,7 @@ Hive/Paimon/Iceberg 只做初始化配置校验，后端不加载其插件；不
 | 用法 | 写法与约束 |
 | --- | --- |
 | YAML 普通配置 | 引号包裹的完整标量 "{{config:id}}"，支持类型化替换，不能在字符串中拼接 |
-| YAML 密钥 | 容器 env.value 中使用 "{{secret:id}}"；加密值在部署时直接展开，不生成 Secret，预览与历史脱敏；显式已有 Secret 引用继续保留 |
+| YAML 密钥 | 容器 env.value 或 flinkConfiguration 的 s3.access-key / s3.secret-key 中使用 "{{secret:id}}"；加密值在部署时直接展开，不生成 Secret，预览与历史脱敏；显式已有 Secret 引用继续保留 |
 | SQL 密钥 | SQL 单引号字符串内使用 '{{env:DB_PASSWORD}}'，在 PodTemplate 中配置对应环境变量；Runner 在容器中读取并转义 |
 
 例如先登记 db-password 密钥，再设置主容器环境变量：
@@ -224,3 +224,5 @@ SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数�
 ## 9. 项目知识入口（2026-10-12）
 
 [知识索引](agent/INDEX.md) 按业务关键词定位模块、需求和当前代码；本说明继续维护完整业务规则，部署参数和镜像事实仍在部署指南。知识库不保存整段历史聊天，任务结束仅更新受影响的条目。
+
+2026-10-12 状态地址修复：S3 默认值与作业专属状态清理统一读取 application.yml 中的 platform.operator.state-root，即 FLINK_WEB_STATE_ROOT；保留桶后完整路径前缀。新建/显式重新启用状态存储时使用该根目录生成 Checkpoint、Savepoint、HA 地址，不自动迁移或重写已有草稿/运行作业的手工目录。

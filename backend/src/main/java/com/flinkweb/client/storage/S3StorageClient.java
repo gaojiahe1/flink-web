@@ -35,7 +35,7 @@ public class S3StorageClient implements AutoCloseable {
       @Value("${platform.s3.prefix:artifacts/}") String prefix,
       @Value("${platform.s3.endpoint:}") String endpoint,
       @Value("${platform.s3.region:us-east-1}") String region,
-      @Value("${platform.workload.state-root:s3://flink-state}") String stateRoot) {
+      @Value("${platform.operator.state-root:s3://flink-state}") String stateRoot) {
     this.mapper = mapper;
     this.bucket = bucket;
     this.prefix = prefix.replaceAll("/+$", "") + "/";

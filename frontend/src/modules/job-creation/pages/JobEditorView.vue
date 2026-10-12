@@ -688,7 +688,7 @@ async function save(deploy = false) {
       </div>
     </section>
     <details v-if="preview" class="panel form-panel rendered-preview">
-      <summary>实际提交配置预览（密钥为 Secret 引用）</summary>
+      <summary>实际提交配置预览（密钥已隐藏）</summary>
       <CodeEditor :model-value="preview" readonly label="提交 YAML 预览" />
     </details>
     <div class="form-actions editor-actionbar">

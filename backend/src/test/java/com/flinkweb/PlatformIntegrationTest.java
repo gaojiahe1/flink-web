@@ -53,6 +53,7 @@ class PlatformIntegrationTest {
   /** 为集成测试提供独立 SQLite 文件及测试专用管理员和主密钥。 */
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry registry) {
+    registry.add("FLINK_WEB_STATE_ROOT", () -> "s3://flink-web/flink-state/");
     registry.add("platform.artifacts.downloader-image", () -> "registry.test/downloader:kylin-sp3");
     registry.add("platform.storage.type", () -> "local");
     registry.add("platform.storage.local-path", () -> DATABASE.toString());
@@ -68,6 +69,7 @@ class PlatformIntegrationTest {
   @Autowired YamlService yaml;
   @Autowired VariableRenderer renderer;
   @Autowired CatalogService catalogs;
+  @Autowired com.flinkweb.client.storage.S3StorageClient storage;
   @Autowired FormService forms;
   @MockitoBean KubernetesClient kubernetes;
   @MockitoBean com.flinkweb.service.artifact.ArtifactService artifacts;
@@ -231,10 +233,24 @@ class PlatformIntegrationTest {
     assertThatThrownBy(() -> renderer.render(node)).isInstanceOf(BusinessException.class);
   }
 
-  /** S3 配置引用在通用和角色模板中转换为密钥环境变量，预览不含明文。 */
+  /** 配置环境变量必须同时作用于前端默认值与作业状态清理地址。 */
   @Test
   @WithMockUser(roles = "ADMIN")
-  void s3ReferencesBecomeSecretEnvironment() {
+  void stateDefaultsUseConfiguredEnvironmentRoot() throws Exception {
+    assertThat(storage.defaults().path("stateRoot").asText())
+        .isEqualTo("s3://flink-web/flink-state/");
+    String id = UUID.randomUUID().toString();
+    assertThat(storage.jobStateRoot(id)).isEqualTo("s3://flink-web/flink-state/" + id + "/");
+    when(artifacts.defaults()).thenReturn(storage.defaults());
+    mvc.perform(get("/api/artifacts/defaults"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.stateRoot").value("s3://flink-web/flink-state/"));
+  }
+
+  /** S3 引用展开到 Flink 配置，清理三处主容器旧环境值，预览恢复源引用。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void s3ReferencesStayInFlinkConfiguration() {
     String accessId = "s3-access-" + UUID.randomUUID(), secretId = "s3-secret-" + UUID.randomUUID();
     catalogs.save(
         "configs",
@@ -248,6 +264,17 @@ class PlatformIntegrationTest {
             .put("kind", "secretRef")
             .put("secretName", "workload-s3")
             .put("secretKey", "secret-key"));
+    when(kubernetes.core()).thenReturn("/api/v1/namespaces/flink-jobs");
+    var existingSecret = mapper.createObjectNode();
+    existingSecret
+        .putObject("data")
+        .put(
+            "secret-key",
+            java.util.Base64.getEncoder()
+                .encodeToString(
+                    "fake-s3-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    when(kubernetes.call("GET", "/api/v1/namespaces/flink-jobs/secrets/workload-s3", null))
+        .thenReturn(existingSecret);
     var source = yaml.parse(source("s3-test"));
     var config = source.withObject("/spec/flinkConfiguration");
     config
@@ -261,25 +288,78 @@ class PlatformIntegrationTest {
       containers.addObject().put("name", "sidecar").put("image", "test");
       var env = containers.addObject().put("name", "flink-main-container").putArray("env");
       env.addObject().put("name", "OTHER").put("value", "keep");
+      env.addObject().put("name", "AWS_ACCESS_KEY_ID").put("value", "old-access");
       env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", "old-secret");
     }
     var rendered = renderer.render(source);
+    assertThat(rendered.deployment().at("/spec/flinkConfiguration/s3.access-key").asText())
+        .isEqualTo("fake-s3-access");
+    assertThat(rendered.deployment().at("/spec/flinkConfiguration/s3.secret-key").asText())
+        .isEqualTo("fake-s3-secret");
     assertThat(rendered.deployment().toString())
-        .doesNotContain("old-secret", "{{secret:")
-        .contains("fake-s3-access", "workload-s3", "secretKeyRef", "sidecar", "OTHER");
-    assertThat(renderer.preview(rendered.deployment()).toString()).doesNotContain("fake-s3-access");
-    assertThat(rendered.secrets()).isEmpty();
-    assertThat(rendered.deployment().at("/spec/flinkConfiguration").has("s3.access-key")).isFalse();
+        .doesNotContain("old-access", "old-secret", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+        .contains("sidecar", "OTHER");
     assertThat(source.at("/spec/flinkConfiguration/s3.access-key").asText()).contains("{{secret:");
-    for (String path : java.util.List.of("/spec/podTemplate")) {
-      var env = rendered.deployment().at(path + "/spec/containers/1/env");
-      assertThat(env).hasSize(3);
-      assertThat(env.get(2).at("/valueFrom/secretKeyRef/name").asText()).isEqualTo("workload-s3");
-    }
+    assertThat(renderer.preview(rendered.deployment(), source).at("/spec/flinkConfiguration"))
+        .isEqualTo(config);
+    assertThat(renderer.preview(rendered.deployment()).toString())
+        .doesNotContain("fake-s3-access", "fake-s3-secret");
+    assertThat(rendered.secrets()).isEmpty();
     config.put("s3.secret-key", "literal-not-allowed");
     assertThatThrownBy(() -> renderer.render(source))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("必须同时引用");
+  }
+
+  /** Secret 值不可读或无效时明确拒绝，不生成环境变量或泄漏原始数据。 */
+  @Test
+  @WithMockUser(roles = "ADMIN")
+  void s3SecretReferenceRequiresReadableValue() {
+    String id = "s3-ref-" + UUID.randomUUID();
+    catalogs.save(
+        "configs",
+        id,
+        mapper
+            .createObjectNode()
+            .put("kind", "secretRef")
+            .put("secretName", "shared-s3")
+            .put("secretKey", "key"));
+    var source = yaml.parse(source("s3-ref"));
+    source
+        .withObject("/spec/flinkConfiguration")
+        .put("s3.access-key", "{{secret:" + id + "}}")
+        .put("s3.secret-key", "{{secret:" + id + "}}");
+    when(kubernetes.core()).thenReturn("/api/v1/namespaces/flink-jobs");
+    when(kubernetes.call("GET", "/api/v1/namespaces/flink-jobs/secrets/shared-s3", null))
+        .thenReturn(MissingNode.getInstance());
+    assertThatThrownBy(() -> renderer.render(source))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("无法读取 S3 凭据");
+    var secret = mapper.createObjectNode();
+    secret.putObject("data").put("key", "not-base64!");
+    when(kubernetes.call("GET", "/api/v1/namespaces/flink-jobs/secrets/shared-s3", null))
+        .thenReturn(secret);
+    assertThatThrownBy(() -> renderer.render(source))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("不是合法 Base64")
+        .hasMessageNotContaining("not-base64!");
+    clearInvocations(kubernetes);
+    secret
+        .withObject("/data")
+        .put(
+            "key",
+            java.util.Base64.getEncoder()
+                .encodeToString(
+                    "fake-shared-value".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    assertThat(
+            renderer
+                .render(source)
+                .deployment()
+                .at("/spec/flinkConfiguration/s3.secret-key")
+                .asText())
+        .isEqualTo("fake-shared-value");
+    verify(kubernetes, times(1))
+        .call("GET", "/api/v1/namespaces/flink-jobs/secrets/shared-s3", null);
   }
 
   /** 验证只读权限及普通草稿列表查询不会访问 Kubernetes。 */

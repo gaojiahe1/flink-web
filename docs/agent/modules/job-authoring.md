@@ -23,3 +23,7 @@ JAR 表单写 editor=jar-v1；既有/纳管 YAML 转换须明确 allowFormRewrit
 - [PodTemplates.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/PodTemplates.java)
 - [S3PluginPodTest.java](../../../backend/src/test/java/com/flinkweb/S3PluginPodTest.java)
 - [runtime-templates.spec.ts](../../../frontend/tests/runtime-templates.spec.ts)
+
+2026-10-12：停止后重建时，有编辑权限的操作者使用已保存草稿显式 ServiceAccount；未保存编辑不生效，仅运维权限仍采用运行快照账号。保存并部署按最新草稿提交。状态存储默认根读取已修复，详细规则见存储模块。
+
+补充适用范围：ServiceAccount 例外同时覆盖旧资源仍存在的直接启动/恢复和资源删除后的重建；平台编辑角色与作业编辑权限同时满足才采用草稿账号。最终176项后端回归和实际镜像闭环通过。

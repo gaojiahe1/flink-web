@@ -253,8 +253,16 @@ class WorkbenchIntegrationTest {
         .addObject()
         .put("name", "PASSWORD")
         .put("value", "historical-secret-no-longer-in-config");
+    resource
+        .withObject("/spec/flinkConfiguration")
+        .put("s3.access-key", "historical-s3-access")
+        .put("s3.secret-key", "historical-s3-secret");
     var captured = releases.capture(job, resource);
-    assertThat(captured.toString()).doesNotContain("historical-secret-no-longer-in-config");
+    assertThat(captured.toString())
+        .doesNotContain(
+            "historical-secret-no-longer-in-config",
+            "historical-s3-access",
+            "historical-s3-secret");
     assertThat(resource.toString()).contains("historical-secret-no-longer-in-config");
   }
 
@@ -566,6 +574,153 @@ class WorkbenchIntegrationTest {
     verify(kubernetes, atLeast(2)).call(eq("DELETE"), anyString(), any());
     verify(kubernetes, never()).call(eq("PUT"), anyString(), any());
     verify(kubernetes, never()).call(eq("POST"), anyString(), any());
+  }
+
+  /** 原资源尚在时，编辑角色直接启动使用新账号，运维角色继续保留原账号。 */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"ADMIN", "DEVELOPER", "OPERATOR"})
+  void startExistingResourceAppliesAccountOnlyForEditors(String role) {
+    var job = draft();
+    var resource = live(job, "FINISHED", "suspended");
+    resource.withObject("/spec").put("serviceAccount", "legacy-flink");
+    var edited = yaml.parse(job.yaml());
+    edited.withObject("/spec").put("serviceAccount", "team-flink");
+    var changed =
+        jobs.update(
+            job.id(),
+            new DraftRequest(
+                job.name(), "new account", job.flinkVersion(), yaml.dump(edited), job.revision()));
+    actor("admin", role);
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("PUT"), anyString(), any()))
+        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+    assertThat(
+            operations
+                .execute(
+                    job.id(),
+                    "start",
+                    command(changed).put("upgradeMode", "stateless"),
+                    () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    String expected = role.equals("OPERATOR") ? "legacy-flink" : "team-flink";
+    verify(kubernetes)
+        .call(
+            eq("PUT"),
+            eq("/cr/" + job.deploymentName()),
+            argThat(body -> body.at("/spec/serviceAccount").asText().equals(expected)));
+  }
+
+  /** 对已有运行资源显式部署，也必须提交最新草稿账号而非旧集群配置。 */
+  @Test
+  void deployExistingResourceUpdatesServiceAccount() {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/spec").put("serviceAccount", "legacy-flink");
+    var edited = yaml.parse(job.yaml());
+    edited.withObject("/spec").put("serviceAccount", "team-flink");
+    var changed =
+        jobs.update(
+            job.id(),
+            new DraftRequest(
+                job.name(), "new account", job.flinkVersion(), yaml.dump(edited), job.revision()));
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("PUT"), anyString(), any()))
+        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+    assertThat(
+            operations
+                .execute(job.id(), "deploy", command(changed), () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    verify(kubernetes)
+        .call(
+            eq("PUT"),
+            eq("/cr/" + job.deploymentName()),
+            argThat(body -> body.at("/spec/serviceAccount").asText().equals("team-flink")));
+  }
+
+  /** 旧作业停止后，编辑者启动或显式部署均采用已保存的新运行账号。 */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"start", "deploy"})
+  void editorAfterStopUsesSavedServiceAccount(String action) {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/spec").put("serviceAccount", "legacy-flink");
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    assertThat(
+            operations
+                .execute(
+                    job.id(), "stop", command(job).put("upgradeMode", "stateless"), () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    var edited = yaml.parse(job.yaml());
+    edited.withObject("/spec").put("serviceAccount", "team-flink");
+    var changed =
+        jobs.update(
+            job.id(),
+            new DraftRequest(
+                job.name(), "new account", job.flinkVersion(), yaml.dump(edited), job.revision()));
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(MissingNode.getInstance());
+    when(kubernetes.call(eq("POST"), anyString(), any()))
+        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+    assertThat(
+            operations
+                .execute(job.id(), action, command(changed), () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    verify(kubernetes)
+        .call(
+            eq("POST"),
+            eq("/cr"),
+            argThat(body -> body.at("/spec/serviceAccount").asText().equals("team-flink")));
+  }
+
+  /** 仅有运维权限时仍复用停止前账号，不能发布编辑者保存的草稿变更。 */
+  @Test
+  void operatorAfterStopKeepsDeployedServiceAccount() {
+    var job = draft();
+    var resource = live(job, "RUNNING", "running");
+    resource.withObject("/spec").put("serviceAccount", "legacy-flink");
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(resource);
+    when(kubernetes.call(eq("DELETE"), anyString(), any())).thenReturn(mapper.createObjectNode());
+    assertThat(
+            operations
+                .execute(
+                    job.id(), "stop", command(job).put("upgradeMode", "stateless"), () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    var edited = yaml.parse(job.yaml());
+    edited.withObject("/spec").put("serviceAccount", "team-flink");
+    var changed =
+        jobs.update(
+            job.id(),
+            new DraftRequest(
+                job.name(), "new account", job.flinkVersion(), yaml.dump(edited), job.revision()));
+    actor("admin", "OPERATOR");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(MissingNode.getInstance());
+    when(kubernetes.call(eq("POST"), anyString(), any()))
+        .thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+    assertThat(
+            operations
+                .execute(job.id(), "start", command(changed), () -> "admin")
+                .path("state")
+                .asText())
+        .isEqualTo("ACCEPTED");
+    verify(kubernetes)
+        .call(
+            eq("POST"),
+            eq("/cr"),
+            argThat(body -> body.at("/spec/serviceAccount").asText().equals("legacy-flink")));
   }
 
   /** 重建复用停止前的运行配置，不把未部署草稿修改隐式发布，也保留旧工作负载账号。 */

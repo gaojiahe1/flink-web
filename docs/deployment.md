@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:efc8feed9793a518357e7f26e635b30ca8b5671a30eef62bb89aa6fd46055c85 |
+| 192.168.68.1:5000/flink-web/app | sha256:76915db91701fcf02f1d90ab9ecd5614b1d58612bd6526ce299628dc2fad5fa0 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:e3ec6c5b7eb61c6a69232cc7996fd205f753dec68c93e3512007e7bf52013981 |
+| 192.168.68.1:5000/flink-web/web | sha256:113f1059206a7d0da2bafc5a5ba13045fb4d118e5d21bc6b0a48eaa93cf56c58 |
 
 
 本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a`。已有运行中的作业不会随仓库标签更新自动变更。
@@ -377,7 +377,7 @@ $env:FLINK_WEB_SQL_VALIDATOR_DIR = (Resolve-Path sql-validators).Path
 | initContainer 下载器 | 启动前获取制品，使用工作负载凭据或指定的下载器 Secret |
 | Flink 作业 | checkpoint/savepoint、Catalog/文件系统访问，使用运行镜像的插件与 PodTemplate/工作负载身份 |
 
-2026-10-10：平台启动时将显式环境变量 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 加密导入配置管理（s3-access-key / s3-secret-key），不读取其他凭据链来源来持久化。已有记录不覆盖；凭据轮换请在配置管理中更新。启用状态存储时，源配置的 s3.access-key / s3.secret-key 自动引用这两个变量，部署时转为主容器 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 环境变量的实际值，并从实际 flinkConfiguration 中移除这两个占位值，不生成额外 Secret。凭据放在共享 spec.podTemplate；预览、发布历史不包含密钥明文，停止前配置加密保存。已有 Secret 引用仍按显式登记保留。镜像 S3 插件必须支持默认 AWS 环境凭据链；不再自动生成 s3.region。平台 S3 SDK 自身仍使用 AWS_REGION。无环境凭据时，可由管理员手动建立同名密钥配置或已有 Secret 引用；其他工作负载身份可自行在 YAML 中配置。镜像拉取凭据和挂载配置必须位于作业可访问的位置。
+2026-10-12：平台启动时仍将成对 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 加密导入配置管理（s3-access-key / s3-secret-key），只初始化缺失项、不覆盖已保存值。Flink 状态存储的 s3.access-key / s3.secret-key 实际提交时直接写入 spec.flinkConfiguration，不再生成 Flink 主容器 AWS AK/SK 环境变量；共享/JM/TM 主容器旧同名变量在使用该配置时移除。既有 Kubernetes Secret 引用会按请求 GET 读取目标 namespace 的指定 data 键、解码后填入 Flink 配置，平台身份须有该 Secret 的 get 权限；缺失、无权限或非法值明确失败。普通容器 env.value 的显式 Secret 引用仍保留为 valueFrom。预览恢复源占位符或隐藏实际值，发布历史隐藏 S3 凭据，停止前配置加密保存；不新建额外 Secret。平台 S3 SDK 和下载 initContainer 的 AWS 环境凭据用途保留；运行镜像插件必须识别 Flink 的 s3.access-key / s3.secret-key 配置。
 
 2026-10-01：initContainer 在共享 spec.podTemplate 中定义一次，由 Operator 应用于 JM/TM；不再校验下载文件 SHA-256，超时、大小超限或下载失败阻止启动。HTTP(S) 需在白名单内，禁止重定向，Bearer Token 必须走 HTTPS。
 
@@ -501,3 +501,17 @@ SQL Application 和验证专用 Session 的 Runner 改为手动选择：在 SQL 
 后端 167 项（含真实 Parser 和隔离 MinIO）、Runner 7 项、下载器 8 项全部通过；Parser 重建、前端类型/生产构建/格式、Java 分层/中文注释和当前 Web 镜像的 DNS/代理恢复回归通过。Windows JUnit 子进程须显式设置独占可写临时目录，首轮默认系统临时目录权限问题已通过重跑解决。记录与维护入口见 [治理验收](agent/validation.md)；真实 MySQL、生产 Kubernetes/Flink 和其他 S3 厂商本轮未验收。
 
 治理收尾例外：首轮JUnit在系统TEMP留下的两个测试目录受Windows删除权限限制，具体路径见 [待确认事项](agent/open-questions.md)；项目内临时验证目录与Docker资源均已清理，未修改系统ACL。
+
+### 状态地址与已保存运行账号（2026-10-12）
+
+状态根目录现统一读取 `platform.operator.state-root`（绑定 `FLINK_WEB_STATE_ROOT`），修复 S3 服务读取旧 workload 属性而回退默认值的问题。例如 `s3://flink-web/flink-state` 应生成 `s3://flink-web/flink-state/{UUID}/checkpoints`、`/savepoints`、`/ha`，不会丢弃桶后前缀。修改根目录不迁移历史对象，不自动修改已运行作业或手工 YAML 目录。
+
+修改 ServiceAccount 后，“保存并部署”按最新草稿提交；启动/恢复时，无论旧资源仍在还是停止后重建，有编辑权限的操作者均采用已保存草稿的显式账号，其余配置继续复用停止前快照。仅运维权限的启动仍复用原账号。仅在表单预览修改但尚未保存不会影响集群；已有运行资源只有显式部署才更新。账号及 RBAC 需在 namespace 预先存在。
+
+2026-10-12 状态根目录、S3凭据与旧作业账号修复发布：app/web 的 0.0.4 已构建、实际镜像验证并覆盖推送，最终摘要见上表；downloader 保留原摘要，未更新 latest。复用现有已验证的 Kylin/JRE 和 Nginx 运行层，分别替换离线测试通过的后端JAR和前端生产产物，依赖版本不变；均为 linux/amd64、UID 10001。使用同一registry的 localhost:15000 映射推送，随后从指定 192.168.68.1:5000 地址校验 manifest正文SHA-256、Docker-Content-Digest、本地config ID一致。
+
+最终校验：后端176项全部通过（含真实精确Parser、隔离MinIO、完整状态根绑定、Flink配置内密钥、Secret引用不可读/非法值拒绝与请求级读取、历史脱敏，以及旧资源直接启动/删除后重建的管理员、开发者和运维边界）。前端类型/生产构建/全源格式、Java分层及172类/858方法构造器中文注释检查通过。实际新app/web在非root、只读根文件系统、临时SQLite下通过真实加密登录、状态默认值、配置内AK/SK、无主容器AWS AK/SK、密钥安全预览、旧作业重新部署、停止后新账号启动及旧资源仍在的直接启动；Kubernetes写入使用隔离协议替身，未连接现场集群。实际Web上6项账号/模板页面回归、代理/DNS恢复检查通过。
+
+旧草稿/运行资源的手工状态目录不会自动迁移；新建或显式重新启用状态存储使用完整新根目录。已有作业要采用新的S3配置表达方式，应检查草稿后显式重新部署。已保存ServiceAccount在具备编辑权限的启动/恢复操作中生效，仅运维权限继续用原账号。
+
+未操作实际Kubernetes工作负载，未验证现场账号/RBAC、真实Flink调度或恢复兼容性。复用0.0.4标签时现有Pod须重新拉取；仅推送镜像不会改变运行中的实例。本轮隔离容器、网络、测试凭据、临时库与打包副本收尾清理，构建缓存清理后保留已标记镜像。

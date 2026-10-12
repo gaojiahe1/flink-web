@@ -3,7 +3,6 @@ package com.flinkweb.service.job.creation.support;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import com.flinkweb.client.kubernetes.KubernetesClient;
-import com.flinkweb.config.platform.PlatformProperties;
 import com.flinkweb.dto.job.creation.RenderedDeployment;
 import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.repository.metadata.RecordRepository;
@@ -23,25 +22,22 @@ public class VariableRenderer {
   private final com.flinkweb.service.artifact.support.ArtifactPodBuilder artifacts;
   private final SecretCipher cipher;
   private final ObjectMapper mapper;
-  private final PlatformProperties properties;
-  private final PodTemplates podTemplates;
+  private final KubernetesClient kubernetes;
 
   /** 注入配置记录、加密器与 JSON 映射器，并读取目标 Namespace。 */
   public VariableRenderer(
       RecordRepository store,
       SecretCipher cipher,
       ObjectMapper mapper,
-      PlatformProperties properties,
       com.flinkweb.service.artifact.support.ArtifactPodBuilder artifacts,
       S3PluginPodBuilder s3Plugin,
-      PodTemplates podTemplates) {
-    this.podTemplates = podTemplates;
+      KubernetesClient kubernetes) {
+    this.kubernetes = kubernetes;
     this.s3Plugin = s3Plugin;
     this.store = store;
     this.artifacts = artifacts;
     this.cipher = cipher;
     this.mapper = mapper;
-    this.properties = properties;
   }
 
   /** 复制部署资源并在请求内展开配置引用，不生成 Kubernetes Secret。 */
@@ -51,53 +47,74 @@ public class VariableRenderer {
     artifacts.prepare(deployment.withObject("/spec"));
     s3Plugin.apply(deployment.withObject("/spec"));
     bindS3Credentials(deployment);
-    ObjectNode rendered = (ObjectNode) walk(deployment, secrets, "");
+    ObjectNode rendered = (ObjectNode) walk(deployment, secrets, "", new HashMap<>());
     return new RenderedDeployment(rendered, secrets);
   }
 
-  /** 将 S3 密钥变量映射为 Flink 主容器凭据，预览和历史另行恢复占位符。 */
+  /** 校验 S3 密钥引用，并移除共享及角色主容器旧的 AK/SK 环境变量。 */
   private void bindS3Credentials(ObjectNode deployment) {
     JsonNode config = deployment.at("/spec/flinkConfiguration");
     String access = config.path("s3.access-key").asText();
     String secret = config.path("s3.secret-key").asText();
     boolean referenced = access.startsWith("{{secret:") || secret.startsWith("{{secret:");
-    if (!referenced) return;
-    for (String value : List.of(access, secret)) {
-      var match = TOKEN.matcher(value);
-      if (!match.matches() || !match.group(1).equals("secret"))
-        fail("s3.access-key 和 s3.secret-key 必须同时引用配置管理中的密钥");
-      if (store.find("configs", match.group(2)) == null) fail("请先在配置管理中配置 S3 密钥：" + match.group(2));
-    }
+    if (referenced)
+      for (String value : List.of(access, secret)) {
+        var match = TOKEN.matcher(value);
+        if (!match.matches() || !match.group(1).equals("secret"))
+          fail("s3.access-key 和 s3.secret-key 必须同时引用配置管理中的密钥");
+        if (store.find("configs", match.group(2)) == null)
+          fail("请先在配置管理中配置 S3 密钥：" + match.group(2));
+      }
+    if (access.isBlank() || secret.isBlank()) return;
     ObjectNode spec = deployment.withObject("/spec");
-    injectS3Environment(spec.withObject("/podTemplate"), access, secret);
-    for (String role : List.of("jobManager", "taskManager"))
-      if (spec.path(role).path("podTemplate").isObject())
-        injectS3Environment((ObjectNode) spec.path(role).get("podTemplate"), access, secret);
-    podTemplates.configureManagedMerge(spec);
-    ((ObjectNode) config).remove(List.of("s3.access-key", "s3.secret-key"));
+    for (String role : List.of("", "jobManager", "taskManager")) {
+      JsonNode pod = (role.isEmpty() ? spec : spec.path(role)).path("podTemplate").path("spec");
+      for (JsonNode container : pod.path("containers")) {
+        if (!"flink-main-container".equals(container.path("name").asText())) continue;
+        if (container.path("env") instanceof ArrayNode env)
+          for (int i = env.size() - 1; i >= 0; i--)
+            if (Set.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+                .contains(env.get(i).path("name").asText())) env.remove(i);
+      }
+    }
   }
 
-  /** 合并主容器的 AWS 凭据变量，保留其他环境变量、边车和模板字段。 */
-  private void injectS3Environment(ObjectNode template, String access, String secret) {
-    ArrayNode containers = template.withObject("/spec").withArray("containers");
-    ObjectNode main = null;
-    for (JsonNode container : containers)
-      if ("flink-main-container".equals(container.path("name").asText()))
-        main = (ObjectNode) container;
-    if (main == null) main = containers.addObject().put("name", "flink-main-container");
-    ArrayNode env = main.withArray("env");
-    for (int i = env.size() - 1; i >= 0; i--)
-      if (Set.of("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
-          .contains(env.get(i).path("name").asText())) env.remove(i);
-    env.addObject().put("name", "AWS_ACCESS_KEY_ID").put("value", access);
-    env.addObject().put("name", "AWS_SECRET_ACCESS_KEY").put("value", secret);
+  /** 将 Flink S3 配置中的密钥引用展开为标量；已有 Secret 按请求读取且不缓存明文。 */
+  private JsonNode s3Credential(String id, Map<String, JsonNode> secretCache) {
+    var config = store.require("configs", id);
+    if ("secret".equals(config.path("kind").asText()))
+      return TextNode.valueOf(cipher.decrypt(id, config.path("encryptedValue").asText()));
+    if (!"secretRef".equals(config.path("kind").asText())) {
+      fail("S3 密钥引用必须指向密钥配置");
+      return null;
+    }
+    String name = config.path("secretName").asText(), key = config.path("secretKey").asText();
+    var secret =
+        secretCache.computeIfAbsent(
+            name, n -> kubernetes.call("GET", kubernetes.core() + "/secrets/" + n, null));
+    if (secret == null || !secret.path("data").path(key).isTextual()) {
+      fail("无法读取 S3 凭据的 Kubernetes Secret 或指定键：" + name + "/" + key);
+      return null;
+    }
+    try {
+      String value =
+          new String(
+              Base64.getDecoder().decode(secret.path("data").path(key).asText()),
+              java.nio.charset.StandardCharsets.UTF_8);
+      if (value.isEmpty()) fail("S3 凭据的 Kubernetes Secret 值不能为空");
+      return TextNode.valueOf(value);
+    } catch (IllegalArgumentException ex) {
+      fail("S3 凭据的 Kubernetes Secret 值不是合法 Base64");
+      return null;
+    }
   }
 
-  /** 遍历 YAML 节点，保留普通变量类型，并在环境变量中展开加密值。 */
-  private JsonNode walk(JsonNode node, List<ObjectNode> secrets, String parent) {
+  /** 按完整节点路径遍历 YAML，仅在容器环境或 Flink S3 凭据位置展开密钥。 */
+  private JsonNode walk(
+      JsonNode node, List<ObjectNode> secrets, String parent, Map<String, JsonNode> secretCache) {
     if (node.isObject()) {
       ObjectNode object = (ObjectNode) node;
-      if (parent.equals("env") && object.has("name") && object.path("value").isTextual()) {
+      if (parent.endsWith("/env") && object.has("name") && object.path("value").isTextual()) {
         var match = TOKEN.matcher(object.path("value").asText());
         if (match.matches() && match.group(1).equals("secret")) {
           if (store.find("configs", match.group(2)) == null) fail("请先在配置管理中配置密钥：" + match.group(2));
@@ -122,12 +139,20 @@ public class VariableRenderer {
       }
       var names = new ArrayList<String>();
       object.fieldNames().forEachRemaining(names::add);
-      for (String name : names) object.set(name, walk(object.get(name), secrets, name));
+      for (String name : names) {
+        var match = TOKEN.matcher(object.path(name).asText());
+        if (parent.equals("/spec/flinkConfiguration")
+            && Set.of("s3.access-key", "s3.secret-key").contains(name)
+            && match.matches()
+            && match.group(1).equals("secret"))
+          object.set(name, s3Credential(match.group(2), secretCache));
+        else object.set(name, walk(object.get(name), secrets, parent + "/" + name, secretCache));
+      }
       return object;
     }
     if (node.isArray()) {
       ArrayNode result = mapper.createArrayNode();
-      for (JsonNode child : node) result.add(walk(child, secrets, parent));
+      for (JsonNode child : node) result.add(walk(child, secrets, parent, secretCache));
       return result;
     }
     if (node.isTextual()) {
@@ -135,7 +160,7 @@ public class VariableRenderer {
       var match = TOKEN.matcher(value);
       if (match.matches()) {
         if (match.group(1).equals("secret"))
-          fail("密钥变量只支持 PodTemplate containers/initContainers 的 env.value，请使用 Secret 引用");
+          fail("密钥变量仅支持容器 env.value 或 flinkConfiguration 的 s3.access-key / s3.secret-key");
         var config = store.require("configs", match.group(2));
         if (!"plain".equals(config.path("kind").asText())) fail("config 变量只能引用普通配置");
         return config.path("value").deepCopy();
@@ -147,6 +172,11 @@ public class VariableRenderer {
 
   /** 本地预览恢复密钥占位符，避免展开后的实际值进入浏览器或被重新保存。 */
   public ObjectNode preview(ObjectNode resource) {
+    return preview(resource, null);
+  }
+
+  /** 按源配置恢复 S3 密钥引用；无法对应的实际凭据统一隐藏。 */
+  public ObjectNode preview(ObjectNode resource, JsonNode source) {
     ObjectNode result = resource.deepCopy();
     Map<String, String> values = new LinkedHashMap<>();
     for (var config : store.list("configs"))
@@ -156,7 +186,20 @@ public class VariableRenderer {
         if (!value.isEmpty())
           values.putIfAbsent(value, "{{secret:" + config.path("id").asText() + "}}");
       }
-    return (ObjectNode) mask(result, values);
+    result = (ObjectNode) mask(result, values);
+    JsonNode config = result.at("/spec/flinkConfiguration");
+    if (config.isObject())
+      for (String key : List.of("s3.access-key", "s3.secret-key")) {
+        if (!config.has(key)) continue;
+        String reference =
+            source == null
+                ? config.path(key).asText()
+                : source.at("/spec/flinkConfiguration").path(key).asText();
+        var match = TOKEN.matcher(reference);
+        ((ObjectNode) config)
+            .put(key, match.matches() && match.group(1).equals("secret") ? reference : "******");
+      }
+    return result;
   }
 
   /** 递归替换实际密钥值，兼顾嵌入文本和纯标量引用。 */
