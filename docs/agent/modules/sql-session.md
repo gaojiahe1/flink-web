@@ -1,6 +1,6 @@
 # SQL 与 Session
 
-更新：2026-10-12。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-13。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
@@ -30,3 +30,5 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [SessionsView.vue](../../../frontend/src/modules/session/pages/SessionsView.vue)
 - [SessionDevelopmentIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/SessionDevelopmentIntegrationTest.java)
 - [SqlParserServiceTest.java](../../../backend/src/test/java/com/flinkweb/service/SqlParserServiceTest.java)
+
+2026-10-13 归档补核：SqlJobServiceImpl.deploymentLink 在读取时兼容失效关联；JobServiceImpl.delete 先迁移仍被 SQL 草稿引用的专属依赖，再清原目录并解除 jobId/publishedAt。SQL 有有效部署关联时不能直接删草稿，JAR 开发映射只在新建或首次编辑时登记。页面检查状态绑定当前 SQL/配置，后端提交再次检查；验证 JAR 分发不能热更新 Session 环境、非 JAR 文件或 Flink 插件。Session 分区表单与草稿删除入口已有实现/测试定义，本轮未运行。来源和历史验收见 [归档核对](../validation.md#sql-与-session-开发聊天归档核对2026-10-13)。

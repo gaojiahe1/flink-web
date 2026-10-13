@@ -1,6 +1,6 @@
 # 作业配置与表单
 
-更新：2026-10-12。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-13。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：JAR 开发映射、表单/YAML 双向编辑、模板/镜像、程序入口与资源配置。数据流：JobEditorView → jarForm/hydrateJar → render-form/FormServiceImpl → YamlServiceImpl.validate；最终发布另走生命周期/ReleaseService。
 
@@ -27,3 +27,5 @@ JAR 表单写 editor=jar-v1；既有/纳管 YAML 转换须明确 allowFormRewrit
 2026-10-12：停止后重建时，有编辑权限的操作者使用已保存草稿显式 ServiceAccount；未保存编辑不生效，仅运维权限仍采用运行快照账号。保存并部署按最新草稿提交。状态存储默认根读取已修复，详细规则见存储模块。
 
 补充适用范围：ServiceAccount 例外同时覆盖旧资源仍存在的直接启动/恢复和资源删除后的重建；平台编辑角色与作业编辑权限同时满足才采用草稿账号。最终176项后端回归和实际镜像闭环通过。
+
+2026-10-13 来源补核：旧作业 editor 标签仅标记编辑来源，确认转换及解析能力才决定能否进表单；同日后续允许确认转换替代 10-04 早期“仅 YAML”的限制。状态配置与单位输入定位 [StateStorageForm](../../../frontend/src/shared/components/form/StateStorageForm.vue)、[DurationInput](../../../frontend/src/shared/components/form/DurationInput.vue)，其值与 Flink 配置编辑器同步。文件区限高/搜索和复制后编辑方式定位 ArtifactPicker/JobsView；历史要求与替代关系见 REQ-002，未重新做本轮页面验收。
