@@ -28,6 +28,9 @@ public interface SqlJobService {
   /** 校验 SQL 并生成 YAML 预览；不保存部署草稿，也不访问 Kubernetes。 */
   ObjectNode preview(SqlDraftRequest input);
 
+  /** 渲染和回填部署配置，不要求未完成的 SQL 脚本通过检查。 */
+  ObjectNode configuration(SqlDraftRequest input);
+
   /** 在同一数据库事务中发布为部署草稿；仅显式运行操作才会提交 Kubernetes。 */
   JobDraft publish(String id, long revision);
 

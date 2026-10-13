@@ -4,7 +4,9 @@ async function login(page: Page) {
   await page.goto('/')
   await page.getByLabel('用户名').fill(process.env.E2E_USERNAME!)
   await page.getByLabel('密码', {exact:false}).first().fill(process.env.E2E_PASSWORD!)
+  const initialRefresh = page.waitForResponse(response => response.url().endsWith('/api/jobs/refresh'))
   await page.getByRole('button', {name:'登录',exact:true}).click()
+  await initialRefresh
   await expect(page.getByRole('heading', {name:'作业管理',exact:true})).toBeVisible()
 }
 async function catalog(page:Page,type:string,id:string,value:object) {
@@ -24,6 +26,7 @@ test('JAR form preserves container JAR and arguments without artifact registrati
   await page.getByLabel('镜像版本',{exact:false}).selectOption(image)
   await page.getByLabel('入口类',{exact:false}).fill('com.example.Main')
   await page.getByLabel('程序参数',{exact:false}).fill('--message\nhello world')
+  await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
   await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
   await expect(page.getByText(/本地验证通过；提交时仍需/)).toBeVisible()
   const yaml=await page.getByRole('textbox',{name:'YAML 编辑器',exact:true}).innerText()
@@ -46,6 +49,12 @@ test('SQL studio saves, checks and publishes without background cluster requests
   await page.getByRole('button',{name:'部署配置',exact:true}).click()
   await page.getByLabel('作业名称',{exact:false}).fill(name)
   await page.getByRole('combobox',{name:'镜像版本',exact:true}).selectOption(image)
+  await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
+  await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
+  const runner = page.locator('[data-field="runnerArtifactId"]')
+  await runner.getByRole('button', { name: 'HTTP / S3 地址', exact: true }).click()
+  await runner.getByLabel('SQL Runner 文件地址', { exact: true }).fill('https://artifacts.test/flink-web-sql-runner.jar')
+  await runner.getByRole('button', { name: '确认文件地址', exact: true }).click()
   await page.getByLabel('SQL 编辑器',{exact:true}).fill("CREATE TEMPORARY TABLE output_table (n INT) WITH ('connector' = 'blackhole');\nINSERT INTO output_table VALUES (1);")
   await page.getByRole('button',{name:'SQL 检查',exact:true}).click()
   await expect(page.locator('.sql-diagnostics')).toContainText('仅通过基础检查')
@@ -62,6 +71,6 @@ test('SQL studio saves, checks and publishes without background cluster requests
   const job=records.find((item:{name:string})=>item.name===name)
   expect(job.yaml).toContain('com.flinkweb.sql.SqlRunner')
   expect(job.yaml).toContain('flink-web/job-type: sql')
-  await page.getByRole('button',{name:new RegExp(name)}).click()
+  await page.locator('.sql-file').filter({ hasText: name }).click()
   await expect(page.getByLabel('SQL 编辑器',{exact:true})).toContainText(/INSERT INTO output_table/)
 })

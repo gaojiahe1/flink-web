@@ -28,6 +28,8 @@ public class SessionClusterServiceImpl implements SessionClusterService {
   private final ObjectMapper mapper;
   private final AuditService audit;
   private final DeploymentYamlSnapshot redactor;
+  private final com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml;
+  private final com.flinkweb.client.flink.SessionRestClient rest;
 
   /** 注入现有表单、下载挂载、Secret 渲染和集群客户端。 */
   public SessionClusterServiceImpl(
@@ -39,7 +41,11 @@ public class SessionClusterServiceImpl implements SessionClusterService {
       KubernetesClient client,
       ObjectMapper mapper,
       AuditService audit,
-      DeploymentYamlSnapshot redactor) {
+      DeploymentYamlSnapshot redactor,
+      com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml,
+      com.flinkweb.client.flink.SessionRestClient rest) {
+    this.rest = rest;
+    this.runtimeYaml = runtimeYaml;
     this.records = records;
     this.forms = forms;
     this.yaml = yaml;
@@ -74,16 +80,35 @@ public class SessionClusterServiceImpl implements SessionClusterService {
             .put("validation", input.validation())
             .put("deploymentName", "fw-session-" + id)
             .put("desiredState", "stopped");
-    record.set("runtime", input.runtime().deepCopy());
+    record.set("runtime", runtimeYaml.prepare(input.runtime(), "fw-session-" + id, true));
     resource(id, record);
     var saved = records.save("sessions", id, record, input.revision());
     audit.record("SESSION_SAVE", id, "SUCCESS");
     return saved;
   }
 
+  /** 本地渲染和回填不会查询或创建集群，也不推进修订号。 */
+  public ObjectNode configuration(SessionRequest input) {
+    String id = input.validation() ? "sql-validation" : input.name();
+    var record =
+        mapper
+            .createObjectNode()
+            .put("deploymentName", "fw-session-" + id)
+            .put("validation", input.validation());
+    var runtime = runtimeYaml.prepare(input.runtime(), "fw-session-" + id, true);
+    record.set("runtime", runtime);
+    return mapper
+        .createObjectNode()
+        .put("yaml", yaml.dump(resource(id, record)))
+        .put("formIssue", runtimeYaml.formIssue(runtime))
+        .set("runtime", runtime);
+  }
+
   /** 复用安全校验和文件挂载，仅在校验后移除 Application job 部分。 */
   private ObjectNode resource(String id, ObjectNode record) {
-    var options = ((ObjectNode) record.path("runtime")).deepCopy();
+    var options =
+        runtimeYaml.prepare(
+            (ObjectNode) record.path("runtime"), record.path("deploymentName").asText(), true);
     if (record.path("validation").asBoolean()
         || !options.path("runnerArtifactId").asText().isBlank()) artifacts.configure(options);
     else {
@@ -100,6 +125,7 @@ public class SessionClusterServiceImpl implements SessionClusterService {
       node.withObject("/spec/flinkConfiguration").put("taskmanager.system-out.mode", "LOG");
       node.withObject("/spec/flinkConfiguration").put("web.refresh-interval", "1000");
     }
+    runtimeYaml.verifyManaged(options, node, true);
     return node;
   }
 
@@ -118,6 +144,11 @@ public class SessionClusterServiceImpl implements SessionClusterService {
 
   /** 按需刷新状态，保留 Operator 错误摘要并对输出脱敏。 */
   public synchronized ObjectNode status(String id) {
+    return status(id, true);
+  }
+
+  /** 验证前只核对集群就绪，数量查询仅在用户显式刷新状态时执行。 */
+  private synchronized ObjectNode status(String id, boolean observeTaskManagers) {
     var record = records.require("sessions", id);
     var current = current(id, record);
     if (current.isMissingNode()) {
@@ -138,14 +169,27 @@ public class SessionClusterServiceImpl implements SessionClusterService {
       record = records.save("sessions", id, record, record.path("revision").asLong());
     }
     String observed = current.at("/status/jobManagerDeploymentStatus").asText("STARTING");
-    return record
-        .put(
-            "state",
-            current.at("/metadata/deletionTimestamp").isMissingNode()
-                ? !error.isBlank() || "ERROR".equals(observed) ? "ERROR" : observed
-                : "STOPPING")
-        .put("message", error)
-        .put("queriedAt", java.time.Instant.now().toString());
+    var result =
+        record
+            .put(
+                "state",
+                current.at("/metadata/deletionTimestamp").isMissingNode()
+                    ? !error.isBlank() || "ERROR".equals(observed) ? "ERROR" : observed
+                    : "STOPPING")
+            .put("message", error)
+            .put("queriedAt", java.time.Instant.now().toString());
+    if (current.at("/spec/taskManager/replicas").isIntegralNumber())
+      result.set("configuredTaskManagers", current.at("/spec/taskManager/replicas"));
+    if (observeTaskManagers && "READY".equals(result.path("state").asText())) {
+      try {
+        var overview = rest.call(record.path("deploymentName").asText(), "GET", "/overview", null);
+        if (overview.path("taskmanagers").isIntegralNumber())
+          result.set("registeredTaskManagers", overview.path("taskmanagers"));
+      } catch (Exception ex) {
+        result.put("taskManagerMessage", "暂时无法查询已注册 TaskManager 数量，请手动刷新");
+      }
+    }
+    return result;
   }
 
   /** 启动执行 Kubernetes 严格 dry-run，再物化 Secret 和提交资源。 */
@@ -164,8 +208,14 @@ public class SessionClusterServiceImpl implements SessionClusterService {
     var checked =
         client.call(
             "POST", client.base() + "?dryRun=All&fieldValidation=Strict", rendered.deployment());
-    if (!preserved(rendered.deployment().path("spec"), checked.path("spec")))
-      fail("SESSION_SPEC_CHANGED", "集群 CRD 修改或裁剪了 Session 配置，请核对 Operator 版本");
+    var differences = new ArrayList<String>();
+    differences(rendered.deployment().path("spec"), checked.path("spec"), "/spec", differences);
+    if (!differences.isEmpty())
+      fail(
+          "SESSION_SPEC_CHANGED",
+          "启动前配置校验失败，Kubernetes 返回配置存在差异："
+              + String.join("；", differences)
+              + "。请核对对应字段、已安装 CRD 和 Operator；未创建 Session 资源");
     variables.materialize(rendered, client);
     record.put("desiredState", "running");
     record = records.save("sessions", id, record, revision);
@@ -217,7 +267,7 @@ public class SessionClusterServiceImpl implements SessionClusterService {
   public ObjectNode validationCluster() {
     if (records.find("sessions", "sql-validation") == null)
       fail("VALIDATION_SESSION_REQUIRED", "请前往 Session 集群创建并启动唯一的 SQL 验证集群");
-    var result = status("sql-validation");
+    var result = status("sql-validation", false);
     if (!"READY".equals(result.path("state").asText()))
       fail(
           "VALIDATION_SESSION_NOT_READY",
@@ -226,23 +276,38 @@ public class SessionClusterServiceImpl implements SessionClusterService {
   }
 
   /** 服务端默认值可增加，但提交字段不允许被修改或裁剪。 */
-  private boolean preserved(JsonNode expected, JsonNode actual) {
+  private void differences(JsonNode expected, JsonNode actual, String path, List<String> result) {
+    if (result.size() >= 8) return;
     if (expected.isObject()) {
-      if (!actual.isObject()) return false;
+      if (!actual.isObject()) {
+        result.add(path + "（对象缺失或类型改变）");
+        return;
+      }
       var fields = expected.fields();
       while (fields.hasNext()) {
         var entry = fields.next();
-        if (!preserved(entry.getValue(), actual.path(entry.getKey()))) return false;
+        differences(
+            entry.getValue(),
+            actual.path(entry.getKey()),
+            path + "/" + entry.getKey().replace("~", "~0").replace("/", "~1"),
+            result);
       }
-      return true;
+      return;
     }
     if (expected.isArray()) {
-      if (!actual.isArray() || expected.size() != actual.size()) return false;
+      if (!actual.isArray() || expected.size() != actual.size()) {
+        result.add(path + "（数组长度或类型改变）");
+        return;
+      }
       for (int i = 0; i < expected.size(); i++)
-        if (!preserved(expected.get(i), actual.get(i))) return false;
-      return true;
+        differences(expected.get(i), actual.get(i), path + "/" + i, result);
+      return;
     }
-    return expected.equals(actual);
+    if (expected.isNumber()
+        && actual.isNumber()
+        && expected.decimalValue().compareTo(actual.decimalValue()) == 0) return;
+    if (!expected.equals(actual))
+      result.add(path + (actual.isMissingNode() ? "（被裁剪）" : "（值或类型改变）"));
   }
 
   /** 遮蔽平台已知密钥和常见连接凭据。 */

@@ -12,6 +12,10 @@ JAR 表单写 editor=jar-v1；既有/纳管 YAML 转换须明确 allowFormRewrit
 
 相关页面还有 SqlStudioView/SessionsView，均复用共享模板组件。已知边界：表单不证明 Pod 可调度、账号权限或所有 Operator 版本能合并成功。
 
+2026-10-13：SQL/Session 表单与 YAML 共用部署渲染，后端从 YAML 重新回填公共资源字段；`baseYaml` 作为表单合并基底保留未知配置。新增模式/固定副本字段只在请求显式提供时写入；未配置的既有 JAR/Session 保持原规则。转换前后均校验资源身份及所选 Runner/托管下载器，语法错误保留原文。前端 [deploymentYaml.ts](../../../frontend/src/shared/utils/deploymentYaml.ts) 仅做原文结构检查，不替代后端安全校验。
+
+YAML 省略的 JM/TM 资源字段保持省略；configuration 的可选 `formIssue` 指出缺少显式账号/资源或无法表示的内存单位。页面在回填前拦截并保留原文，YAML 保存不因此被禁用，避免表单默认值改变已有配置。
+
 ## 定位代码与验证
 
 - [podTemplates.ts](../../../frontend/src/shared/utils/podTemplates.ts)
@@ -19,6 +23,7 @@ JAR 表单写 editor=jar-v1；既有/纳管 YAML 转换须明确 allowFormRewrit
 - [ServiceAccountField.vue](../../../frontend/src/shared/components/form/ServiceAccountField.vue)
 - [jarForm.ts](../../../frontend/src/modules/job-creation/jarForm.ts)
 - [FormServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/impl/FormServiceImpl.java)
+- [RuntimeYamlMapper.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/RuntimeYamlMapper.java)
 - [YamlServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/impl/YamlServiceImpl.java)
 - [PodTemplates.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/PodTemplates.java)
 - [S3PluginPodTest.java](../../../backend/src/test/java/com/flinkweb/S3PluginPodTest.java)

@@ -38,6 +38,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   private final SqlParserService parser;
   private final com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs;
   private final com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts;
+  private final com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml;
 
   /** 注入草稿持久化、SQL 基础校验及部署渲染依赖。 */
   public SqlJobServiceImpl(
@@ -52,7 +53,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       AccessService access,
       SqlParserService parser,
       com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs,
-      com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts) {
+      com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts,
+      com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml) {
+    this.runtimeYaml = runtimeYaml;
     this.runtimeArtifacts = runtimeArtifacts;
     this.records = records;
     this.jobRepository = jobRepository;
@@ -98,11 +101,14 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(HttpStatus.BAD_REQUEST, "IMMUTABLE_NAME", "SQL 草稿名称不可修改");
     if (input.sql().getBytes(StandardCharsets.UTF_8).length > 32768)
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SQL", "SQL 脚本不能超过 32 KiB");
-    catalogs.prepare(input.runtime().deepCopy());
+    var runtime = runtimeYaml.prepare(input.runtime(), input.name(), false);
+    if (!runtime.path("deploymentYaml").asText().isBlank()) configuration(input);
+    catalogs.prepare(runtime.deepCopy());
     ObjectNode old = records.find("sql_jobs", id);
     if (old != null) deploymentLink(old);
     var existingJob = jobRepository.findByName(input.name());
-    if (existingJob.isPresent() && (old == null || !existingJob.get().id().equals(old.path("jobId").asText())))
+    if (existingJob.isPresent()
+        && (old == null || !existingJob.get().id().equals(old.path("jobId").asText())))
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
     ObjectNode record =
         mapper
@@ -110,7 +116,7 @@ public class SqlJobServiceImpl implements SqlJobService {
             .put("name", input.name())
             .put("description", input.description())
             .put("sql", input.sql());
-    record.set("runtime", input.runtime().deepCopy());
+    record.set("runtime", runtime);
     if (old != null)
       for (String key : List.of("jobId", "publishedAt"))
         if (old.has(key)) record.set(key, old.get(key));
@@ -154,6 +160,20 @@ public class SqlJobServiceImpl implements SqlJobService {
 
   /** 检查脚本及选中 Catalog，保持 BASIC/版本 Parser 级别区分。 */
   public com.flinkweb.dto.sql.SqlCheckResult check(String script, ObjectNode runtime) {
+    if (!runtime.path("deploymentYaml").asText().isBlank()) {
+      runtime =
+          runtimeYaml.prepare(
+              runtime,
+              yaml.parse(runtime.path("deploymentYaml").asText()).at("/metadata/name").asText(),
+              false);
+      configuration(
+          new SqlDraftRequest(
+              yaml.parse(runtime.path("deploymentYaml").asText()).at("/metadata/name").asText(),
+              "",
+              script,
+              runtime,
+              0));
+    }
     return parser.check(
         validation.validate(catalogs.prepare(runtime.deepCopy()) + script),
         runtime.path("imageId").asText());
@@ -161,18 +181,29 @@ public class SqlJobServiceImpl implements SqlJobService {
 
   /** 校验 SQL 并生成 YAML 预览；不保存部署草稿，也不访问 Kubernetes。 */
   public ObjectNode preview(SqlDraftRequest input) {
-    ObjectNode options = input.runtime().deepCopy();
+    ObjectNode options = runtimeYaml.prepare(input.runtime(), input.name(), false);
     var checked =
         parser.check(
             validation.validate(catalogs.prepare(options) + input.sql()),
             options.path("imageId").asText());
-    runtimeArtifacts.configure(options);
-    options.put("name", input.name());
-    var args = options.putArray("args");
+    var rendered = configuration(input);
+    var resource = yaml.parse(rendered.path("yaml").asText());
+    var args = resource.withObject("/spec/job").putArray("args");
     for (String statement : checked.statements()) {
       args.add("--statement");
       args.add(Base64.getEncoder().encodeToString(statement.getBytes(StandardCharsets.UTF_8)));
     }
+    return rendered.put("yaml", yaml.dump(resource)).put("message", checked.message());
+  }
+
+  /** 渲染可编辑配置；SQL 参数只在显式预览/发布时由脚本生成。 */
+  public ObjectNode configuration(SqlDraftRequest input) {
+    ObjectNode runtime = runtimeYaml.prepare(input.runtime(), input.name(), false);
+    ObjectNode options = runtime.deepCopy();
+    catalogs.prepare(options);
+    runtimeArtifacts.configure(options);
+    options.put("name", input.name());
+    options.putArray("args");
     if (options.has("flinkConfiguration") && !options.path("flinkConfiguration").isObject())
       yaml.fail("flinkConfiguration 必须是 JSON 对象");
     options.withObject("/flinkConfiguration").put("pipeline.name", input.name());
@@ -180,7 +211,11 @@ public class SqlJobServiceImpl implements SqlJobService {
     ObjectNode resource = yaml.validate(yaml.parse(rendered.path("yaml").asText()), input.name());
     resource.withObject("/metadata").withObject("/labels").put("flink-web/job-type", "sql");
     resource.withObject("/metadata/labels").put("flink-web/sql-id", input.name());
-    return rendered.put("yaml", yaml.dump(resource)).put("message", checked.message());
+    runtimeYaml.verifyManaged(runtime, resource, false);
+    return rendered
+        .put("yaml", yaml.dump(resource))
+        .put("formIssue", runtimeYaml.formIssue(runtime))
+        .set("runtime", runtime);
   }
 
   /** 在同一数据库事务中发布为部署草稿；仅显式运行操作才会提交 Kubernetes。 */
@@ -206,7 +241,9 @@ public class SqlJobServiceImpl implements SqlJobService {
             rendered.path("flinkVersion").asText(),
             rendered.path("yaml").asText(),
             existing.map(JobDraft::revision).orElse(0L),
-            input.runtime().path("workspaceId").isTextual() ? input.runtime().path("workspaceId").asText() : null);
+            input.runtime().path("workspaceId").isTextual()
+                ? input.runtime().path("workspaceId").asText()
+                : null);
     JobDraft result =
         existing.isPresent() ? jobs.update(existing.get().id(), draft) : jobs.create(draft);
     if (existing.isEmpty()) access.copy("sql:" + id, result.id());

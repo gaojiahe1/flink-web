@@ -44,8 +44,17 @@ public class YamlServiceImpl implements YamlService {
     } catch (BusinessException ex) {
       throw ex;
     } catch (Exception ex) {
+      String position = "";
+      if (ex instanceof org.yaml.snakeyaml.error.MarkedYAMLException marked
+          && marked.getProblemMark() != null)
+        position =
+            "第 "
+                + (marked.getProblemMark().getLine() + 1)
+                + " 行，第 "
+                + (marked.getProblemMark().getColumn() + 1)
+                + " 列；";
       throw new BusinessException(
-          HttpStatus.BAD_REQUEST, "INVALID_YAML", "YAML 解析失败：检查缩进、重复键、多文档或不安全标签");
+          HttpStatus.BAD_REQUEST, "INVALID_YAML", "YAML 解析失败：" + position + "检查缩进、重复键、多文档或不安全标签");
     }
   }
 
@@ -56,12 +65,24 @@ public class YamlServiceImpl implements YamlService {
       fail("仅支持 flink.apache.org/v1beta1 FlinkDeployment");
     ObjectNode metadata = object(node, "metadata");
     String name = metadata.path("name").asText();
-    if (!name.matches("[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
+    if (!metadata.path("name").isTextual()
+        || !name.matches("[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
         || (!expectedName.isEmpty() && !name.equals(expectedName)))
       fail("metadata.name 必须与作业名称一致，且是合法 DNS 名称");
     if (metadata.has("namespace") && !namespace.equals(metadata.path("namespace").asText()))
       fail("禁止操作其他 namespace");
     metadata.put("namespace", namespace);
+    for (String field : List.of("labels", "annotations")) {
+      if (metadata.has(field)) {
+        var values = object(metadata, field);
+        values
+            .fields()
+            .forEachRemaining(
+                entry -> {
+                  if (!entry.getValue().isTextual()) fail("metadata." + field + " 必须为字符串键值表");
+                });
+      }
+    }
     metadata.remove(
         List.of(
             "uid",
@@ -74,6 +95,8 @@ public class YamlServiceImpl implements YamlService {
             "finalizers"));
     node.remove("status");
     ObjectNode spec = object(node, "spec");
+    if (spec.has("mode") && !Set.of("native", "standalone").contains(spec.path("mode").asText()))
+      fail("部署模式必须为 native 或 standalone");
     if (!spec.path("flinkVersion").asText().matches("v(1_(16|17|18|19|20)|2_[0-3])"))
       fail("Flink 版本必须在 1.16 至 2.3 范围内");
     if (spec.path("image").asText().isBlank()) fail("必须指定镜像");
@@ -140,7 +163,10 @@ public class YamlServiceImpl implements YamlService {
                 fail("flinkConfiguration 参数必须为字符串: " + entry.getKey());
             });
     for (String component : List.of("jobManager", "taskManager")) {
+      if (spec.has(component) && !spec.path(component).isObject()) fail(component + " 必须为对象");
       JsonNode resource = spec.path(component).path("resource");
+      if (spec.path(component).has("resource") && !resource.isObject())
+        fail(component + ".resource 必须为对象");
       if (resource.isObject()) {
         if (resource.has("memory")
             && !resource
@@ -148,7 +174,10 @@ public class YamlServiceImpl implements YamlService {
                 .asText()
                 .matches("(?i)[1-9][0-9]*(\\.[0-9]+)?\\s*(b|k|kb|kib|m|mb|mib|g|gb|gib|t|tb|tib)"))
           fail("内存格式无效，例如 1024m 或 2g");
-        if (resource.has("cpu") && resource.path("cpu").asDouble() <= 0) fail("CPU 必须大于 0");
+        if (resource.has("cpu")
+            && (!resource.path("cpu").isNumber()
+                || !Double.isFinite(resource.path("cpu").asDouble())
+                || resource.path("cpu").asDouble() <= 0)) fail("CPU 必须为大于 0 的数字");
       }
     }
     if (job.path("upgradeMode").asText().equals("last-state")

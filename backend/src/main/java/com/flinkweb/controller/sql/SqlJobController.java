@@ -89,6 +89,13 @@ public class SqlJobController {
     return ApiResponse.ok(jobs.preview(input));
   }
 
+  /** 配置编辑独立于 SQL 语法检查，不保存或部署。 */
+  @PostMapping("/configuration")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> configuration(@Valid @RequestBody SqlDraftRequest input) {
+    return ApiResponse.ok(jobs.configuration(input));
+  }
+
   /** 将指定版本的 SQL 保存为部署草稿，返回普通作业管理标识。 */
   @PostMapping("/jobs/{id}/publish")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")

@@ -39,7 +39,7 @@ public class UserServiceImpl implements UserService {
         throw new StartupConfigurationException(
             "用户库为空，FLINK_WEB_ADMIN_PASSWORD 未通过校验：密码至少 12 个字符，UTF-8 编码后最多 72 字节。",
             "在后端 Pod 所在 namespace 的 flink-web-secrets 中设置 FLINK_WEB_ADMIN_PASSWORD，"
-                + "然后重启后端 Deployment。该配置填写原始密码，不填写 Base64 或 fwenc1: 传输密文。"
+                + "然后重启后端所在工作负载（当前主清单为 StatefulSet flink-web）。该配置填写原始密码，不填写 Base64 或 fwenc1: 传输密文。"
                 + "如果此前已创建用户，请先检查数据库路径和 PVC 是否指向原数据，勿删除数据库重建。");
       }
       var admin =

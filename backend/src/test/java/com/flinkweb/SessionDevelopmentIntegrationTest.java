@@ -174,6 +174,172 @@ class SessionDevelopmentIntegrationTest {
         .put("slots", 2);
   }
 
+  /** 配置转换保留未知字段，固定数量经过保存、启动和 dry-run 后仍有效。 */
+  @Test
+  void sessionYamlRoundTripPreservesConfigurationAndFixedReplicas() {
+    var options = runtime().put("deploymentMode", "standalone").put("tmReplicas", 3);
+    var input = new SessionRequest("yaml-session", "", false, options, 0);
+    var source = yaml.parse(sessions.configuration(input).path("yaml").asText());
+    source
+        .withObject("/spec")
+        .putObject("logConfiguration")
+        .put("log4j-console.properties", "rootLogger.level=INFO");
+    source.withObject("/spec/taskManager/resource").put("ephemeralStorage", "2G");
+    options.put("deploymentYaml", yaml.dump(source));
+    var converted =
+        sessions.configuration(new SessionRequest("yaml-session", "", false, options, 0));
+    assertThat(converted.at("/runtime/tmReplicas").asInt()).isEqualTo(3);
+    var saved =
+        sessions.save("yaml-session", new SessionRequest("yaml-session", "", false, options, 0));
+    sessions.start("yaml-session", saved.path("revision").asLong());
+    assertThat(cluster.get().at("/spec/taskManager/replicas").asInt()).isEqualTo(3);
+    assertThat(cluster.get().at("/spec/taskManager/resource/ephemeralStorage").asText())
+        .isEqualTo("2G");
+    assertThat(cluster.get().at("/spec/logConfiguration/log4j-console.properties").asText())
+        .contains("INFO");
+    assertThat(cluster.get().at("/spec/job").isMissingNode()).isTrue();
+    when(rest.call(anyString(), eq("GET"), eq("/overview"), isNull()))
+        .thenReturn(mapper.createObjectNode().put("taskmanagers", 2));
+    var observed = sessions.status("yaml-session");
+    assertThat(observed.path("configuredTaskManagers").asInt()).isEqualTo(3);
+    assertThat(observed.path("registeredTaskManagers").asInt()).isEqualTo(2);
+    assertThatThrownBy(
+            () ->
+                sessions.configuration(
+                    new SessionRequest(
+                        "native-session",
+                        "",
+                        false,
+                        runtime().put("deploymentMode", "native").put("tmReplicas", 3),
+                        0)))
+        .hasMessageContaining("standalone");
+    for (JsonNode invalid :
+        List.of(
+            mapper.getNodeFactory().numberNode(0),
+            mapper.getNodeFactory().numberNode(-1),
+            mapper.getNodeFactory().numberNode(1.5))) {
+      options = runtime().put("deploymentMode", "standalone");
+      options.set("tmReplicas", invalid);
+      var request = new SessionRequest("bad-replicas", "", false, options, 0);
+      assertThatThrownBy(() -> sessions.configuration(request)).hasMessageContaining("正整数");
+    }
+  }
+
+  /** dry-run 的整数规范化不是配置丢失，真正裁剪仍阻止创建且不泄漏字段值。 */
+  @Test
+  void sessionDryRunAcceptsEquivalentNumbersAndReportsPrunedPaths() {
+    when(kubernetes.call(eq("POST"), contains("dryRun"), any(JsonNode.class)))
+        .thenAnswer(
+            invocation -> {
+              var value = ((ObjectNode) invocation.getArgument(2)).deepCopy();
+              value.withObject("/spec/jobManager/resource").put("cpu", 1);
+              value.withObject("/spec").put("imagePullPolicy", "IfNotPresent");
+              return value;
+            });
+    var saved = sessions.save("numeric", new SessionRequest("numeric", "", false, runtime(), 0));
+    sessions.start("numeric", saved.path("revision").asLong());
+    assertThat(cluster.get()).isNotNull();
+    sessions.stop("numeric");
+    var options = runtime();
+    options.putObject("flinkConfiguration").put("sensitive-key", "private-test-value");
+    var pruned = sessions.save("pruned", new SessionRequest("pruned", "", false, options, 0));
+    when(kubernetes.call(eq("POST"), contains("dryRun"), any(JsonNode.class)))
+        .thenAnswer(
+            invocation -> {
+              var value = ((ObjectNode) invocation.getArgument(2)).deepCopy();
+              value.withObject("/spec/flinkConfiguration").remove("sensitive-key");
+              return value;
+            });
+    assertThatThrownBy(() -> sessions.start("pruned", pruned.path("revision").asLong()))
+        .hasMessageContaining("/spec/flinkConfiguration/sensitive-key")
+        .hasMessageNotContaining("private-test-value");
+    assertThat(cluster.get()).isNull();
+    assertThat(records.require("sessions", "pruned").path("desiredState").asText())
+        .isEqualTo("stopped");
+  }
+
+  /** 未完成 SQL 也能编辑配置，发布时才生成执行参数；受控入口拒绝 YAML 覆盖。 */
+  @Test
+  void sqlYamlConfigurationPreservesUnknownFieldsAndControlsRunner() {
+    String name = "yaml-sql-" + UUID.randomUUID().toString().substring(0, 8);
+    var options = runtime().put("upgradeMode", "stateless");
+    var input = new SqlDraftRequest(name, "", "unfinished sql", options, 0);
+    var source = yaml.parse(sql.configuration(input).path("yaml").asText());
+    source
+        .withObject("/spec")
+        .putObject("logConfiguration")
+        .put("log4j-console.properties", "custom");
+    source.withObject("/spec/taskManager/resource").put("ephemeralStorage", "3G");
+    source.withObject("/spec/job").put("parallelism", 4);
+    options.put("deploymentYaml", yaml.dump(source));
+    var saved = sql.save(name, new SqlDraftRequest(name, "", "unfinished sql", options, 0));
+    assertThat(saved.at("/runtime/parallelism").asInt()).isEqualTo(4);
+    var published =
+        sql.preview(new SqlDraftRequest(name, "", "INSERT INTO sink VALUES (1)", options, 0));
+    var deployed = yaml.parse(published.path("yaml").asText());
+    assertThat(deployed.at("/spec/taskManager/resource/ephemeralStorage").asText()).isEqualTo("3G");
+    assertThat(deployed.at("/spec/logConfiguration/log4j-console.properties").asText())
+        .isEqualTo("custom");
+    assertThat(deployed.at("/spec/job/args").size()).isEqualTo(2);
+    source.withObject("/spec/job").put("entryClass", "arbitrary.Main");
+    options.put("deploymentYaml", yaml.dump(source));
+    assertThatThrownBy(() -> sql.configuration(new SqlDraftRequest(name, "", "", options, 0)))
+        .hasMessageContaining("Runner");
+    assertThat(sql.get(name).path("revision").asLong()).isEqualTo(saved.path("revision").asLong());
+  }
+
+  /** Session 配置不能通过 YAML 改变 namespace 或混入 Application 作业。 */
+  @Test
+  void sessionYamlRejectsUnsafeIdentityAndApplicationJob() {
+    var options = runtime();
+    var source =
+        yaml.parse(
+            sessions
+                .configuration(new SessionRequest("safe", "", false, options, 0))
+                .path("yaml")
+                .asText());
+    source.withObject("/metadata").put("namespace", "other-namespace");
+    options.put("deploymentYaml", yaml.dump(source));
+    assertThatThrownBy(
+            () -> sessions.configuration(new SessionRequest("safe", "", false, options, 0)))
+        .hasMessageContaining("namespace");
+    source.withObject("/metadata").remove("namespace");
+    source.withObject("/spec/jobManager").putArray("resource");
+    options.put("deploymentYaml", yaml.dump(source));
+    assertThatThrownBy(
+            () -> sessions.configuration(new SessionRequest("safe", "", false, options, 0)))
+        .hasMessageContaining("resource 必须为对象");
+    source.withObject("/spec/jobManager").remove("resource");
+    source.withObject("/spec").putObject("job");
+    options.put("deploymentYaml", yaml.dump(source));
+    assertThatThrownBy(
+            () -> sessions.configuration(new SessionRequest("safe", "", false, options, 0)))
+        .hasMessageContaining("spec.job");
+    assertThat(cluster.get()).isNull();
+  }
+
+  /** YAML 省略资源时不注入默认内存，表单无法表达时明确阻止回填。 */
+  @Test
+  void yamlResourceOmissionsArePreservedInsteadOfReplacingFlinkConfiguration() {
+    var options = runtime().put("serviceAccount", "flink-jobs-flink");
+    var source =
+        yaml.parse(
+            sessions
+                .configuration(new SessionRequest("omit-resource", "", false, options, 0))
+                .path("yaml")
+                .asText());
+    source.withObject("/spec/jobManager").remove("resource");
+    source.withObject("/spec/flinkConfiguration").put("jobmanager.memory.process.size", "4g");
+    options.put("deploymentYaml", yaml.dump(source));
+    var result = sessions.configuration(new SessionRequest("omit-resource", "", false, options, 0));
+    assertThat(result.path("formIssue").asText()).contains("jobManager.resource");
+    var rendered = yaml.parse(result.path("yaml").asText());
+    assertThat(rendered.at("/spec/jobManager/resource").isMissingNode()).isTrue();
+    assertThat(rendered.at("/spec/flinkConfiguration/jobmanager.memory.process.size").asText())
+        .isEqualTo("4g");
+    sessions.save("omit-resource", new SessionRequest("omit-resource", "", false, options, 0));
+  }
+
   /** 验证专用 Session 必须显式选择 Runner，普通 Session 可不挂载 Runner。 */
   @Test
   void validationRunnerRequiresExplicitSelection() {
@@ -430,6 +596,26 @@ class SessionDevelopmentIntegrationTest {
     assertThat(result.path("message").asText())
         .contains("Connector missing", "******")
         .doesNotContain("private-value");
+  }
+
+  /** 清理上传副本失败仍保留验证终态，只记录关联标识和故障类型。 */
+  @Test
+  @org.junit.jupiter.api.extension.ExtendWith(
+      org.springframework.boot.test.system.OutputCaptureExtension.class)
+  void uploadedJarCleanupFailureDoesNotChangeTerminalState(
+      org.springframework.boot.test.system.CapturedOutput captured) {
+    startCluster();
+    var draft = draft();
+    var run = executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString());
+    String id = run.path("id").asText();
+    when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
+        .thenReturn(mapper.createObjectNode().put("state", "FAILED"));
+    when(rest.call(anyString(), eq("DELETE"), startsWith("/jars/"), isNull()))
+        .thenThrow(new IllegalStateException("password=cleanup-private"));
+    assertThat(executions.status(id).path("state").asText()).isEqualTo("FAILED");
+    assertThat(captured.getAll())
+        .contains("validationId=" + id, "stage=DELETE_JAR", "IllegalStateException")
+        .doesNotContain("cleanup-private");
   }
 
   /** 多行文本完整展示，反复监听不追加已读行，真实重复行仍作为新结果保留。 */

@@ -133,9 +133,15 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:c6ab7136306103310cfb24f0cd54a9248e7654f3c410eb44a73e0127789dc2f8 |
+| 192.168.68.1:5000/flink-web/app | sha256:edccdf9103b29aba04b21df01d88825d9b90ee2663eaac6b57fad1044aaf1cbb |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:59ef738da139370e0f08939b978c04dc369f22082f547f03dfdf75618e0156f1 |
+| 192.168.68.1:5000/flink-web/web | sha256:b642e57e622a785e596ba470d366748aedceb5b667cd3a7ff36e14a2fcdb23d9 |
+
+2026-10-13 Session/SQL 配置编辑发布：app/web 的 0.0.4 已覆盖发布，不更新 latest，downloader 保持上述摘要。后端及两份精确 Parser 使用既有离线依赖构建；镜像沿用已发布的 Kylin SP3/JRE/Nginx 运行层并替换本轮产物，Web 清除旧静态资源。最终镜像在 linux/amd64、UID 10001、只读根文件系统下完成临时 SQLite 健康检查、真实加密登录、Session/SQL 配置 API 与页面双向编辑、数值规范化 dry-run、PARSER 及 Web 代理/DNS 恢复验证。SQLite 验证容器的 /tmp 使用可执行 tmpfs 供本地库加载。
+
+本机 Docker 代理连接失败，目标仓库直连正常；本轮通过该仓库标准 V2 接口上传镜像，核对 manifest 正文 SHA-256、Docker-Content-Digest 和 config 镜像 ID，逐层核对远端解压内容与已测试本地镜像的 rootfs diff ID 一致。全局代理配置未修改。187 项后端测试中 186 项通过，独立 MinIO 用例未启用；37 项受影响页面回归、JDK8/17 两版本 Parser 各八种输入、生产构建、格式/架构检查通过。Kubernetes 使用隔离协议替身，本轮未连接现场 Operator/CRD，也未更新实际工作负载；配置固定副本及已注册数量不能当作实际 Pod 副本验收。
+
+本任务独占测试容器、网络、检查镜像标签和临时目录已清理；按已核实的缓存 ID 回收本任务私有构建缓存 134.6 MB，保留共享缓存、既有数据库/备份及已发布标签。
 
 
 本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a`。已有运行中的作业不会随仓库标签更新自动变更。

@@ -396,8 +396,12 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
             "DELETE",
             "/jars/" + run.path("jarId").asText(),
             null);
-      } catch (Exception ignored) {
-        /* 集群销毁时上传目录随 Pod 删除，不影响原始文件。 */
+      } catch (Exception ex) {
+        org.slf4j.LoggerFactory.getLogger(SqlExecutionServiceImpl.class)
+            .warn(
+                "SQL validation JAR cleanup failed validationId={} stage=DELETE_JAR type={}",
+                run.path("id").asText(),
+                ex.getClass().getSimpleName());
       }
     String id = run.path("id").asText();
     if (rows.size() > 100) {

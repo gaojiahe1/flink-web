@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { parse, stringify } from 'yaml'
 
 const source =
   'apiVersion: flink.apache.org/v1beta1\nkind: FlinkDeployment\nmetadata:\n  name: jar-draft\n  labels:\n    flink-web/editor: yaml\nspec:\n  image: registry.test/flink:1.20.5\n  flinkVersion: v1_20\n  job:\n    jarURI: local:///opt/flink/usrlib/job.jar\n'
@@ -33,11 +34,22 @@ test('SQL 辅助面板可拖动和键盘缩放，名称与 JAR 一致，窄屏�
   expect((await panel.boundingBox())!.width).toBeGreaterThan(beforeKey + 35)
   await handle.press('End')
   expect((await page.locator('.sql-center').boundingBox())!.width).toBeGreaterThanOrEqual(318)
-  for (const name of ['作业名称', '镜像版本', 'JobManager 内存', 'TaskManager 内存', 'JobManager CPU', 'TaskManager CPU', '每个 TaskManager 的 Slot 数'])
+  for (const name of [
+    '作业名称',
+    '镜像版本',
+    'JobManager 内存',
+    'TaskManager 内存',
+    'JobManager CPU',
+    'TaskManager CPU',
+    '每个 TaskManager 的 Slot 数',
+  ])
     await expect(panel.getByLabel(name, { exact: name !== '作业名称' })).toBeVisible()
   await panel.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
   await expect(panel.getByRole('heading', { name: 'Flink 配置', exact: true })).toBeVisible()
-  await expect(panel.getByRole('link', { name: '下载平台 SQL Runner' })).toHaveAttribute('href', '/api/sql/runner/download')
+  await expect(panel.getByRole('link', { name: '下载平台 SQL Runner' })).toHaveAttribute(
+    'href',
+    '/api/sql/runner/download',
+  )
   await page.getByText('SQL Runner 与语法验证器怎么用？', { exact: true }).click()
   await expect(page.locator('.sql-runtime-guide')).toContainText('SQL 验证专用 Session')
   await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
@@ -98,7 +110,14 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
     if (!path.startsWith('/api/')) return route.continue()
     let data: any = []
     if (path === '/api/auth/me') data = { username: 'test-user', roles }
-    else if (path === '/api/system/operator') data = { found: true, namespace: 'test', deployment: 'operator', queriedAt: new Date().toISOString(), compatibility: { known: true, version: '1.14.0', supported: ['1.20'], message: '' } }
+    else if (path === '/api/system/operator')
+      data = {
+        found: true,
+        namespace: 'test',
+        deployment: 'operator',
+        queriedAt: new Date().toISOString(),
+        compatibility: { known: true, version: '1.14.0', supported: ['1.20'], message: '' },
+      }
     else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
     else if (path === '/api/system') data = { namespace: 'test', capabilities: [] }
     else if (path === '/api/catalog/images')
@@ -124,16 +143,26 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
     else if (path === '/api/development/links')
       data = { 'sql-job': { type: 'sql', sqlId: sql.id }, 'jar-job': { type: 'jar' } }
     else if (path === '/api/development/jar/jobs') data = opened && !jarDeleted ? [jar] : []
-    else if ((path === '/api/jobs/jar-job/draft' || path === '/api/sql/jobs/sql-draft') && req.method() === 'DELETE') {
+    else if (
+      (path === '/api/jobs/jar-job/draft' || path === '/api/sql/jobs/sql-draft') &&
+      req.method() === 'DELETE'
+    ) {
       deletes++
       expect(new URL(req.url()).searchParams.get('revision')).toBe('1')
-      const failure = deleteError || (path.includes('/sql/') && sql.jobId ? '请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿' : '')
-      if (failure) return route.fulfill({ status: 409, json: { error: { code: 'DEPLOYMENT_EXISTS', message: failure } } })
+      const failure =
+        deleteError ||
+        (path.includes('/sql/') && sql.jobId
+          ? '请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿'
+          : '')
+      if (failure)
+        return route.fulfill({
+          status: 409,
+          json: { error: { code: 'DEPLOYMENT_EXISTS', message: failure } },
+        })
       if (path.includes('/sql/')) sql = null
       else jarDeleted = true
       data = null
-    }
-    else if (path === '/api/development/jar/jobs/jar-job/open') {
+    } else if (path === '/api/development/jar/jobs/jar-job/open') {
       opened++
       data = jar
     } else if (path === '/api/sql/jobs') data = sql ? [sql] : []
@@ -185,12 +214,264 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
     submits: () => submits,
     verificationReads: () => verificationReads,
     opened: () => opened,
-    jarReady: () => { opened = 1 },
+    jarReady: () => {
+      opened = 1
+    },
     deletes: () => deletes,
-    draftOnly: () => { sql = { ...sql, jobId: undefined } },
-    rejectDelete: (message: string) => { deleteError = message },
+    draftOnly: () => {
+      sql = { ...sql, jobId: undefined }
+    },
+    rejectDelete: (message: string) => {
+      deleteError = message
+    },
   }
 }
+
+async function configurationFixture(page: Page) {
+  await page.route('**/api/*/configuration', async (route) => {
+    const input = route.request().postDataJSON(),
+      session = route.request().url().includes('/sessions/')
+    const original = input.runtime
+    const root = original.deploymentYaml
+      ? parse(original.deploymentYaml)
+      : original.baseYaml
+        ? parse(original.baseYaml)
+        : {
+            apiVersion: 'flink.apache.org/v1beta1',
+            kind: 'FlinkDeployment',
+            metadata: {
+              name: session ? 'fw-session-sql-validation' : input.name,
+              namespace: 'test',
+            },
+            spec: {
+              image: 'registry.test/flink:1.20.5',
+              flinkVersion: 'v1_20',
+              mode: original.deploymentMode || 'native',
+              serviceAccount: original.serviceAccount || 'test-flink',
+              flinkConfiguration: {
+                ...original.flinkConfiguration,
+                'taskmanager.numberOfTaskSlots': String(original.slots || 2),
+              },
+              podTemplate: original.podTemplate || {},
+              jobManager: {
+                resource: { cpu: original.jmCpu || 1, memory: original.jmMemory || '2048m' },
+                podTemplate: original.jmPodTemplate || {},
+              },
+              taskManager: {
+                resource: { cpu: original.tmCpu || 1, memory: original.tmMemory || '2048m' },
+                podTemplate: original.tmPodTemplate || {},
+                ...(original.tmReplicas ? { replicas: original.tmReplicas } : {}),
+              },
+              ...(!session
+                ? {
+                    job: {
+                      jarURI: 'local:///opt/flink/usrlib/runner.jar',
+                      entryClass: 'com.flinkweb.sql.SqlRunner',
+                      parallelism: original.parallelism || 1,
+                      upgradeMode: 'stateless',
+                      args: [],
+                    },
+                  }
+                : {}),
+            },
+          }
+    const spec = root.spec
+    if (!original.deploymentYaml && original.baseYaml) {
+      spec.flinkConfiguration = {
+        ...original.flinkConfiguration,
+        'taskmanager.numberOfTaskSlots': String(original.slots),
+      }
+      spec.podTemplate = original.podTemplate || {}
+      spec.jobManager.podTemplate = original.jmPodTemplate || {}
+      spec.taskManager.podTemplate = original.tmPodTemplate || {}
+      if (spec.job) spec.job.parallelism = original.parallelism
+      if (original.tmReplicas) spec.taskManager.replicas = original.tmReplicas
+    }
+    const mapped = {
+      ...original,
+      baseYaml: stringify(root),
+      imageId: 'flink',
+      deploymentMode: spec.mode || 'native',
+      tmReplicas: spec.taskManager?.replicas || null,
+      slots: Number(spec.flinkConfiguration?.['taskmanager.numberOfTaskSlots'] || 1),
+      parallelism: spec.job?.parallelism || 1,
+      upgradeMode: spec.job?.upgradeMode || 'stateless',
+      serviceAccount: spec.serviceAccount || '',
+      flinkConfiguration: spec.flinkConfiguration || {},
+      podTemplate: spec.podTemplate || {},
+      jmPodTemplate: spec.jobManager?.podTemplate || {},
+      tmPodTemplate: spec.taskManager?.podTemplate || {},
+      jmMemory: spec.jobManager?.resource?.memory || '2048m',
+      tmMemory: spec.taskManager?.resource?.memory || '2048m',
+      jmCpu: spec.jobManager?.resource?.cpu || 1,
+      tmCpu: spec.taskManager?.resource?.cpu || 1,
+    }
+    const formIssue =
+      original.deploymentYaml &&
+      (!spec.serviceAccount ||
+        ['jobManager', 'taskManager'].some(
+          (role) =>
+            !/^[1-9][0-9]*(\.[0-9]+)?[mg]$/i.test(spec[role]?.resource?.memory || '') ||
+            typeof spec[role]?.resource?.cpu !== 'number',
+        ))
+        ? '资源配置无法无损映射为表单，请继续使用 YAML'
+        : ''
+    await route.fulfill({ json: { data: { yaml: stringify(root), runtime: mapped, formIssue } } })
+  })
+}
+
+test('Session 表单和 YAML 切换保留扩展配置，错误原文不被覆盖，固定数量可回填保存', async ({
+  page,
+}) => {
+  await fixture(page)
+  await configurationFixture(page)
+  await page.goto('/#/sessions')
+  await page.getByRole('button', { name: '＋ 新建 Session', exact: true }).click()
+  await page.getByLabel('集群名称', { exact: true }).fill('validation')
+  await page.getByRole('checkbox', { name: /SQL 验证专用 Session/ }).check()
+  await page.getByRole('combobox', { name: '运行镜像', exact: true }).selectOption('flink')
+  await expect(page.getByLabel('TaskManager 数量', { exact: true })).toBeDisabled()
+  await page.locator('[data-field="deploymentMode"]').selectOption('standalone')
+  await page.getByLabel('TaskManager 数量', { exact: true }).fill('3')
+  await page.getByRole('button', { name: 'YAML 编辑', exact: true }).click()
+  const editor = page.getByRole('textbox', { name: 'Session YAML 编辑器', exact: true })
+  const generated = parse(await editor.innerText())
+  generated.spec.logConfiguration = { 'log4j-console.properties': 'custom-config' }
+  generated.spec.taskManager.replicas = 4
+  await editor.fill('spec: [unfinished')
+  await page.getByRole('button', { name: '表单编辑', exact: true }).click()
+  await expect(page.locator('.notice.error')).toContainText('YAML 语法错误')
+  await expect(editor).toContainText('spec: [unfinished')
+  const unmappable = structuredClone(generated)
+  unmappable.spec.jobManager.resource.memory = '3Gi'
+  await editor.fill(stringify(unmappable))
+  await page.getByRole('button', { name: '表单编辑', exact: true }).click()
+  await expect(page.locator('.notice.error')).toContainText('无法无损')
+  await expect(editor).toContainText('3Gi')
+  await editor.fill(stringify(generated))
+  await page.getByRole('button', { name: '表单编辑', exact: true }).click()
+  await expect(page.getByLabel('TaskManager 数量', { exact: true })).toHaveValue('4')
+  await page.getByRole('button', { name: 'YAML 编辑', exact: true }).click()
+  await expect(editor).toContainText('custom-config')
+  await page.getByRole('button', { name: '保存配置', exact: true }).click()
+  await page.getByRole('button', { name: '配置', exact: true }).click()
+  await expect(editor).toContainText('replicas: 4')
+  await expect(editor).toContainText('custom-config')
+})
+
+test('SQL 配置 YAML 可回填资源，修改后检查失效，保存重开保留原文', async ({ page }) => {
+  await fixture(page)
+  await configurationFixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'SQL 检查', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'SQL 验证', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  await page.getByRole('button', { name: 'YAML 编辑', exact: true }).click()
+  const editor = page.getByRole('textbox', { name: 'SQL 部署 YAML 编辑器', exact: true })
+  const generated = parse(await editor.innerText())
+  generated.spec.job.parallelism = 6
+  generated.spec.logConfiguration = { 'log4j-console.properties': 'retained-sql-config' }
+  await editor.fill(stringify(generated))
+  await expect(page.getByRole('button', { name: 'SQL 验证', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '表单编辑', exact: true }).click()
+  await expect(page.locator('[data-field="parallelism"]')).toHaveValue('6')
+  await page.getByRole('button', { name: 'YAML 编辑', exact: true }).click()
+  await expect(editor).toContainText('retained-sql-config')
+  await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
+  await page.reload()
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  await expect(editor).toContainText('retained-sql-config')
+})
+
+for (const invalidField of ['共享', 'JobManager', 'TaskManager']) {
+  test(`无效 ${invalidField} PodTemplate 阻止数据源插入并保留全部编辑原文`, async ({ page }) => {
+    await fixture(page)
+    let inserts = 0
+    await page.route('**/api/catalog/datasources', (route) =>
+      route.fulfill({
+        json: { data: [{ id: 'source', name: 'test-source', connectorType: 'JDBC' }] },
+      }),
+    )
+    await page.route('**/api/sql/datasources/source/snippet', (route) => {
+      inserts++
+      return route.fulfill({
+        json: {
+          data: {
+            sql: 'CREATE TABLE injected(n INT);',
+            env: [{ name: 'DS_SECRET', value: '{{secret:test}}' }],
+          },
+        },
+      })
+    })
+    await page.goto('/#/sql?draft=sql-draft')
+    const sqlEditor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
+    await expect(sqlEditor).toContainText('CREATE TABLE sink')
+    const original = await sqlEditor.innerText()
+    await page.getByRole('button', { name: '部署配置', exact: true }).click()
+    await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
+    const names = ['共享', 'JobManager', 'TaskManager']
+    for (const [index, name] of names.entries()) {
+      await page
+        .locator(
+          `[data-field="${['podTemplate', 'jmPodTemplate', 'tmPodTemplate'][index]}"] summary`,
+        )
+        .click()
+      await page
+        .getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true })
+        .fill(
+          name === invalidField
+            ? 'spec: [unfinished'
+            : 'metadata:\n  annotations:\n    keep: ' + name,
+        )
+    }
+    await page.getByRole('button', { name: '数据源', exact: true }).click()
+    await page.getByRole('button', { name: '插入 SQL', exact: true }).click()
+    await expect(page.locator('.notice.error')).toContainText('修正 PodTemplate YAML')
+    expect(inserts).toBe(0)
+    await expect(sqlEditor).toHaveText(original)
+    await page.getByRole('button', { name: '部署配置', exact: true }).click()
+    for (const name of names)
+      await expect(
+        page.getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true }),
+      ).toContainText(name === invalidField ? 'spec: [unfinished' : 'keep: ' + name)
+    await page
+      .getByRole('textbox', { name: invalidField + ' PodTemplate（YAML）', exact: true })
+      .fill('{}')
+    await page.getByRole('button', { name: '数据源', exact: true }).click()
+    await page.getByRole('button', { name: '插入 SQL', exact: true }).click()
+    await expect(sqlEditor).toContainText('CREATE TABLE injected')
+    expect(inserts).toBe(1)
+  })
+}
+
+test('SQL 面板指针取消和丢失捕获清除拖动状态，1000px 边界与切换无溢出', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  const handle = page.getByRole('separator', { name: '调整辅助面板宽度' })
+  for (const event of ['pointercancel', 'lostpointercapture']) {
+    const box = (await handle.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + 50)
+    await page.mouse.down()
+    await expect(page.locator('.sql-workbench')).toHaveClass(/inspector-resizing/)
+    await handle.dispatchEvent(event)
+    await expect(page.locator('.sql-workbench')).not.toHaveClass(/inspector-resizing/)
+    await page.mouse.up()
+  }
+  for (const width of [1001, 1000, 999, 1001]) {
+    await page.setViewportSize({ width, height: 900 })
+    if (width > 1000) await expect(handle).toBeVisible()
+    else await expect(handle).toBeHidden()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    )
+    await page.getByRole('button', { name: '收起部署配置', exact: true }).click()
+    await page.getByRole('button', { name: '部署配置', exact: true }).click()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    )
+  }
+})
 
 test('SQL 检查约束、Session 引导、结果页签与停止监听', async ({ page }) => {
   const f = await fixture(page)
@@ -226,7 +507,8 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
   await page.getByRole('button', { name: '＋ 新建 Session', exact: true }).click()
   await expect(page.getByRole('heading', { name: '新建 Session', exact: true })).toBeVisible()
   const columns = page.locator('.session-form-grid > .editor-form-column')
-  const left = (await columns.nth(0).boundingBox())!, right = (await columns.nth(1).boundingBox())!
+  const left = (await columns.nth(0).boundingBox())!,
+    right = (await columns.nth(1).boundingBox())!
   expect(right.x).toBeGreaterThan(left.x + left.width)
   expect(Math.abs(left.y - right.y)).toBeLessThan(2)
   await expect(page.locator('.session-form-grid')).toHaveCSS('border-top-width', '0px')
@@ -234,14 +516,20 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
   await page.getByLabel('集群名称', { exact: true }).fill('validation')
   await page.getByRole('checkbox', { name: /SQL 验证专用 Session/ }).check()
   await page.getByRole('combobox', { name: '运行镜像', exact: true }).selectOption('flink')
-  await expect(page.locator('.session-dependencies').getByLabel('文件目录', { exact: true })).toHaveValue('shared')
+  await expect(
+    page.locator('.session-dependencies').getByLabel('文件目录', { exact: true }),
+  ).toHaveValue('shared')
   const runner = page.locator('[data-field="runnerArtifactId"]')
   await expect(runner.getByLabel('文件目录', { exact: true })).toHaveValue('runner')
   await runner.getByRole('button', { name: 'HTTP / S3 地址', exact: true }).click()
-  await runner.getByLabel('SQL Runner 文件地址', { exact: true }).fill('s3://test/sql-runner/runner.jar')
+  await runner
+    .getByLabel('SQL Runner 文件地址', { exact: true })
+    .fill('s3://test/sql-runner/runner.jar')
   await runner.getByRole('button', { name: '确认文件地址', exact: true }).click()
   await page.locator('[data-field="podTemplate"] summary').click()
-  await page.getByRole('textbox', { name: '共享 PodTemplate（YAML）', exact: true }).fill('spec: [bad')
+  await page
+    .getByRole('textbox', { name: '共享 PodTemplate（YAML）', exact: true })
+    .fill('spec: [bad')
   await page.getByRole('button', { name: '保存配置', exact: true }).click()
   await expect(page.locator('.notice.error')).toContainText('修正 PodTemplate YAML')
   await page.getByRole('textbox', { name: '共享 PodTemplate（YAML）', exact: true }).fill('{}')

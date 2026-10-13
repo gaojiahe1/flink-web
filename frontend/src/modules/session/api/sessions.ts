@@ -9,7 +9,14 @@ export interface SessionCluster {
   desiredState: string
   state?: string
   message?: string
+  configuredTaskManagers?: number
+  registeredTaskManagers?: number
+  taskManagerMessage?: string
   runtime: {
+    baseYaml?: string
+    deploymentYaml?: string
+    deploymentMode?: string
+    tmReplicas?: number | null
     imageId: string
     serviceAccount?: string
     runnerArtifactId?: string
@@ -27,6 +34,14 @@ export interface SessionCluster {
   }
 }
 export const sessionsApi = {
+  configuration: (value: unknown) =>
+    request<{ yaml: string; runtime: SessionCluster['runtime']; formIssue?: string }>(
+      '/api/sessions/configuration',
+      {
+        method: 'POST',
+        ...jsonBody(value),
+      },
+    ),
   list: () => request<SessionCluster[]>('/api/sessions'),
   status: (id: string) =>
     request<SessionCluster>('/api/sessions/' + encodeURIComponent(id) + '/status'),

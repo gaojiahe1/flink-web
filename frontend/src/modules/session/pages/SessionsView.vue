@@ -6,6 +6,8 @@ import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.v
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
+import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import { parseDeploymentYaml } from '../../../shared/utils/deploymentYaml'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
 import { emptyPodTemplates } from '../../../shared/utils/podTemplates'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
@@ -37,6 +39,10 @@ const defaults = () => ({
   validation: false,
   revision: 0,
   runtime: {
+    baseYaml: '',
+    deploymentYaml: '',
+    deploymentMode: 'native',
+    tmReplicas: null as number | null,
     serviceAccount: '',
     imageId: '',
     runnerArtifactId: '',
@@ -55,6 +61,8 @@ const defaults = () => ({
   },
 })
 const form = reactive(defaults())
+const editorMode = ref<'form' | 'yaml'>('form'),
+  deploymentYaml = ref('')
 const hasValidation = computed(() => clusters.value.some((c) => c.validation))
 const labels: Record<string, string> = {
   READY: '已就绪',
@@ -106,14 +114,58 @@ function open(item?: SessionCluster) {
     tmPodTemplate: form.runtime.tmPodTemplate || {},
   }
   podValid.value = true
+  deploymentYaml.value = form.runtime.deploymentYaml || ''
+  editorMode.value = deploymentYaml.value ? 'yaml' : 'form'
   editing.value = true
+}
+function payload() {
+  if (editorMode.value === 'yaml') parseDeploymentYaml(deploymentYaml.value)
+  else {
+    if (!configValid.value) throw new Error('请先修正 Flink 配置')
+    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
+  }
+  return {
+    ...form,
+    runtime: {
+      ...form.runtime,
+      ...pods.value,
+      tmReplicas:
+        form.runtime.tmReplicas == null || String(form.runtime.tmReplicas) === ''
+          ? null
+          : form.runtime.tmReplicas,
+      deploymentYaml: editorMode.value === 'yaml' ? deploymentYaml.value : '',
+    },
+  }
+}
+watch(
+  () => form.runtime.deploymentMode,
+  (mode) => {
+    if (mode === 'native') form.runtime.tmReplicas = null
+  },
+)
+async function switchEditor(mode: 'form' | 'yaml') {
+  if (mode === editorMode.value) return
+  await run(async () => {
+    const result = await sessionsApi.configuration(payload())
+    if (mode === 'form' && result.formIssue) throw new Error(result.formIssue)
+    if (mode === 'yaml') deploymentYaml.value = result.yaml
+    else {
+      Object.assign(form.runtime, result.runtime, { deploymentYaml: '', baseYaml: result.yaml })
+      pods.value = {
+        podTemplate: result.runtime.podTemplate || {},
+        jmPodTemplate: result.runtime.jmPodTemplate || {},
+        tmPodTemplate: result.runtime.tmPodTemplate || {},
+      }
+    }
+    editorMode.value = mode
+  })
 }
 async function save() {
   await run(async () => {
-    if (!configValid.value) throw new Error('请先修正 Flink 配置')
-    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
-    Object.assign(form.runtime, pods.value)
-    await sessionsApi.save(selected.value || (form.validation ? 'sql-validation' : form.name), form)
+    await sessionsApi.save(
+      selected.value || (form.validation ? 'sql-validation' : form.name),
+      payload(),
+    )
     editing.value = false
     await load()
     message.value = 'Session 配置已保存，请点击启动。'
@@ -145,7 +197,11 @@ async function stop(item: SessionCluster) {
   )
     return
   await run(async () => {
-    Object.assign(item, await sessionsApi.stop(item.id))
+    const result = await sessionsApi.stop(item.id)
+    delete item.registeredTaskManagers
+    delete item.configuredTaskManagers
+    delete item.taskManagerMessage
+    Object.assign(item, result)
     message.value = '停止请求已受理，请刷新确认资源删除完成。'
   })
 }
@@ -237,6 +293,27 @@ onMounted(async () => {
                 :class="{ running: item.state === 'READY', failed: item.state === 'ERROR' }"
                 >{{ labels[item.state || ''] || item.state || '尚未查询' }}</span
               ><small v-if="item.message" class="table-description">{{ item.message }}</small>
+              <small
+                v-if="
+                  item.configuredTaskManagers !== undefined ||
+                  item.registeredTaskManagers !== undefined
+                "
+                class="table-description"
+              >
+                TaskManager：{{
+                  item.registeredTaskManagers !== undefined
+                    ? `已注册 ${item.registeredTaskManagers}`
+                    : '尚未查询注册数量'
+                }}
+                {{
+                  item.configuredTaskManagers !== undefined
+                    ? ` · 配置 ${item.configuredTaskManagers}`
+                    : ' · 按需分配'
+                }}
+              </small>
+              <small v-if="item.taskManagerMessage" class="table-description">{{
+                item.taskManagerMessage
+              }}</small>
             </td>
             <td>
               <div class="row-actions">
@@ -287,7 +364,42 @@ onMounted(async () => {
     </p>
   </section>
   <form v-else class="job-editor-form session-editor" @submit.prevent="save">
-    <fieldset class="session-form-grid" :disabled="busy || uploading">
+    <div class="filter-bar" role="group" aria-label="Session 配置编辑方式">
+      <button
+        type="button"
+        class="button"
+        :class="{ primary: editorMode === 'form' }"
+        :disabled="busy || uploading"
+        @click="switchEditor('form')"
+      >
+        表单编辑
+      </button>
+      <button
+        type="button"
+        class="button"
+        :class="{ primary: editorMode === 'yaml' }"
+        :disabled="busy || uploading"
+        @click="switchEditor('yaml')"
+      >
+        YAML 编辑
+      </button>
+    </div>
+    <section v-if="editorMode === 'yaml'" class="panel">
+      <p class="muted">
+        编辑 Session FlinkDeployment；资源名称和 namespace 保持固定，Runner
+        与下载器由文件选择配置管理。
+      </p>
+      <CodeEditor
+        v-model="deploymentYaml"
+        label="Session YAML 编辑器"
+        :readonly="busy || uploading"
+      />
+    </section>
+    <fieldset
+      v-show="editorMode === 'form'"
+      class="session-form-grid"
+      :disabled="busy || uploading || editorMode === 'yaml'"
+    >
       <div class="editor-form-column">
         <section class="panel form-panel compact-form">
           <h3><span class="section-number">01</span> 基本信息</h3>
@@ -375,6 +487,35 @@ onMounted(async () => {
                 step="1" /><HelpTip
                 text="每个 TaskManager 的逻辑调度槽位；SQL 验证的并行度由 SQL 草稿配置。"
             /></label>
+            <label
+              >资源分配模式<select
+                data-field="deploymentMode"
+                v-model="form.runtime.deploymentMode"
+              >
+                <option value="native">Native · 按需分配</option>
+                <option value="standalone">Standalone · 固定数量</option>
+              </select></label
+            >
+            <label
+              >TaskManager 数量<input
+                data-field="tmReplicas"
+                aria-label="TaskManager 数量"
+                v-model.number="form.runtime.tmReplicas"
+                type="number"
+                min="1"
+                step="1"
+                :disabled="form.runtime.deploymentMode !== 'standalone'"
+                placeholder="留空沿用默认行为"
+            /></label>
+            <p class="muted wide-field">
+              {{
+                form.runtime.deploymentMode === 'native'
+                  ? 'Native 模式根据作业需求创建或释放 TaskManager；固定数量请显式选择 Standalone。'
+                  : form.runtime.tmReplicas
+                    ? `理论 Slot 总数：${form.runtime.tmReplicas * form.runtime.slots}`
+                    : '可指定固定 TaskManager 数量；已有配置留空时沿用默认行为。'
+              }}
+            </p>
           </div>
         </section>
       </div>

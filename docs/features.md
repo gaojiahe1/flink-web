@@ -64,7 +64,11 @@ Flink 配置支持逐行 key:value、常用键提示、中文说明、重复键�
 
 ## 4. SQL 开发
 
-SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署配置。支持保存、修订控制、历史对比/恢复、SQL 检查、YAML 预览和发布为 Application 作业。
+SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署配置。支持保存、修订控制、历史对比/恢复、SQL 检查、部署配置表单/YAML 双向编辑、最终 YAML 预览和发布为 Application 作业。
+
+2026-10-13：SQL 与 Session 配置支持表单/YAML 切换；配置转换不保存、不启动，也不要求未完成 SQL 通过语法检查。YAML 原文随草稿保存，后端重新解析可编辑字段，`baseYaml` 保留表单之外的配置。语法错误时保留原文并阻止转换/保存；固定 namespace、资源名称及平台标签仍受校验，Session 禁止 `spec.job`，SQL 的 Runner 入口和下载器配置受所选文件约束，执行 args 由脚本在预览/发布时生成。配置变化使 SQL 检查失效。三处 PodTemplate 任一无效时拦截数据源插入；异步返回期间上下文变化也不覆盖新编辑。
+
+YAML 中省略的资源字段不自动补入表单默认值，保留由 Flink 配置或 Operator 提供资源的语义。缺少显式账号/资源字段，或内存单位不能由当前表单表示时，允许继续保存 YAML，但拒绝无损条件不满足的表单回填并说明原因；不会擅自补账号、改内存单位或覆盖原文。
 
 2026-10-12：桌面辅助面板左侧分隔线可拖动调整宽度，支持左右方向键、Home/End 和双击复位；窗口缩小时限制宽度，全屏保留调整结果，窄屏采用上下布局。共同配置名称与 JAR 表单统一为“作业名称”“镜像版本”“运行资源”“JobManager / TaskManager 内存、CPU”“每个 TaskManager 的 Slot 数”“Flink 配置”。检查结果区新增 Runner/语法验证器/Session 验证的使用说明。
 
@@ -83,6 +87,8 @@ SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署�
 - 左侧“Session 集群”展示配置、期望与观测状态、错误摘要，支持创建、配置、启动、停止及删除已停止配置。普通 Session 可创建多个；验证专用 Session 固定标识 sql-validation，通过数据库唯一键保证只能一个。运行中禁止改配置；停止以 UID/resourceVersion 限定原资源，确认资源消失后才允许删除配置。
 - 2026-10-09：新建/配置 Session 使用与作业编辑一致的卡片分区、资源字段网格和保存操作栏，桌面双列、窄屏单列；2026-10-12 起三处 PodTemplate 使用默认折叠的 YAML 高亮编辑器，兼容已有 JSON 对象配置。进入编辑时隐藏集群列表，保存后返回列表，启动仍为独立操作。
 - 管理员维护共享 Session 配置，管理员/运维启动停止；开发者使用就绪的专用 Session 验证有编辑权限的 SQL。专用 Session 缺失或未就绪时提示前往 Session 导航创建/启动。
+- 2026-10-13：Session 显式选择 Native 按需分配或 Standalone 固定数量。固定 TaskManager 数量必须为正整数并仅允许 Standalone，映射 `spec.taskManager.replicas`；Slot 数独立配置。旧配置未填数量时保持原行为，切换 Native 时清除表单中的固定数量。显式状态查询分别显示配置副本数和 Flink REST 已注册数量，查询失败不虚构数量或改变集群就绪状态；SQL 验证前的就绪核对不额外查询数量。
+- 启动前仍执行严格 dry-run；服务端补默认字段和等值数值规范化允许通过，提交字段被裁剪/改变则拦截，并显示最多八处字段路径与差异类别，不输出字段值。截图对应的现场字段差异须用实际 CRD/dry-run 核对，不能仅凭提示认定 Operator 版本错误。
 - “SQL 验证”位于“SQL 检查”旁，仅检查通过后可点击；SQL 或配置修改会使检查失效。提交前保存修订并在后端重新检查。页面下方显示作业状态、Sink 序号、变更类型与 Print 格式数据，最多 100 条，保留重复业务行；无足够输入时可以少于 100 条。结果只保留于当前后端进程内，不保存原始日志或业务行到数据库。
 - 原 INSERT Sink 替换为临时 Print 表，不向原 Sink 写入；各输出查询限制 100 条，界面合计显示最多 100 条，达到上限或两分钟截止后取消。任务失败显示脱敏的 Planner/运行异常摘要；受理、取消中与已结束分开表示。专用 Session 同时只接受一份验证，未知提交继续使用固定 JobID 确认和清理。
 - SQL、JAR 和 Session 共用登记的 Flink 镜像；2026-10-10：Runner 必须显式选择，从共享 sql-runner 列表选择 JAR 或确认具体 HTTP/HTTPS/S3 地址，不再按镜像版本自动定位。SQL Application 与验证专用 Session 必须选择 Runner；普通 Session 可以不选。Runner 挂载至 usrlib。验证时 Runner 和所选 Connector JAR 合并服务发现配置、拒绝冲突类，通过 Flink REST 上传为用户代码 JAR 并分发至 JM/TM。SQL 与验证集群须使用相同镜像。环境变量与非 JAR 文件须先在 Session 配置中准备并重启，不能热修改运行中 Pod。
@@ -101,6 +107,8 @@ Kubernetes dry-run 只校验提交资源，不能替代 SQL Planner。SQL Runner
 2026-10-12：Runner 加载磁盘配置时保留状态、S3 和业务配置，用户 JAR/类路径使用 Flink 提交上下文，避免 `local:///` 覆盖已解析 URL 导致初始 SQL 启动失败。Runner 与独立 Parser 产物使用 Java 8 字节码；已实测 JDK 8/17 下的 Runner 1.20.3 API 执行及 Parser 1.20.3/1.20.5，另在 Flink 1.20.5/JDK 17 容器实测 Application 与 Session。其他版本须单独验收。Parser 强制有效非空语句数组、100 条/32 KiB 脚本和 128 KiB 协议输入上限，JSON 输出固定 UTF-8。平台后端保持 JDK 17。
 
 SQL/Session 的 Runner 选择区提供“下载平台 SQL Runner”：管理员/开发者从当前后端下载随版本发布的文件，再上传并显式选择；既有作业和已运行 Session 不自动替换。后端镜像内置两份精确版本 Parser，SQL 检查按镜像版本自动调用，无需在作业依赖中选择 Parser。
+
+2026-10-13：Parser 协议区分 INPUT、SYNTAX、RUNTIME，兼容旧的 valid/位置字段；无有效位置不生成零行列提示。错误正文不返回 SQL 内容，安装扫描/运行日志仅记录关联 ID、版本、阶段、故障类型或错误码及退出码，不记录凭据或完整 stderr。验证上传 JAR 删除失败记录验证 ID 和故障类型，保持原验证终态，不自动重试。
 
 ## 5. 数据源与 Flink Catalog
 

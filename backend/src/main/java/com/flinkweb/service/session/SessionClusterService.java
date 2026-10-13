@@ -12,6 +12,9 @@ public interface SessionClusterService {
   /** 按修订号保存配置，验证 Session 通过固定主键保证唯一。 */
   ObjectNode save(String id, SessionRequest input);
 
+  /** 转换并预览配置，不创建 Kubernetes 资源。 */
+  ObjectNode configuration(SessionRequest input);
+
   /** 刷新单个 Session 的真实状态。 */
   ObjectNode status(String id);
 

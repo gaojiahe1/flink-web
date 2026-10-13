@@ -11,12 +11,98 @@ import com.flinkweb.service.sql.impl.SqlParserServiceImpl;
 import java.nio.file.*;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 /** 验证 Parser 版本降级，以及实际独立进程的语法检查协议。 */
+@ExtendWith(OutputCaptureExtension.class)
 class SqlParserServiceTest {
   @TempDir Path directory;
   final ObjectMapper mapper = new ObjectMapper();
+
+  /** 替换进程边界，真实执行协议解析、错误分类和日志输出。 */
+  private SqlParserServiceImpl protocol(String output, int exit) throws Exception {
+    Files.createDirectories(directory.resolve("1.20.3"));
+    Files.write(directory.resolve("1.20.3/validator.jar"), new byte[0]);
+    var records = mock(RecordRepository.class);
+    when(records.require("images", "image"))
+        .thenReturn(mapper.createObjectNode().put("flinkVersion", "1.20.3"));
+    var process = mock(Process.class);
+    when(process.getOutputStream()).thenReturn(new java.io.ByteArrayOutputStream());
+    when(process.getInputStream())
+        .thenReturn(
+            new java.io.ByteArrayInputStream(
+                output.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    when(process.waitFor(anyLong(), any())).thenReturn(true);
+    when(process.exitValue()).thenReturn(exit);
+    return new SqlParserServiceImpl(records, mapper, directory.toString()) {
+      /** 仅替换操作系统进程，业务错误处理仍走生产代码。 */
+      @Override
+      protected Process startParser(ProcessBuilder builder) {
+        return process;
+      }
+    };
+  }
+
+  /** 输入异常不冒充语法错误；旧协议无位置时不输出零行列或 SQL 内容。 */
+  @Test
+  void protocolDistinguishesInputAndSyntaxWithoutInventingLocations() throws Exception {
+    var input = protocol("{\"version\":\"1.20.3\",\"valid\":false,\"errorType\":\"INPUT\"}", 0);
+    assertThatThrownBy(() -> input.check(sample("private-sql-text"), "image"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.code()).isEqualTo("SQL_PARSER_INPUT_ERROR"))
+        .hasMessageNotContaining("第 0")
+        .hasMessageNotContaining("private-sql-text");
+    var syntax =
+        protocol(
+            "{\"version\":\"1.20.3\",\"valid\":false,\"statement\":1,\"message\":\"private-sql-text\"}",
+            0);
+    assertThatThrownBy(() -> syntax.check(sample("private-sql-text"), "image"))
+        .hasMessageContaining("第 1 条语句")
+        .hasMessageNotContaining("第 0")
+        .hasMessageNotContaining("private-sql-text");
+  }
+
+  /** 空输出和退出码分类可排查，日志不包含 SQL、上游输出或凭据。 */
+  @Test
+  void emptyOutputAndAbnormalExitHaveSafeDiagnosticLogs(CapturedOutput captured) throws Exception {
+    var empty = protocol("", 0);
+    assertThatThrownBy(() -> empty.check(sample("private-sql-text"), "image"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.code()).isEqualTo("SQL_VALIDATOR_PROTOCOL"));
+    var failed = protocol("private-output password=private-value", 17);
+    assertThatThrownBy(() -> failed.check(sample("private-sql-text"), "image"))
+        .isInstanceOfSatisfying(
+            BusinessException.class, ex -> assertThat(ex.code()).isEqualTo("SQL_VALIDATOR_EXIT"));
+    assertThat(captured.getAll())
+        .contains("stage=OUTPUT", "stage=EXIT", "exit=17")
+        .doesNotContain("private-output", "private-value", "private-sql-text");
+  }
+
+  /** 安装目录不可读时保留空列表 API，同时输出脱敏故障类型。 */
+  @Test
+  void unreadableInstallationDirectoryIsLoggedWithoutPathOrExceptionMessage(CapturedOutput captured)
+      throws Exception {
+    var parser =
+        new SqlParserServiceImpl(mock(RecordRepository.class), mapper, directory.toString());
+    try (var files = mockStatic(Files.class)) {
+      files
+          .when(
+              () ->
+                  Files.readAttributes(
+                      directory.toAbsolutePath().normalize(),
+                      java.nio.file.attribute.BasicFileAttributes.class))
+          .thenThrow(new AccessDeniedException("private-directory"));
+      assertThat(parser.installed()).isEmpty();
+    }
+    assertThat(captured.getAll())
+        .contains("AccessDeniedException")
+        .doesNotContain("private-directory");
+  }
 
   /** 无精确版本适配器时必须明确返回 BASIC。 */
   @Test

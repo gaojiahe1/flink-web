@@ -12,6 +12,7 @@
 - BASIC、精确版本Parser、真实Planner三个层次清楚；缺少适配器不冒充语法通过。
 - 专用Session仅一个，输出最多100条、两分钟取消，不写原Sink；修改SQL使检查失效，Runner明确选择。
 - 2026-10-12：初始SQL在Flink1.20.5 Application正常执行，磁盘local URI不覆盖提交上下文；Runner/Parser产物兼容JDK8/17，精确1.20.3/1.20.5 Parser可用。SQL辅助面板可拖动/键盘缩放，窄屏保持上下布局，共同配置名称与JAR一致，页面给出实际使用入口。
+- 2026-10-13：Session/SQL 配置支持表单/YAML 双向编辑，往返保留额外字段，错误原文不得被转换或数据源插入覆盖；Runner/身份/下载器边界仍由后端约束。Session 支持显式 Standalone 固定 TaskManager 数量，Native 保留按需行为，显示配置数与已注册数；dry-run 接受等值数值并报告脱敏字段差异。Parser 错误分类、上传 JAR 清理诊断及面板取消/1000px 边界回归均纳入本轮验证，现场 Operator/CRD 不据此视为已验收。
 
 关联：[模块](../modules/sql-session.md)、[ADR](../decisions/ADR-001-on-demand.md)。关键代码及测试由模块链接定位，不维护第二份路径清单。
 

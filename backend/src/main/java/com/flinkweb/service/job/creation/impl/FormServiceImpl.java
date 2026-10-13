@@ -52,6 +52,11 @@ public class FormServiceImpl implements FormService {
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
     ObjectNode spec = resource.withObject("/spec");
+    if (input.has("deploymentMode")) spec.put("mode", input.path("deploymentMode").asText());
+    if (input.has("tmReplicas")) {
+      if (input.path("tmReplicas").isNull()) spec.withObject("/taskManager").remove("replicas");
+      else spec.withObject("/taskManager").set("replicas", input.get("tmReplicas"));
+    }
     if (input.has("serviceAccount"))
       spec.set("serviceAccount", input.get("serviceAccount").deepCopy());
     var image = records.require("images", input.path("imageId").asText());
@@ -67,14 +72,8 @@ public class FormServiceImpl implements FormService {
       job.put("entryClass", input.path("entryClass").asText());
     else job.remove("entryClass");
     if (input.path("args").isArray()) job.set("args", input.get("args"));
-    spec.withObject("/jobManager")
-        .withObject("/resource")
-        .put("memory", input.path("jmMemory").asText("2048m"))
-        .put("cpu", input.path("jmCpu").asDouble(1));
-    spec.withObject("/taskManager")
-        .withObject("/resource")
-        .put("memory", input.path("tmMemory").asText("2048m"))
-        .put("cpu", input.path("tmCpu").asDouble(1));
+    applyResource(spec, input, "jobManager", "jm");
+    applyResource(spec, input, "taskManager", "tm");
     if (input.path("flinkConfiguration").isObject())
       spec.set("flinkConfiguration", input.get("flinkConfiguration").deepCopy());
     spec.withObject("/flinkConfiguration")
@@ -113,8 +112,30 @@ public class FormServiceImpl implements FormService {
         .put("flinkVersion", image.path("flinkVersion").asText());
   }
 
+  /** YAML 中省略的资源字段保持省略，避免覆盖由 Flink 配置或 Operator 提供的资源。 */
+  private void applyResource(ObjectNode spec, ObjectNode input, String component, String prefix) {
+    boolean preserve = !input.path("deploymentYaml").asText().isBlank();
+    if (preserve && !input.has(prefix + "Memory") && !input.has(prefix + "Cpu")) return;
+    var target = spec.withObject("/" + component + "/resource");
+    if (!preserve || input.has(prefix + "Memory"))
+      target.put("memory", input.path(prefix + "Memory").asText("2048m"));
+    if (!preserve || input.has(prefix + "Cpu"))
+      target.put("cpu", input.path(prefix + "Cpu").asDouble(1));
+  }
+
   /** 在生成 YAML 前校验表单字段，避免非整数并行度被隐式截断。 */
   private void checkInput(ObjectNode input) {
+    if (input.has("deploymentMode")
+        && !java.util.Set.of("native", "standalone")
+            .contains(input.path("deploymentMode").asText()))
+      yaml.fail("部署模式必须为 native 或 standalone");
+    if (input.hasNonNull("tmReplicas")) {
+      var replicas = input.path("tmReplicas");
+      if (!replicas.isIntegralNumber() || !replicas.canConvertToInt() || replicas.asInt() < 1)
+        yaml.fail("TaskManager 数量必须为正整数");
+      if (!"standalone".equals(input.path("deploymentMode").asText()))
+        yaml.fail("固定 TaskManager 数量仅适用于 standalone 模式；native 模式按需分配");
+    }
     if (input.path("imageId").asText().isBlank()) yaml.fail("请选择已登记的运行镜像");
     if ("savepoint".equals(input.path("upgradeMode").asText())
         && input.at("/flinkConfiguration/state.savepoints.dir").asText().isBlank()

@@ -34,7 +34,7 @@ SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接�
 
 敏感传输用途明确为 login、user-password、config-secret，前后端须配套；一次性挑战每会话最多 8 项。启动环境变量使用原始初始密码，不能填 fwenc1 信封。旧回复中“主密钥仍为空”仅是 09-29 当时观察，当前固定非空配置的待处理事项见 [风险清单](../open-questions.md)。
 
-- [UserServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/permission/impl/UserServiceImpl.java)：空用户库初始化及密码校验；其启动提示仍写 Deployment，待按当前 StatefulSet 修正文案。
+- [UserServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/permission/impl/UserServiceImpl.java)：空用户库初始化及密码校验；2026-10-13 启动提示已改为当前 StatefulSet flink-web 或后端实际工作负载，保留数据库/PVC 保护说明。
 - [StartupFailureAnalyzer.java](../../../backend/src/main/java/com/flinkweb/config/platform/StartupFailureAnalyzer.java)：展开启动配置异常的原因与处理步骤。
 - [BootstrapAdminTest.java](../../../backend/src/test/java/com/flinkweb/service/permission/impl/BootstrapAdminTest.java)：管理员初始化回归入口。
 - [secretTransport.ts](../../../frontend/src/shared/api/secretTransport.ts)：三类敏感字段传输入口。

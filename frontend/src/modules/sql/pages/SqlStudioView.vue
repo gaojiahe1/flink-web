@@ -25,6 +25,7 @@ import {
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
+import { parseDeploymentYaml } from '../../../shared/utils/deploymentYaml'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -43,6 +44,8 @@ type Catalog = {
   yaml?: string
 }
 type Runtime = {
+  baseYaml: string
+  deploymentYaml: string
   serviceAccount: string
   workspaceId: string
   imageId: string
@@ -101,6 +104,8 @@ async function blurName() {
 const example =
   "-- 数据生成 → 控制台输出；运行镜像需包含 datagen / print 连接器\nCREATE TEMPORARY TABLE source_events (\n  id BIGINT,\n  payload STRING\n) WITH (\n  'connector' = 'datagen',\n  'rows-per-second' = '1'\n);\n\nCREATE TEMPORARY TABLE sink_events (\n  id BIGINT,\n  payload STRING\n) WITH ('connector' = 'print');\n\nINSERT INTO sink_events\nSELECT id, payload FROM source_events;"
 const initialRuntime = (): Runtime => ({
+  baseYaml: '',
+  deploymentYaml: '',
   serviceAccount: systemInfo.value?.namespace ? systemInfo.value.namespace + '-flink' : '',
   workspaceId: requestId(),
   catalogId: '',
@@ -120,6 +125,8 @@ const initialRuntime = (): Runtime => ({
 })
 const form = reactive({ name: '', description: '', sql: example, revision: 0 })
 const runtime = reactive<Runtime>(initialRuntime())
+const editorMode = ref<'form' | 'yaml'>('form'),
+  deploymentYaml = ref('')
 const podValid = ref(true)
 const podOptions = computed<PodTemplateOptions>({
   get: () => ({
@@ -287,6 +294,7 @@ watch(
     pod,
     podTemplateId,
     podValid,
+    deploymentYaml,
   ],
   () => {
     clearValidationErrors()
@@ -308,7 +316,14 @@ const filtered = computed(() =>
 const bytes = computed(() => new TextEncoder().encode(form.sql).length)
 const savedSnapshot = ref('')
 const snapshot = () =>
-  JSON.stringify({ form, runtime, config: config.value, pod: pod.value, podValid: podValid.value })
+  JSON.stringify({
+    form,
+    runtime,
+    config: config.value,
+    pod: pod.value,
+    podValid: podValid.value,
+    deploymentYaml: editorMode.value === 'yaml' ? deploymentYaml.value : '',
+  })
 const dirty = computed(() => savedSnapshot.value !== snapshot())
 watch(
   () => systemInfo.value?.namespace,
@@ -378,6 +393,8 @@ async function open(record: SqlDraft, force = false) {
     revision: record.revision,
   })
   Object.assign(runtime, initialRuntime(), JSON.parse(JSON.stringify(record.runtime)))
+  deploymentYaml.value = runtime.deploymentYaml || ''
+  editorMode.value = deploymentYaml.value ? 'yaml' : 'form'
   if (record.jobId) runtime.workspaceId = record.jobId
   config.value = JSON.stringify(runtime.flinkConfiguration || {}, null, 2)
   pod.value = JSON.stringify(runtime.podTemplate || {}, null, 2)
@@ -407,6 +424,8 @@ async function create() {
   linkedJob.value = ''
   Object.assign(form, { name: '', description: '', sql: example, revision: 0 })
   Object.assign(runtime, initialRuntime())
+  deploymentYaml.value = ''
+  editorMode.value = 'form'
   config.value = '{}'
   pod.value = '{}'
   preview.value = ''
@@ -445,16 +464,45 @@ async function applyPodTemplate() {
   error.value = ''
 }
 function payload() {
-  if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
-  if (!configValid.value) throw new Error('请先修正 Flink 配置')
+  if (editorMode.value === 'yaml') parseDeploymentYaml(deploymentYaml.value)
+  else {
+    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
+    if (!configValid.value) throw new Error('请先修正 Flink 配置')
+  }
   return {
     ...form,
     runtime: {
       ...runtime,
-      flinkConfiguration: JSON.parse(config.value),
-      podTemplate: JSON.parse(pod.value),
+      deploymentYaml: editorMode.value === 'yaml' ? deploymentYaml.value : '',
+      flinkConfiguration:
+        editorMode.value === 'yaml' ? runtime.flinkConfiguration : JSON.parse(config.value),
+      podTemplate: editorMode.value === 'yaml' ? runtime.podTemplate : JSON.parse(pod.value),
     },
   }
+}
+async function switchEditor(mode: 'form' | 'yaml') {
+  if (mode === editorMode.value) return
+  return run(async () => {
+    const before = snapshot()
+    const result = await request<{ yaml: string; runtime: Runtime; formIssue?: string }>(
+      '/api/sql/configuration',
+      {
+        method: 'POST',
+        ...jsonBody(payload()),
+      },
+    )
+    if (before !== snapshot()) throw new Error('配置已修改，请重新切换编辑方式')
+    if (mode === 'form' && result.formIssue) throw new Error(result.formIssue)
+    if (mode === 'yaml') deploymentYaml.value = result.yaml
+    else {
+      Object.assign(runtime, result.runtime, { deploymentYaml: '', baseYaml: result.yaml })
+      config.value = JSON.stringify(result.runtime.flinkConfiguration || {}, null, 2)
+      podOptions.value = readPodTemplates(parseDeploymentYaml(result.yaml).toJS().spec)
+      configValid.value = true
+      podValid.value = true
+    }
+    editorMode.value = mode
+  })
 }
 async function persist() {
   if (!form.name || !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(form.name)) {
@@ -623,10 +671,18 @@ async function refreshSources() {
 }
 function insertSource(id: string) {
   return run(async () => {
+    if (editorMode.value === 'form' && !podValid.value)
+      throw new Error('请先修正 PodTemplate YAML，再插入数据源')
+    const document = editorMode.value === 'yaml' ? parseDeploymentYaml(deploymentYaml.value) : null
+    const before = snapshot()
     const snippet = await request<{ sql: string; env: { name: string; value: string }[] }>(
       '/api/sql/datasources/' + id + '/snippet',
     )
-    const template = JSON.parse(pod.value)
+    if (before !== snapshot() || (editorMode.value === 'form' && !podValid.value))
+      throw new Error('SQL 或配置已修改，请重新插入数据源')
+    const template = document
+      ? readPodTemplates(document.toJS().spec).podTemplate
+      : JSON.parse(pod.value)
     if (!template || typeof template !== 'object' || Array.isArray(template))
       throw new Error('PodTemplate 必须为 JSON 对象')
     if (snippet.env.length) {
@@ -645,7 +701,10 @@ function insertSource(id: string) {
         if (!existing) main.env.push(env)
       }
     }
-    pod.value = JSON.stringify(template, null, 2)
+    if (document) {
+      document.setIn(['spec', 'podTemplate'], template)
+      deploymentYaml.value = document.toString()
+    } else pod.value = JSON.stringify(template, null, 2)
     form.sql = snippet.sql + '\n' + form.sql
     check.value = null
     message.value =
@@ -1015,6 +1074,36 @@ watch(
         <button class="text-button" aria-label="收起部署配置" @click="sideTab = ''">×</button>
       </div>
       <p class="muted runtime-intro">发布后统一在作业管理页启停、刷新状态和创建快照。</p>
+      <div class="filter-bar" role="group" aria-label="SQL 部署配置编辑方式">
+        <button
+          type="button"
+          class="button"
+          :class="{ primary: editorMode === 'form' }"
+          :disabled="busy || !editable || artifactUploading || stateConfigBusy || loading"
+          @click="switchEditor('form')"
+        >
+          表单编辑
+        </button>
+        <button
+          type="button"
+          class="button"
+          :class="{ primary: editorMode === 'yaml' }"
+          :disabled="busy || !editable || artifactUploading || stateConfigBusy || loading"
+          @click="switchEditor('yaml')"
+        >
+          YAML 编辑
+        </button>
+      </div>
+      <section v-if="editorMode === 'yaml'">
+        <p class="muted">
+          编辑部署配置；Runner 和下载器由文件选择管理，执行参数在发布时由 SQL 脚本生成。
+        </p>
+        <CodeEditor
+          v-model="deploymentYaml"
+          label="SQL 部署 YAML 编辑器"
+          :readonly="busy || !editable"
+        />
+      </section>
       <fieldset :disabled="!editable || busy || loading">
         <h4>基本信息</h4>
         <label
@@ -1038,128 +1127,130 @@ watch(
             maxlength="500"
             placeholder="说明作业用途"
         /></label>
-        <label
-          >镜像版本<FlinkImageSelect
-            data-field="imageId"
-            v-model="runtime.imageId"
-            :images="images"
-            label="镜像版本" /><HelpTip
-            text="与 JAR 作业共用 Flink 镜像；Runner 和依赖通过下载器挂载，镜像需包含 Table Planner。"
-        /></label>
-        <ServiceAccountField
-          v-model="runtime.serviceAccount"
-          :disabled="busy || !editable"
-          :auto-default="false"
-        />
-        <StateStorageForm
-          v-model="configValues"
-          :version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || '1.20'"
-          :scope-id="runtime.workspaceId"
-          @busy="stateConfigBusy = $event"
-          :disabled="busy || !editable"
-        />
-        <h4>运行资源</h4>
-        <div class="runtime-grid">
+        <div v-show="editorMode === 'form'">
           <label
-            >并行度<input
-              data-field="parallelism"
-              v-model.number="runtime.parallelism"
-              type="number"
-              min="1"
-              step="1" /></label
-          ><label
-            >每个 TaskManager 的 Slot 数<input
-              data-field="slots"
-              v-model.number="runtime.slots"
-              type="number"
-              min="1"
-              step="1"
+            >镜像版本<FlinkImageSelect
+              data-field="imageId"
+              v-model="runtime.imageId"
+              :images="images"
+              label="镜像版本" /><HelpTip
+              text="与 JAR 作业共用 Flink 镜像；Runner 和依赖通过下载器挂载，镜像需包含 Table Planner。"
           /></label>
-        </div>
-        <div class="runtime-grid">
-          <MemoryInput
-            data-field="jmMemory"
-            v-model="runtime.jmMemory"
-            label="JobManager 内存"
-          /><MemoryInput
-            data-field="tmMemory"
-            v-model="runtime.tmMemory"
-            label="TaskManager 内存"
-          />
-        </div>
-        <div class="runtime-grid">
-          <label
-            >JobManager CPU<input
-              data-field="jmCpu"
-              v-model.number="runtime.jmCpu"
-              type="number"
-              min="0.1"
-              step="any" /></label
-          ><label
-            >TaskManager CPU<input
-              data-field="tmCpu"
-              v-model.number="runtime.tmCpu"
-              type="number"
-              min="0.1"
-              step="any"
-          /></label>
-        </div>
-        <label
-          >升级策略<select data-field="upgradeMode" v-model="runtime.upgradeMode">
-            <option value="savepoint">savepoint · 保存状态</option>
-            <option value="stateless">stateless · 无状态</option>
-            <option value="last-state">last-state · 需要 HA</option>
-          </select></label
-        >
-        <details class="runtime-advanced">
-          <summary>程序与依赖及 Flink 配置</summary>
-          <ArtifactPicker
-            data-field="runnerArtifactId"
-            v-model="runtime.runnerArtifactId"
-            category="main"
-            runner
-            :disabled="busy || !editable || artifactUploading"
-            @uploading="artifactUploading = $event"
-          />
-          <ArtifactPicker
-            data-field="dependencyArtifactIds"
-            v-model="runtime.dependencyArtifactIds"
-            :artifacts="artifacts"
-            :scope-id="runtime.workspaceId"
-            category="dependency"
+          <ServiceAccountField
+            v-model="runtime.serviceAccount"
             :disabled="busy || !editable"
-            @uploaded="uploaded"
-            @uploading="artifactUploading = $event"
+            :auto-default="false"
           />
-          <h4>Flink 配置</h4>
-          <FlinkConfigEditor
-            data-field="flinkConfiguration"
+          <StateStorageForm
             v-model="configValues"
-            :readonly="busy || !editable"
-            @valid="configValid = $event"
+            :version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || '1.20'"
+            :scope-id="runtime.workspaceId"
+            @busy="stateConfigBusy = $event"
+            :disabled="busy || !editable"
           />
+          <h4>运行资源</h4>
+          <div class="runtime-grid">
+            <label
+              >并行度<input
+                data-field="parallelism"
+                v-model.number="runtime.parallelism"
+                type="number"
+                min="1"
+                step="1" /></label
+            ><label
+              >每个 TaskManager 的 Slot 数<input
+                data-field="slots"
+                v-model.number="runtime.slots"
+                type="number"
+                min="1"
+                step="1"
+            /></label>
+          </div>
+          <div class="runtime-grid">
+            <MemoryInput
+              data-field="jmMemory"
+              v-model="runtime.jmMemory"
+              label="JobManager 内存"
+            /><MemoryInput
+              data-field="tmMemory"
+              v-model="runtime.tmMemory"
+              label="TaskManager 内存"
+            />
+          </div>
+          <div class="runtime-grid">
+            <label
+              >JobManager CPU<input
+                data-field="jmCpu"
+                v-model.number="runtime.jmCpu"
+                type="number"
+                min="0.1"
+                step="any" /></label
+            ><label
+              >TaskManager CPU<input
+                data-field="tmCpu"
+                v-model.number="runtime.tmCpu"
+                type="number"
+                min="0.1"
+                step="any"
+            /></label>
+          </div>
           <label
-            >从模板获取 PodTemplate<select data-field="podTemplateId" v-model="podTemplateId">
-              <option value="">选择已登记模板</option>
-              <option v-for="template in templates" :key="template.id" :value="template.id">
-                {{ template.name }}
-              </option>
+            >升级策略<select data-field="upgradeMode" v-model="runtime.upgradeMode">
+              <option value="savepoint">savepoint · 保存状态</option>
+              <option value="stateless">stateless · 无状态</option>
+              <option value="last-state">last-state · 需要 HA</option>
             </select></label
-          ><button
-            type="button"
-            class="button"
-            :disabled="!podTemplateId || busy"
-            @click="applyPodTemplate"
           >
-            应用 PodTemplate
-          </button>
-          <PodTemplateFields
-            v-model="podOptions"
-            :key="runtime.workspaceId"
-            :readonly="busy || !editable"
-            @valid="podValid = $event"
-          />
-        </details>
+          <details class="runtime-advanced">
+            <summary>程序与依赖及 Flink 配置</summary>
+            <ArtifactPicker
+              data-field="runnerArtifactId"
+              v-model="runtime.runnerArtifactId"
+              category="main"
+              runner
+              :disabled="busy || !editable || artifactUploading"
+              @uploading="artifactUploading = $event"
+            />
+            <ArtifactPicker
+              data-field="dependencyArtifactIds"
+              v-model="runtime.dependencyArtifactIds"
+              :artifacts="artifacts"
+              :scope-id="runtime.workspaceId"
+              category="dependency"
+              :disabled="busy || !editable"
+              @uploaded="uploaded"
+              @uploading="artifactUploading = $event"
+            />
+            <h4>Flink 配置</h4>
+            <FlinkConfigEditor
+              data-field="flinkConfiguration"
+              v-model="configValues"
+              :readonly="busy || !editable"
+              @valid="configValid = $event"
+            />
+            <label
+              >从模板获取 PodTemplate<select data-field="podTemplateId" v-model="podTemplateId">
+                <option value="">选择已登记模板</option>
+                <option v-for="template in templates" :key="template.id" :value="template.id">
+                  {{ template.name }}
+                </option>
+              </select></label
+            ><button
+              type="button"
+              class="button"
+              :disabled="!podTemplateId || busy"
+              @click="applyPodTemplate"
+            >
+              应用 PodTemplate
+            </button>
+            <PodTemplateFields
+              v-model="podOptions"
+              :key="runtime.workspaceId"
+              :readonly="busy || !editable"
+              @valid="podValid = $event"
+            />
+          </details>
+        </div>
       </fieldset>
       <div v-if="editable" class="sql-publish">
         <button

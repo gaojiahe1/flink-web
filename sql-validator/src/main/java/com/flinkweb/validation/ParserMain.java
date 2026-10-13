@@ -25,6 +25,7 @@ public final class ParserMain {
     ObjectNode result =
         mapper.createObjectNode().put("version", properties.getProperty("flink.version"));
     int index = 0;
+    boolean parsing = false;
     try {
       JsonNode input = mapper.readTree(readInput());
       JsonNode statements = input == null ? null : input.get("statements");
@@ -41,24 +42,27 @@ public final class ParserMain {
               .withIdentifierMaxLength(256);
       int bytes = 0;
       for (JsonNode statement : statements) {
-        index++;
         if (!statement.isTextual() || statement.asText().trim().isEmpty())
           throw new IllegalArgumentException("SQL 语句必须为非空字符串");
         bytes += statement.asText().getBytes(StandardCharsets.UTF_8).length;
         if (bytes > 32768) throw new IllegalArgumentException("SQL 超过 32 KiB");
+      }
+      parsing = true;
+      for (JsonNode statement : statements) {
+        index++;
         SqlParser.create(statement.asText(), config).parseStmt();
       }
       result.put("valid", true);
     } catch (SqlParseException ex) {
+      result.put("valid", false).put("errorType", "SYNTAX").put("statement", index);
+      if (ex.getPos() != null && ex.getPos().getLineNum() > 0 && ex.getPos().getColumnNum() > 0)
+        result.put("line", ex.getPos().getLineNum()).put("column", ex.getPos().getColumnNum());
+      result.put("message", "SQL 语法错误，请检查该位置附近的语法");
+    } catch (Exception ex) {
       result
           .put("valid", false)
-          .put("statement", index)
-          .put("line", ex.getPos().getLineNum())
-          .put("column", ex.getPos().getColumnNum());
-      String message = ex.getMessage();
-      result.put("message", message.substring(0, Math.min(800, message.length())));
-    } catch (Exception ex) {
-      result.put("valid", false).put("statement", index).put("message", "SQL Parser 输入或运行参数无效");
+          .put("errorType", parsing ? "RUNTIME" : "INPUT")
+          .put("message", parsing ? "SQL Parser 运行失败" : "SQL Parser 输入格式、语句数量或大小不符合要求");
     }
     System.out.write(mapper.writeValueAsBytes(result));
   }

@@ -19,6 +19,7 @@ test('configuration editor suggests keys, rejects duplicates and preserves colon
  await page.getByLabel('作业名称',{exact:false}).fill(id)
  await page.getByLabel('镜像版本',{exact:false}).selectOption(id)
  await page.getByRole('checkbox',{name:'启用状态存储与 Checkpoint'}).uncheck()
+ await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
  const editor=page.getByRole('textbox',{name:'Flink 配置文本域',exact:true})
  await editor.fill('execution.checkpointing.')
  await editor.press('Control+Space')

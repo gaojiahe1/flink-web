@@ -1,6 +1,9 @@
 # 当前状态
 
-更新：2026-10-13。当前修复分支 `codex/fix-sql-runtime-and-panel`；状态/账号修复与治理基线已保存在先前本地提交。
+更新：2026-10-13。本轮开发分支 `codex/session-sql-yaml` 从本地 master 创建；既有状态/账号修复与治理基线已包含在 master。
+
+- 2026-10-13：Session/SQL 表单与 YAML 双向编辑、未知字段及资源省略保护、Standalone 固定 TaskManager 数量、dry-run 数值规范化与差异路径提示已实现。Parser 输入/语法/运行故障分类、清理 JAR 脱敏日志、初始化密码工作负载文案和面板边界测试已完成。
+- 本轮 187 项后端中 186 项通过，独立 MinIO 用例未启用；37 项相关页面、32 次两版本/JDK Parser 协议检查及实际镜像加密登录/配置/代理检查通过。app/web 0.0.4 已发布并核对远端摘要与本地内容，downloader 未改；详见本轮验收与部署指南。现场无 Kubernetes 上下文，图1的实际差异字段及真实固定副本效果仍需现场核对。
 
 - 已修复 FLINK_WEB_STATE_ROOT 属性读取错误，完整桶/前缀用于新建状态目录和专属清理；既有手工目录不自动迁移。
 - Flink S3 AK/SK 在 flinkConfiguration 原位置展开，清理主容器旧同名AWS变量，下载器鉴权保留；预览/历史仍隐藏密钥。对应 [REQ-004](requirements/REQ-004-storage-security.md)。

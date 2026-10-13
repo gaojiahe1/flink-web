@@ -4,6 +4,10 @@
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
+2026-10-13：`POST /api/sql/configuration`、`POST /api/sessions/configuration` 只做本地配置渲染/回填，不保存、不访问 Kubernetes；沿用原 SQL/Session DTO，运行配置增加可选 `deploymentYaml`/`baseYaml`，兼容旧表单记录。解析和受控字段比较由 [RuntimeYamlMapper](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/RuntimeYamlMapper.java) 完成。Session 的 `deploymentMode`/`tmReplicas` 显式表达按需/固定数量，运行中仍不能保存配置。dry-run 数值按十进制等值比较，真实改变输出最多八处路径及类别，不输出值。状态数量来自显式刷新中的 Flink REST `/overview`，内部验证就绪核对不增加数量请求。
+
+Parser 新输出 errorType=INPUT/SYNTAX/RUNTIME，旧协议缺少类型时继续按语法错误处理；仅有效位置显示行列。安装/进程故障日志脱敏分类，JAR 清理失败关联验证 ID，未改变截止清理、终态或增加自动重试。
+
 SqlParserServiceImpl 按精确版本读取 validator.jar，独立进程限制并发/内存/时间，清除业务凭据环境；缺失时明确 BASIC，不能报告 PARSER。Parser 不连接 Catalog、不加载 Connector。SqlRunner 先执行允许的初始化语句，再把 INSERT 合并 StatementSet；环境变量在容器中转义展开。
 
 2026-10-12：Runner 的磁盘配置去除 pipeline.jars/classpaths 覆盖项，用户代码路径沿用 Flink 已解析的提交上下文，避免 Application 中 local URI 进入 Java URL 解码器；其余状态/S3/业务配置保留。Runner/Parser 使用 major52，已实测 JDK8/17；Parser 限制输入、数组与脚本，输出固定UTF-8。镜像与本地安装提供精确1.20.3/1.20.5 Parser；Runner下载接口固定读取安装文件、仅管理员/开发者允许。SQL/Session仍显式上传选择Runner，旧文件不自动替换。

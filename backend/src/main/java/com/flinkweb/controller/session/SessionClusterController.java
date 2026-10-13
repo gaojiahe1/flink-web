@@ -27,6 +27,13 @@ public class SessionClusterController {
     return ApiResponse.ok(sessions.list());
   }
 
+  /** 表单/YAML 转换与本地配置校验，不保存或启动集群。 */
+  @PostMapping("/configuration")
+  @PreAuthorize("hasRole('ADMIN')")
+  public ApiResponse<ObjectNode> configuration(@Valid @RequestBody SessionRequest input) {
+    return ApiResponse.ok(sessions.configuration(input));
+  }
+
   /** 创建或更新配置。 */
   @PutMapping("/{id}")
   @PreAuthorize("hasRole('ADMIN')")
