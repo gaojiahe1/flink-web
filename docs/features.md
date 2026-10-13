@@ -1,6 +1,6 @@
 # Flink Web 功能说明
 
-更新：2026-10-12。本文说明当前实现与必须保留的业务规则；安装、环境变量和故障处理见 [部署指南](deployment.md)。
+更新：2026-10-13。本文说明当前实现与必须保留的业务规则；安装、环境变量和故障处理见 [部署指南](deployment.md)。
 
 ## 1. 平台定位与规则
 
@@ -10,7 +10,7 @@ Flink Web 使用 Spring Boot / JDK 17 和 Vue 3 / TypeScript，通过运维已�
 - **状态语义**：草稿、期望状态和最近观测状态分别展示。操作返回 ACCEPTED 仅表示请求已受理，不代表作业运行成功；最终状态以手动刷新结果为准。JobManager ERROR、status.error 或失败状态优先显示为“部署异常”，保留原始 Flink 状态供 YAML/诊断查看；列表同时展示错误摘要。
 - **停止与删除**：停止最终删除 Kubernetes FlinkDeployment。支持“Savepoint 完成后删除”和“立即删除”，不提供 last-state 停止。前者要求正常 RUNNING 且已配置 Savepoint 目录，先由 Operator 挂起并生成新的保存点，持久化恢复路径后删除资源；手动刷新或再次停止会推进这个已授权的停止流程，后台不轮询，保存点未完成不删除。后者直接提交带 UID/resourceVersion 前置条件的删除，适用于启动中或异常作业。删除完成前停止仍可用，可从保留状态切换到立即删除。启动受理后禁用重复启动；快照只允许实际 RUNNING、期望 running、没有启停或升级中的作业。停止提交后立即显示停止意图；刷新先推进停止再采集状态，清除旧的提交提示，确认资源消失后显示已停止。停止提交后关闭弹窗，结果显示在页面，不再展示第二个结果弹窗。平台草稿仍须等集群资源消失后才能删除。停止前的实际配置同时落库，再次启动复用该配置；2026-10-12：有编辑权限的操作者启动/恢复时，已保存草稿中显式填写的 ServiceAccount 优先于旧资源或停止快照旧账号，其余配置仍复用停止前值，未保存表单不生效。仅运维权限的操作者继续按原配置重建；首次部署与显式部署需要编辑权限。
 - **存储**：默认本地 SQLite，可挂 PVC；可切换 MySQL。切换配置不会迁移已有数据。当前按单后端实例部署。默认自动判断数据库文件：不存在时建库，已存在时保留数据并执行必要版本迁移，无需首次部署补丁或切换开关；启动报告区分本地库缺失与初始管理员密码配置错误，给出修复步骤。S3 不存储平台元数据库。
-- **平台工作负载（2026-10-09）**：前后端使用同一个单副本 StatefulSet/flink-web，每个 Pod 两个独立镜像容器；前端 8080、本机后端 8081，NodePort 30080 保留。SQLite 复用原 PVC，仅后端挂载 Kubernetes API 令牌。此清单变更不改变 Operator 管理的 Flink 作业和 Session 资源；旧 Deployment 迁移步骤见部署指南。
+- **平台工作负载（2026-10-09；2026-10-13核实）**：前后端使用同一个单副本 StatefulSet/flink-web，每个 Pod 两个独立镜像容器；前端 8080、本机后端 8081，NodePort 30080 保留。SQLite 复用原 PVC，仅后端挂载数据；当前清单 automountServiceAccountToken=true，自动凭据可能挂载到两个容器，已不是最初的后端专用投影卷。自动挂载不授予 RBAC。此清单变更不改变 Operator 管理的 Flink 作业和 Session 资源；旧 Deployment 迁移步骤见部署指南。
 - **范围**：不管理多 Kubernetes 集群、多作业 namespace 或 FlinkSessionJob；Session 中的 SQL 验证通过 Flink REST 提交。Operator 可以位于另一个已明确配置并授权的 namespace。
 
 ## 2. 作业管理
@@ -66,6 +66,8 @@ Flink 配置支持逐行 key:value、常用键提示、中文说明、重复键�
 
 SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署配置。支持保存、修订控制、历史对比/恢复、SQL 检查、YAML 预览和发布为 Application 作业。
 
+2026-10-12：桌面辅助面板左侧分隔线可拖动调整宽度，支持左右方向键、Home/End 和双击复位；窗口缩小时限制宽度，全屏保留调整结果，窄屏采用上下布局。共同配置名称与 JAR 表单统一为“作业名称”“镜像版本”“运行资源”“JobManager / TaskManager 内存、CPU”“每个 TaskManager 的 Slot 数”“Flink 配置”。检查结果区新增 Runner/语法验证器/Session 验证的使用说明。
+
 - 支持基础 CREATE CATALOG / DATABASE、USE CATALOG / DATABASE、CREATE TABLE / VIEW 和 INSERT INTO / OVERWRITE，具体语法以选定 Flink 版本为准。
 - 初始化语句须位于 INSERT 之前；多个 INSERT 合并为一个 StatementSet 作业。
 - 当前 Catalog、数据库、运行镜像、Flink 配置、依赖及 PodTemplate 随草稿保存。选择已登记 Catalog 时自动生成初始化前缀，不必重复手写相同初始化。
@@ -95,6 +97,10 @@ SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署�
 | Flink Runner / Planner | 运行镜像中的真实语义和依赖验证；运行失败通过作业状态反馈 |
 
 Kubernetes dry-run 只校验提交资源，不能替代 SQL Planner。SQL Runner、Parser 与插件的准备方式见 [部署指南](deployment.md#6-sql-runnerparser-与运行镜像)。
+
+2026-10-12：Runner 加载磁盘配置时保留状态、S3 和业务配置，用户 JAR/类路径使用 Flink 提交上下文，避免 `local:///` 覆盖已解析 URL 导致初始 SQL 启动失败。Runner 与独立 Parser 产物使用 Java 8 字节码；已实测 JDK 8/17 下的 Runner 1.20.3 API 执行及 Parser 1.20.3/1.20.5，另在 Flink 1.20.5/JDK 17 容器实测 Application 与 Session。其他版本须单独验收。Parser 强制有效非空语句数组、100 条/32 KiB 脚本和 128 KiB 协议输入上限，JSON 输出固定 UTF-8。平台后端保持 JDK 17。
+
+SQL/Session 的 Runner 选择区提供“下载平台 SQL Runner”：管理员/开发者从当前后端下载随版本发布的文件，再上传并显式选择；既有作业和已运行 Session 不自动替换。后端镜像内置两份精确版本 Parser，SQL 检查按镜像版本自动调用，无需在作业依赖中选择 Parser。
 
 ## 5. 数据源与 Flink Catalog
 
@@ -186,7 +192,7 @@ SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数�
 
 2026-10-05 验证范围：110 项后端测试、21 项浏览器交互回归、7 项下载器单元测试、前端类型检查与生产构建、格式和后端分层检查通过。后端测试包含隔离本地 MinIO 的真实上传、整目录复制与删除，确认副本目录匹配新 UUID，删除源目录保留副本及共享文件。浏览器使用 API 替身；实际 Flink 1.20.5 容器验证单下载器准备脚本、非 root 从运行镜像复制插件并启动 JobManager，/overview 返回 200。真实生产 Kubernetes/Operator、HA 恢复、MySQL 与 ARM64 仍未验证。
 
-2026-10-01：生成资源仅保留与 jobManager、taskManager 平级的 spec.podTemplate。历史两份角色模板相同则合并；有差异且无法无损合并时明确报错，请在 YAML 整理，避免丢失自定义配置。S3 依赖在未启用状态存储时也会注入下载器密钥引用；下载清单不再包含 SHA-256，历史校验字段和 AWS_DEFAULT_REGION/AWS_REGION 在重新渲染时清除。HTTP 文件不会自动注入 S3 凭据。
+2026-10-01 历史方案：当时只生成共享 spec.podTemplate，并清理旧下载清单的校验和区域变量。共享模板唯一要求已由 2026-10-12 三处独立模板规则替代，不能据此删去现行 JM/TM 用户模板；当前合并边界见 [ADR-004](agent/decisions/ADR-004-templates.md)。下载清单仍不校验 SHA-256、不生成 AWS_DEFAULT_REGION；2026-10-10 起受管 S3 下载器注入 AWS_REGION 用于签名，保留兼容旧环境的读取。S3 依赖即使未启用状态存储也需要下载器凭据，纯 HTTP 文件不自动注入。必要 S3 协议 checksum、交付文件哈希与镜像摘要核对不属于被删除的内容校验。
 
 2026-10-01：关键操作增加安全日志，包含作业 ID、操作、请求 ID、停止阶段和异常类型；Kubernetes 请求耗时在 DEBUG 级别记录。意外操作异常保留 UNKNOWN 结果，避免永久停留 SUBMITTING。清理已移除的制品登记页面逻辑和字段定义、重复 PodTemplate 合并实现及不可达停止分支，保留历史制品 API 兼容。
 
@@ -219,7 +225,7 @@ SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数�
 - “全部文件”从制品桶根目录浏览，根目录可上传和创建目录；作业/共享快捷入口仍指向配置前缀下的 jobs/shared。专属文件复制、清理仍仅按平台 UUID 目录执行，不扩大到桶根目录。
 - 已验证本地后端与浏览器回归、实际构建镜像的启动和页面；未以真实 Kubernetes/Flink/S3 作业验证本次部署效果。
 
-2026-10-10 S3 提供商约束：用户后续将接入华为等其他 S3 兼容服务。平台通过可配置端点、桶、区域和凭据连接，不限定 MinIO；后端使用必要 checksum 与 Legacy MD5，下载器显式 V4 并注入 AWS_REGION 签名区域。当前已验证隔离 MinIO、MD5 请求和 cn-north-4 区域下载；华为等厂商尚未实测，不将协议替身或 MinIO 结果视为厂商认证。目标服务所需接口、条件写入和三条连接路径见部署指南。
+2026-10-10 S3 提供商约束（2026-10-13补核）：平台通过可配置端点、桶、区域和凭据连接，不限定 MinIO；后端使用必要 checksum 与 Legacy MD5，下载器显式 V4 并注入 AWS_REGION 签名区域。已有隔离 MinIO、MD5 请求和 cn-north-4 区域下载测试；用户10-10明确反馈生产华为S3加两个WHEN_REQUIRED环境变量后恢复。此单次成功反馈支持校验兼容方向，缺少原始错误码、服务版本与完整回归，不等于确认唯一根因或厂商全接口/三条连接路径认证。当前代码已内置相同策略，目标接口、条件写入、更换凭据与工作负载更新步骤见部署指南。
 
 ## 9. 项目知识入口（2026-10-12）
 

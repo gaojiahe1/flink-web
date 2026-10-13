@@ -1,6 +1,6 @@
 # 作业生命周期
 
-更新：2026-10-12。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-13。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：作业查询/纳管、身份绑定、启动停止、快照、诊断和只读 Flink UI。调用链由 controller → query/management/operation/stop 服务 → repository/collector/KubernetesClient；前端 JobsView/工作台按需发起。
 
@@ -26,3 +26,13 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 2026-10-12 账号规则：OperationServiceImpl 对有编辑权限操作者重建停止快照时，将已保存草稿显式 serviceAccount 合入；仅该字段例外，其余快照配置保持原规则。运维不可借启动发布草稿，显式 deploy 始终取最新草稿。
 
 补充适用范围：ServiceAccount 例外同时覆盖旧资源仍存在的直接启动/恢复和资源删除后的重建；平台编辑角色与作业编辑权限同时满足才采用草稿账号。最终176项后端回归和实际镜像闭环通过。
+
+## 前端启动与历史故障定位（2026-10-13 补核）
+
+- FlinkStateCollector 将 JobManager ERROR、status.error 与失败状态优先归为异常；DeploymentYamlSnapshot 对 status 保留原文，metadata/spec 单独清理。当前 YAML 使用 CodeEditor 与剪贴板工具。顶部进度只展示未完成阶段，详情操作记录共用页签。
+- 10-08/10-09 两种前端启动故障不同：静态 upstream 解析失败由动态 resolver 修复；端口参数与 Service 注入的 tcp:// 变量重名由独立 FLINK_WEB_PROXY_BACKEND_HOST/PORT 修复。脚本默认 Service:8080 可用于独立部署；当前合并 StatefulSet 显式代理 127.0.0.1:8081。enableServiceLinks=false 是清单配置，修复镜像本身仍兼容注入变量。
+- 10-04 Pod 内 /overview 也返回 Metaspace，证据指向 Flink JobManager，而非 Nginx。10-08 test2 调整内存后 UI 恢复的历史报告见验收记录；本次未访问现场，不将旧测试内存或旧 Deployment 名称作为当前部署配置。
+
+定位：[YAML快照](../../../backend/src/main/java/com/flinkweb/collector/job/DeploymentYamlSnapshot.java)、[启动脚本](../../../frontend/docker-entrypoint.sh)、[Nginx](../../../frontend/nginx.conf)、[代理容器回归](../../../scripts/check_web_proxy.py)、[运行补丁](../../../deploy/kubernetes/frontend-runtime-patch.yaml)。更新工作负载使用部署指南的当前资源类型，并另有对应授权。
+
+本 SQL/Session 聊天的生产403补核（2026-10-13）：用户明确同 namespace、复用 Operator SA，并反馈平台可读取 Operator Pod。该证据仅证明相应请求可用，不能证明所有资源获准；自动挂载不创建 RBAC。历史“快照403会导致整个列表失败”描述的是当时代码，现行 collectSnapshots 已隔离缺失CRD/403/网络失败，保留部署结果并返回 snapshotQuery 警告；[KubernetesClientTest](../../../backend/src/test/java/com/flinkweb/KubernetesClientTest.java) 已有对应定义。本聊天没有被拒绝的准确请求/资源与最终恢复反馈，不把缺少快照或 StatefulSet 读取权限断言为已确认现场根因。

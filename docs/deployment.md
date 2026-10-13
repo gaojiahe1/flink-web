@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-12。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-13。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:76915db91701fcf02f1d90ab9ecd5614b1d58612bd6526ce299628dc2fad5fa0 |
+| 192.168.68.1:5000/flink-web/app | sha256:c6ab7136306103310cfb24f0cd54a9248e7654f3c410eb44a73e0127789dc2f8 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:113f1059206a7d0da2bafc5a5ba13045fb4d118e5d21bc6b0a48eaa93cf56c58 |
+| 192.168.68.1:5000/flink-web/web | sha256:59ef738da139370e0f08939b978c04dc369f22082f547f03dfdf75618e0156f1 |
 
 
 本次复用 `0.0.4` 标签。主清单已给 app/web 设置 `imagePullPolicy: Always`；应用清单后仍需重建已有 Pod 才会拉取。新生成的下载器同样使用 Always，已有作业须重新提交配置并重建 Pod；也可以在系统设置中绑定 `192.168.68.1:5000/flink-web/downloader@sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a`。已有运行中的作业不会随仓库标签更新自动变更。
@@ -182,9 +182,9 @@ kubectl -n flink-kubernetes-operator delete deployment flink-web-backend flink-w
 
 后续沿用镜像标签时，使用 `kubectl -n flink-kubernetes-operator rollout restart statefulset/flink-web` 拉取已发布镜像，再检查 rollout status；单副本更新期间会短暂不可用。迁移失败时先缩容 StatefulSet 至 0 并等待其 Pod 退出，再按保留的旧配置恢复两个 Deployment 和 Service selector，仍复用同一 PVC 和主密钥。不要同时运行新旧平台实例。
 
-Pod 禁用自动挂载 ServiceAccount 令牌，使用 kube-api-access projected volume 把短期令牌、CA 和 namespace 仅挂载到 backend 原路径；frontend 不挂载该卷、不注入平台 Secret，也不挂载 SQLite 数据。标准 kube-root-ca.crt ConfigMap 需存在。依据 [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) 和 [projected volume](https://kubernetes.io/docs/concepts/storage/projected-volumes/) 文档。
+2026-10-13核实：当前 Pod 设置 automountServiceAccountToken=true，已删除手工 kube-api-access 卷与挂载，由 Kubernetes 自动提供 ServiceAccount 凭据，通常会挂载到 backend/frontend 两个容器。frontend 不注入平台 Secret，也不挂载 SQLite 数据。最初10-09迁移版本是禁用自动挂载、仅backend挂 projected 卷；不能将该历史权限边界当成当前清单。自动挂载不会创建RBAC，serviceAccountName必须对应实际获准身份。依据 [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) 和 [ServiceAccount自动挂载](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/) 文档。
 
-本地验证：清单语法及单 StatefulSet/双容器、Service selector、端口、探针、旧 PVC 和后端专用令牌挂载检查通过；使用现有 app/web 镜像共用 Docker 网络命名空间，健康检查、加密登录、Session/JAR/SQL 页面和 localhost 代理通过。当前未配置 Kubernetes 上下文，未执行集群 server dry-run、迁移或工作负载更新；实际 PVC/调度及令牌投影仍须在目标集群检查。
+10-09历史验证：当时清单语法及单 StatefulSet/双容器、Service selector、端口、探针、旧 PVC 和后端专用令牌挂载检查通过；使用现有 app/web 镜像共用 Docker 网络命名空间，健康检查、加密登录、Session/JAR/SQL 页面和 localhost 代理通过。当时未配置 Kubernetes 上下文，未执行集群 server dry-run、迁移或工作负载更新；这些结果不认证后来改用自动挂载的生产权限。本轮仅静态核对，实际PVC/调度及凭据仍须在目标集群检查。
 
 按每次修改后的发布约定，已重新推送 app/web:0.0.4 并核对仓库摘要；本轮只有 Kubernetes 清单调整，运行镜像内容和第 4 节摘要不变。临时验证容器已清理。
 
@@ -199,7 +199,9 @@ envFrom.secretRef 只把**已经存在**的 Secret 的键值注入容器环境�
 | flink-web-secrets / FLINK_WEB_ADMIN_PASSWORD | 首次创建平台管理员的密码，至少 12 字符、UTF-8 最多 72 字节；库已有用户时不覆盖账号 |
 | flink-web-secrets / FLINK_WEB_MASTER_KEY | 加密数据库中的配置密钥；32 字节随机数的 Base64。它不是登录密码、S3 密码或临时传输公钥，必须长期保存，恢复数据库时使用原值 |
 | minio-secret / MINIO_ROOT_USER、MINIO_ROOT_PASSWORD | 现有 MinIO 凭据，通过 secretKeyRef 映射为 AWS_ACCESS_KEY_ID、AWS_SECRET_ACCESS_KEY；生产可替换为仅允许所需桶的专用账号 |
-| StatefulSet Pod 的 ServiceAccount | 后端读取和修改 Kubernetes 资源所用的身份，与密码 Secret 无关；当前使用已有 flink-operator，仅后端挂载 projected 令牌；rbac.yaml 提供可选的独立 flink-web 身份 |
+| StatefulSet Pod 的 ServiceAccount | 后端读取和修改 Kubernetes 资源所用的身份，与密码 Secret 无关；当前使用已有 flink-operator，自动挂载通常向两个容器提供凭据；rbac.yaml 提供可选的独立 flink-web 身份 |
+
+2026-10-13同namespace配置补核：FLINK_WEB_NAMESPACE未设置时默认flink-jobs，不会自行读取凭据目录中的namespace文件。可通过env.valueFrom.fieldRef.fieldPath=metadata.namespace注入当前Pod namespace；FLINK_WEB_OPERATOR_NAMESPACE默认跟随它。只有实际Operator Deployment/容器名符合默认值时才能省略相应变量，单容器有选择回退。同namespace不等于所有资源都获准；平台读到Operator Pod仅证明该次请求可用。生产403须定位实际被拒绝的资源/操作和身份，不因共享Operator SA就替换账号或扩大授权。本聊天的403没有最终解决反馈，见 [待确认事项](agent/open-questions.md)。
 
 **1. 填写同一清单中的平台 Secret。** application.yaml 已包含 flink-web-secrets，部署前填写 FLINK_WEB_ADMIN_PASSWORD 和 FLINK_WEB_MASTER_KEY。初始密码至少 12 字符、UTF-8 最多 72 字节，填写原始密码而非 Base64 或 fwenc1: 信封。新平台的主密钥可生成：
 
@@ -257,7 +259,7 @@ kubectl -n flink-kubernetes-operator rollout status statefulset/flink-web --time
 
 没有 watch 或集群级资源管理授权。跨 namespace 的 Operator 读取权限不会扩展作业管理范围；Flink 工作负载的 RBAC 仍由运维负责。
 
-SQLite 必须单副本并使用 Recreate 更新策略，PVC 需支持可靠的文件锁及 UID/GID 10001 写入。MySQL 模式可移除本地数据卷，但当前 Session 保存在进程内，后端仍按单副本部署。
+SQLite 必须保持单后端实例。当前单副本 StatefulSet 使用 RollingUpdate，更新时先终止旧 Pod 再启动替代 Pod；不要强制删除后并行启动第二实例，也不要让旧 Deployment 与 StatefulSet 同时挂载同一数据卷。仅保留旧 Deployment 部署方案时使用 Recreate，不能给 StatefulSet 配置该策略。PVC 需支持可靠的文件锁及 UID/GID 10001 写入。MySQL 模式可移除本地数据卷，但当前 Session 保存在进程内，后端仍按单副本部署。
 
 本地容器体验：
 
@@ -330,13 +332,17 @@ jdbc:mysql://mysql:3306/flink_web?useUnicode=true&characterEncoding=utf8&serverT
 
 **Runner 运行作业，Parser 校验语法，两者不能互相替代。**
 
-Runner 默认使用 Flink 1.20.3 构建，运行产物面向 Java 11+，平台后端使用 JDK 17。按实际 Flink 版本构建并验收，不把默认构建当作 1.16–2.3 全版本认证：
+2026-10-12：Runner 默认使用 Flink 1.20.3 API 构建，Runner 和 Parser 的运行产物均为 Java 8 字节码（major 52），支持已实测的 JDK 8/17。使用 JDK 17 构建并运行测试，平台后端继续使用 JDK 17。Parser 的 Flink/Calcite 版本须精确匹配；Runner 已验证 1.20.3 API 和 1.20.5 运行镜像，其他组合仍需按实际版本构建验收，不作为 1.16–2.3 全版本认证：
 
 ~~~sh
 mvn -f sql-runner/pom.xml -Dflink.version=1.20.3 package
 ~~~
 
 2026-10-10：可把生成的 sql-runner/target/flink-web-sql-runner.jar 上传到平台制品桶管理前缀下的 **shared/sql-runner/{精确Flink版本}/flink-web-sql-runner.jar**，例如 artifacts/shared/sql-runner/1.20.3/flink-web-sql-runner.jar；SQL/Session 表单从 sql-runner 列表手动选择文件，不再根据镜像版本自动取默认文件。其他位置可确认具体 HTTP/HTTPS/S3 地址，使用前须核对 Runner 与运行镜像兼容性。旧 Dockerfile 仅保留历史兼容，不属于默认部署流程。
+
+SQL 或验证专用 Session 的“SQL Runner 文件”区域现在提供“下载平台 SQL Runner”，通过受登录与管理员/开发者权限保护的 `/api/sql/runner/download` 下载当前平台产物。后端镜像从 `/opt/sql-runner/flink-web-sql-runner.jar` 提供文件；本地运行可用 `FLINK_WEB_SQL_RUNNER_JAR` 指定安装文件。下载后上传到 shared/sql-runner/1.20.5 等目录并重新选择，保存并重新发布 SQL；验证 Session 须停止后更新选择并重新启动。原 Runner 不自动覆盖，沿用旧文件仍会执行旧逻辑。
+
+本轮 Runner 修复磁盘 `pipeline.jars`/`pipeline.classpaths` 中的 `local:///` 覆盖 Flink 提交上下文的问题。保持生成 YAML 中用于声明容器内文件的 `local:///`，在 Runner 中沿用 Flink 已解析/分发的 JAR 和类路径，保留业务、状态和 S3 配置。可用 `python scripts/check_sql_application.py --image Flink镜像 --runner Runner文件` 在隔离 Application 中执行初始 datagen → print SQL，脚本自动清理自己的容器及网络。
 
 SQL Application 和 Session 均通过现有 fw-download initContainer 下载 Runner、依赖到共享 emptyDir，挂载 /opt/flink/usrlib，并使用与 JAR 作业相同的登记镜像。需配置系统下载器镜像、工作负载 S3 访问凭据；缺少 Runner 对象时本地渲染/预览即失败。运行镜像仍需提供 Table API、Planner、Table Runtime 与 Print，Connector/驱动可以作为附加 JAR 下载；文件系统插件继续按第 7 节独立准备。不能把核心 Flink JAR 混入 Connector 包。
 
@@ -356,16 +362,23 @@ SQL Application 和 Session 均通过现有 fw-download initContainer 下载 Run
 
 本次验证记录（2026-10-09）：后端 140 项测试全部通过，包含实际精确版本 Parser 和隔离 MinIO 目录生命周期；Runner 7 项通过，浏览器 52 项通过，手机布局及提示修复后新增 4 项再次通过。前端生产构建、全源格式检查、后端分层/中文注释检查和补丁空白检查通过。验证只使用临时数据库、模拟 Kubernetes 和隔离 Docker Session，未改动生产作业；之后已按用户要求发布 app/web 镜像，摘要及镜像运行检查见第 4 节。可用 `python scripts/check_sql_session.py --image 已有Flink镜像 --runner Runner产物路径` 复查 Session 行为，脚本自动清理创建的测试容器和网络。
 
-后端镜像已内置 Flink 1.20.3 / Calcite 1.32.0 Parser。本地可安装：
+后端镜像已内置 Flink 1.20.3、1.20.5 / Calcite 1.32.0 Parser；本地安装目录为 sql-validators 下的对应精确版本。点击 SQL 检查时由平台自动调用，不将 validator.jar 上传为 SQL 主程序或 Connector。本地可重建安装：
 
 ~~~powershell
 mvn -f sql-validator/pom.xml package
 New-Item -ItemType Directory -Force sql-validators/1.20.3
 Copy-Item sql-validator/target/flink-web-sql-validator.jar sql-validators/1.20.3/validator.jar
+mvn -f sql-validator/pom.xml -Dflink.version=1.20.5 clean package
+New-Item -ItemType Directory -Force sql-validators/1.20.5
+Copy-Item sql-validator/target/flink-web-sql-validator.jar sql-validators/1.20.5/validator.jar
 $env:FLINK_WEB_SQL_VALIDATOR_DIR = (Resolve-Path sql-validators).Path
 ~~~
 
 镜像登记的 flinkVersion 必须为匹配的精确补丁版本，未安装对应适配器时返回 BASIC。其他版本需核对 Flink/Calcite 依赖后独立构建，不能只改目录名；以只读卷装入目录时不要遮蔽需保留的默认版本。每次校验使用受限独立 JVM，不继承平台数据库/S3 凭据，不加载用户连接器或探测 Catalog。
+
+2026-10-12 JDK 验收：JDK 8u361 和 JDK 17.0.10 下，两份 Parser 各通过有效初始 SQL、错误 SQL、空数组、非文本语句、101 条及超限输入六种检查；Runner 使用真实 Flink 1.20.3 Planner/MiniCluster 各执行并输出三条数据。Parser JSON 固定 UTF-8，避免 Windows JDK 8 默认编码影响协议。两份 Parser 的非多版本目录依赖字节码一并检查不高于 major 52。`scripts/check_sql_jars.py` 可复测；需传入对应 Flink 运行依赖的 classpath 文件，不能将测试类或 JUnit 当作运行依赖。
+
+本轮交付 SHA-256：Runner `b0ee60c2dc646aa95614d18c7c6101be1b57342c9da458b3137c49ff61952d69`；Parser 1.20.3 `a436aa7d84873afa44202979366355160a17c69ba87d03d8873736afda1882e1`；Parser 1.20.5 `df70333dcd526eb53a3d7dd67e5781680350017e8156b16edaf042ec13c613ac`。以上是本轮文件摘要，重建后以实际文件为准。
 
 ## 7. S3、下载器与状态存储
 
@@ -400,15 +413,28 @@ S3 服务可以替换为提供兼容接口的云存储或私有存储，平台�
 
 后端使用 V4、路径式访问、禁用分块编码、仅在要求时计算/验证 SDK checksum，并启用 LegacyMd5Plugin 为批量删除等必要操作提供 Content-MD5；这是 [AWS SDK 官方的第三方兼容配置](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/s3-checksums.html)。下载器显式使用 s3v4、配置的签名区域以及 WHEN_REQUIRED checksum 策略，保持 TLS 校验。OBS 的 [批量删除接口](https://support.huaweicloud.com/api-obs/obs_04_0086.html) 要求 Content-MD5/Content-Length，最多 1000 项，quiet 模式仍需检查单项错误。
 
-接入端点需支持平台所用的 ListObjectsV2（含 delimiter/分页）、HeadObject、GetObject、PutObject、CopyObject、DeleteObject、DeleteObjects，以及上传的 If-None-Match 条件写入；若不支持条件写入，不能保证不覆盖同名对象，平台不静默降级。不同区域、存储版本、IAM 授权与网关行为仍需用目标环境验收。现已验证真实隔离 MinIO、HTTP 请求的 XML/MD5 匹配和 cn-north-4 签名区域下载，尚未对华为云 OBS 或其他厂商实测认证。
+接入端点需支持平台所用的 ListObjectsV2（含 delimiter/分页）、HeadObject、GetObject、PutObject、CopyObject、DeleteObject、DeleteObjects，以及上传的 If-None-Match 条件写入；若不支持条件写入，不能保证不覆盖同名对象，平台不静默降级。不同区域、存储版本、IAM 授权与网关行为仍需用目标环境验收。已有隔离 MinIO、HTTP 请求的 XML/MD5 匹配和 cn-north-4 签名区域下载测试记录；华为 OBS 全接口及全部运行路径尚未完成实测认证，但另有下面的用户现场成功反馈，不能笼统说从未在华为服务成功。
+
+2026-10-10用户现场反馈（2026-10-13补录）：用户明确回复生产华为S3加入以下环境变量后恢复正常；没有单独提供Pod重建过程或日志。此反馈支持新版SDK默认校验与目标服务兼容性的判断，缺少原始错误码/请求、具体失败操作、华为服务版本及完整回归，不能确认为唯一根因或全部接口认证：
+
+~~~yaml
+- name: AWS_REQUEST_CHECKSUM_CALCULATION
+  value: WHEN_REQUIRED
+- name: AWS_RESPONSE_CHECKSUM_VALIDATION
+  value: WHEN_REQUIRED
+~~~
+
+当前代码已在后端S3Client及下载器显式设置相同策略；环境变量修复记录主要用于旧镜像和部署复现，并非关闭所有校验或证明当前代码仍待修改。必要操作的校验仍保留。`artifacts/`无需预建，写入前缀下对象后自然显示，启动不自动创建空目录；桶本身必须已存在，平台不创建桶。日志诊断已由S3FailureDiagnostics输出操作、HTTP状态、S3错误码、请求ID及安全原因链；该聊天暂停时未测试/发布，现有实现是后续状态。本轮没有复测生产服务或重新发布镜像。
 
 平台制品、initContainer 下载器和 Flink 状态存储仍是三条连接路径；Flink 运行镜像中的 S3 插件与目标存储也必须兼容。更换存储不会自动迁移已有制品、保存点、数据库或正在运行的作业。
+
+切换时修改平台endpoint/bucket、必要的prefix/state-root/region及AWS凭据来源后重建平台Pod；同时更新配置管理中已经保存的s3-access-key/s3-secret-key，启动环境只初始化缺失项，不覆盖旧值。若配置FLINK_WEB_ARTIFACT_CREDENTIALS_SECRET，还须核对其引用的下载器凭据。已有作业/Session的连接与状态配置需显式更新部署，不能靠平台重启自动切换；跨存储先按状态保留策略安排保存点、对象迁移和恢复。Secret通过环境注入时更新后须重建使用它的容器。现场成功反馈和未覆盖范围见 [本聊天核对](agent/validation.md#sql-与-session-开发聊天归档核对2026-10-13)。
 
 ## 8. 排障与验收
 
 | 现象 | 优先检查 |
 | --- | --- |
-| 初始管理员密码校验失败 | 修改 flink-web-secrets 的 FLINK_WEB_ADMIN_PASSWORD，至少 12 字符且 UTF-8 不超过 72 字节，再重启后端；如已有用户却进入初始化，先核对 PVC/库路径 |
+| 初始管理员密码校验失败 | 修改 flink-web-secrets 的 FLINK_WEB_ADMIN_PASSWORD，至少 12 字符且 UTF-8 不超过 72 字节，再按当前清单重建 StatefulSet/flink-web 的 Pod；旧程序提示中的“后端 Deployment”不是当前资源名称。如已有用户却进入初始化，先核对 PVC/库路径 |
 | INVALID_CREDENTIAL_ENVELOPE | 前后端是否同步升级、Cookie 会话是否一致、挑战是否过期或已消费；重新获取挑战，不改为明文重试 |
 | 本地数据库启动被拒绝 | 路径、PVC 权限、实例锁、INITIALIZE 开关；不要通过开启初始化掩盖挂错卷 |
 | JOB_NAME_EXISTS / DATA_CONFLICT | 作业重名或数据约束；修改名称或编辑已有记录 |
@@ -478,7 +504,7 @@ npm run test:e2e
 2026-10-08 容器检查说明：SQLite JDBC 需要从临时目录加载本地库。使用只读根文件系统时需提供可写且允许加载本地库的临时目录；本地 Docker 检查使用 /tmp 的 tmpfs，并显式设置 exec。noexec 挂载会导致本地库加载失败，此限制与 Savepoint 修复无关。
 
 
-2026-10-09 前端启动与后端 DNS：Web 镜像从容器 /etc/resolv.conf 生成 Nginx 运行时 resolver，后端 Service 暂时缺失不会让 Nginx 退出；对应 API/Flink UI 请求会暂时返回 502，DNS 记录恢复后无需重启前端即可恢复。Kubernetes 中自动用 search 列表的 namespace.svc.* 补全默认 flink-web-backend，Compose 保持单段服务名。自定义跨 namespace 后端时设置 FLINK_WEB_PROXY_BACKEND_HOST 为完整 Service 域名；FLINK_WEB_PROXY_BACKEND_PORT 默认 8080，显式设置时必须为 1–65535 的数字。Kubernetes 会为 flink-web-backend Service 自动注入 FLINK_WEB_BACKEND_PORT=tcp://服务IP:8080；前端不再读取该变量，避免启动时报 Invalid FLINK_WEB_BACKEND_PORT。依据 [Kubernetes Service 环境变量说明](https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables)。无需关闭 Service 环境变量即可使用修复后的镜像。仅启动容错不能代替创建正确的 Service、selector、Endpoints 或修复集群 DNS。可用 `python scripts/check_web_proxy.py --image 镜像名` 验证 Service 自动注入变量下启动、独立参数覆盖及非法端口、无后端启动、补全 Service 名、后端上线及变更 IP 后恢复，包含路径、参数、请求体、Session/CSRF 请求头和 Flink UI 代理路径。容器仍以 UID 10001 和只读根文件系统运行，运行时文件写入已有可写 /tmp。
+2026-10-09 前端启动与后端 DNS：Web 镜像从容器 /etc/resolv.conf 生成 Nginx 运行时 resolver，后端 Service 暂时缺失不会让 Nginx 退出；对应 API/Flink UI 请求会暂时返回 502，DNS 记录恢复后无需重启前端即可恢复。Kubernetes 中自动用 search 列表的 namespace.svc.* 补全默认 flink-web-backend，Compose 保持单段服务名。自定义跨 namespace 后端时设置 FLINK_WEB_PROXY_BACKEND_HOST 为完整 Service 域名；FLINK_WEB_PROXY_BACKEND_PORT 默认 8080，显式设置时必须为 1–65535 的数字。上述默认值用于独立服务部署；当前 application.yaml 的同 Pod StatefulSet 前端显式设置代理目标为 127.0.0.1:8081，不走后端 Service DNS。后端兼容 Service 的端口仍为 8080、targetPort 为 backend-http。Kubernetes 会为 flink-web-backend Service 自动注入 FLINK_WEB_BACKEND_PORT=tcp://服务IP:8080；前端不再读取该变量，避免启动时报 Invalid FLINK_WEB_BACKEND_PORT。依据 [Kubernetes Service 环境变量说明](https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables)。无需关闭 Service 环境变量即可使用修复后的镜像。仅启动容错不能代替创建正确的 Service、selector、Endpoints 或修复集群 DNS。可用 `python scripts/check_web_proxy.py --image 镜像名` 验证 Service 自动注入变量下启动、独立参数覆盖及非法端口、无后端启动、补全 Service 名、后端上线及变更 IP 后恢复，包含路径、参数、请求体、Session/CSRF 请求头和 Flink UI 代理路径。容器仍以 UID 10001 和只读根文件系统运行，运行时文件写入已有可写 /tmp。
 
 ### 文件与密钥行为更新（2026-10-10）
 
@@ -512,6 +538,19 @@ SQL Application 和验证专用 Session 的 Runner 改为手动选择：在 SQL 
 
 最终校验：后端176项全部通过（含真实精确Parser、隔离MinIO、完整状态根绑定、Flink配置内密钥、Secret引用不可读/非法值拒绝与请求级读取、历史脱敏，以及旧资源直接启动/删除后重建的管理员、开发者和运维边界）。前端类型/生产构建/全源格式、Java分层及172类/858方法构造器中文注释检查通过。实际新app/web在非root、只读根文件系统、临时SQLite下通过真实加密登录、状态默认值、配置内AK/SK、无主容器AWS AK/SK、密钥安全预览、旧作业重新部署、停止后新账号启动及旧资源仍在的直接启动；Kubernetes写入使用隔离协议替身，未连接现场集群。实际Web上6项账号/模板页面回归、代理/DNS恢复检查通过。
 
+### SQL 启动、JDK 兼容与工作台发布（2026-10-12）
+
+已构建、验证并覆盖推送 app/web:0.0.4，不更新latest，downloader保持原版本；第4节摘要已通过指定仓库manifest正文、header和config ID核对。使用全量校验通过的本地后端、Java8字节码Runner、两份精确Parser与前端产物，复用已验证的Kylin SP3运行层；app/web均为linux/amd64、UID/GID10001。标准backend/Dockerfile同步构建和安装两份Parser及下载用Runner。
+
+验收：后端178项、Runner8项、实际Web15项交互回归；JDK8/17真实Runner与双版本Parser；Flink1.20.5/JDK17初始SQL Application及Session验证100条/动态依赖均通过。实际非root只读镜像通过加密登录、1.20.5 PARSER检查和Runner下载哈希匹配；Web DNS/代理、前端类型/构建/全源格式、Java分层及172类/863方法构造器中文注释检查通过。详情见[知识验收记录](agent/validation.md#sql-运行与-jdk-兼容验收2026-10-12)。
+
+未更新实际Kubernetes工作负载或已有SQL/Session资源；现有平台Pod须重新拉取镜像，旧SQL草稿须按第6节重新选择新版Runner并发布，验证Session须停止后更新Runner再启动。现场地址首页可达，浏览器工具启动失败，未读取登录后现场作业配置；本轮成功结果来自隔离真实Flink和本地协议/浏览器验证。
+
+本轮独占验证容器、网络、数据库、日志、临时凭据/打包副本及浏览器产物已清理；构建缓存回收513.2MB，保留已标记镜像、交付JAR与共享Maven依赖。
+
 旧草稿/运行资源的手工状态目录不会自动迁移；新建或显式重新启用状态存储使用完整新根目录。已有作业要采用新的S3配置表达方式，应检查草稿后显式重新部署。已保存ServiceAccount在具备编辑权限的启动/恢复操作中生效，仅运维权限继续用原账号。
 
 未操作实际Kubernetes工作负载，未验证现场账号/RBAC、真实Flink调度或恢复兼容性。复用0.0.4标签时现有Pod须重新拉取；仅推送镜像不会改变运行中的实例。本轮隔离容器、网络、测试凭据、临时库与打包副本收尾清理，构建缓存清理后保留已标记镜像。
+
+
+2026-10-13 归档补核：10-08/10-09 聊天中的独立前端 Deployment 更新命令及桌面 YAML 检查属于当时环境；桌面附件原件现已缺失。本仓库主清单和 frontend-runtime-patch.yaml 已针对合并 StatefulSet/flink-web，前后端 Always、Pod enableServiceLinks=false。另一本SQL/Session聊天10-09生产图已有flink-web-0双容器2/2运行，同时请求Kubernetes失败；该图支持当时合并Pod已运行，但当前控制器与最新修复镜像摘要未核查。执行更新前先按授权核对资源类型，不将旧rollout命令盲套新清单。旧chat中的0.0.5/latest及共享S3插件下载不属于当前发布/插件规则；最新摘要继续以上表和后续发布记录为入口，本文补录不重新发布镜像或重新认证摘要。历史正文/附件/测试范围分别见 [作业与前端聊天核对](agent/validation.md#作业与前端修复聊天归档核对2026-10-13) 和 [SQL/Session聊天核对](agent/validation.md#sql-与-session-开发聊天归档核对2026-10-13)。

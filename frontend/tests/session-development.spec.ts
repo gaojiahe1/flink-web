@@ -12,6 +12,48 @@ const runtime = {
   flinkConfiguration: {},
   podTemplate: {},
 }
+
+test('SQL 辅助面板可拖动和键盘缩放，名称与 JAR 一致，窄屏与全屏保留可用布局', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  const handle = page.getByRole('separator', { name: '调整辅助面板宽度' })
+  const panel = page.locator('.sql-runtime:visible')
+  await expect(handle).toBeVisible()
+  const initial = (await panel.boundingBox())!.width
+  const position = (await handle.boundingBox())!
+  await page.mouse.move(position.x + position.width / 2, position.y + 80)
+  await page.mouse.down()
+  await page.mouse.move(position.x - 170, position.y + 80)
+  await page.mouse.up()
+  expect((await panel.boundingBox())!.width).toBeGreaterThan(initial + 160)
+  await handle.focus()
+  const beforeKey = (await panel.boundingBox())!.width
+  await handle.press('ArrowLeft')
+  expect((await panel.boundingBox())!.width).toBeGreaterThan(beforeKey + 35)
+  await handle.press('End')
+  expect((await page.locator('.sql-center').boundingBox())!.width).toBeGreaterThanOrEqual(318)
+  for (const name of ['作业名称', '镜像版本', 'JobManager 内存', 'TaskManager 内存', 'JobManager CPU', 'TaskManager CPU', '每个 TaskManager 的 Slot 数'])
+    await expect(panel.getByLabel(name, { exact: name !== '作业名称' })).toBeVisible()
+  await panel.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
+  await expect(panel.getByRole('heading', { name: 'Flink 配置', exact: true })).toBeVisible()
+  await expect(panel.getByRole('link', { name: '下载平台 SQL Runner' })).toHaveAttribute('href', '/api/sql/runner/download')
+  await page.getByText('SQL Runner 与语法验证器怎么用？', { exact: true }).click()
+  await expect(page.locator('.sql-runtime-guide')).toContainText('SQL 验证专用 Session')
+  await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
+  await expect(handle).toBeVisible()
+  await handle.press('Home')
+  expect((await panel.boundingBox())!.width).toBeLessThanOrEqual(301)
+  await page.getByRole('button', { name: '退出全屏', exact: true }).click()
+  await page.setViewportSize({ width: 1100, height: 900 })
+  await expect(handle).toBeVisible()
+  await handle.press('End')
+  expect((await page.locator('.sql-center').boundingBox())!.width).toBeGreaterThanOrEqual(318)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(handle).toBeHidden()
+  await expect(panel.getByLabel('作业名称', { exact: false })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
 async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
   let session: any = null,
     reads = 0,

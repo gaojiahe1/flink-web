@@ -1,6 +1,6 @@
 # 制品与运行文件
 
-更新：2026-10-12。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-13。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：S3 浏览/上传/复制/删除、外部文件引用、下载器与 S3 插件准备。S3StorageClient 单独负责存储协议，ArtifactService 管业务，ArtifactPodBuilder/S3PluginPodBuilder 渲染受管卷与容器；实际文件读取在 downloader/Flink 主容器。
 
@@ -10,11 +10,14 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 
 仅一个 fw-download initContainer：准备程序与启动脚本；主容器从自身 opt 自动发现唯一 Presto S3 JAR 复制独立插件卷，不把自动插件加入 usrlib。用户显式附加 Presto JAR 不按文件名静默丢弃。运行 YAML 开关、角色覆盖与挂载冲突见模板模块。
 
-平台 SDK、下载器、Flink 插件连接分别验收；V4/签名区域/WHEN_REQUIRED/必要 MD5 只说明兼容配置，MinIO 测试不能替代华为等提供商认证。已知未确认资料见 open-questions。
+平台 SDK、下载器、Flink 插件连接分别验收；V4/签名区域/WHEN_REQUIRED/必要 MD5 只说明兼容配置，MinIO 测试不能替代华为等提供商认证。10-10 用户反馈目标华为 S3 添加两个 WHEN_REQUIRED 环境变量后恢复正常，仅为该场景现场反馈，不等于全部接口或三条路径已验收。已知未确认资料见 open-questions。
 
 ## 定位代码与验证
 
 - [S3StorageClient.java](../../../backend/src/main/java/com/flinkweb/client/storage/S3StorageClient.java)
+- [S3FailureDiagnostics.java](../../../backend/src/main/java/com/flinkweb/client/storage/S3FailureDiagnostics.java)
+- [S3FailureDiagnosticsTest.java](../../../backend/src/test/java/com/flinkweb/client/storage/S3FailureDiagnosticsTest.java)
+- [S3ServiceTest.java](../../../backend/src/test/java/com/flinkweb/S3ServiceTest.java)
 - [ArtifactServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/artifact/impl/ArtifactServiceImpl.java)
 - [ArtifactPodBuilder.java](../../../backend/src/main/java/com/flinkweb/service/artifact/support/ArtifactPodBuilder.java)
 - [S3PluginPodBuilder.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/S3PluginPodBuilder.java)
@@ -26,3 +29,7 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 - [test_download.py](../../../downloader/test_download.py)
 
 2026-10-12：S3StorageClient 从 platform.operator.state-root 取得 FLINK_WEB_STATE_ROOT，默认值与 UUID 状态清理均保留完整前缀。VariableRenderer 将 Flink S3 AK/SK 在 flinkConfiguration 原位置展开并清理主容器旧 AWS AK/SK；下载器 env 鉴权保留。已有 Secret 引用须 GET 读取指定键，明文仅在本次提交内；预览和历史隐藏。
+
+2026-10-13 来源补核：下载器无 SHA-256 内容校验不等于禁用 S3 协议 checksum、交付文件哈希或镜像摘要核对。生成 YAML 不注入 AWS_DEFAULT_REGION；当前下载器可读取该变量作为旧环境兼容回退，受管 S3 清单注入 AWS_REGION 用于签名。系统设置全局下载器绑定替代每条 Flink 镜像配置；唯一 fw-download 准备脚本，主容器从自身镜像复制插件的原因及历史方案替代见 ADR-003。复制专属目录含子目录和未引用文件，实际目录操作定位 S3StorageClient.copyJobFiles/deleteJobStorage；本轮只读核对，10-05/10-08 隔离 MinIO 及现场 test2 历史验证见验收记录。
+
+本聊天补核（2026-10-13）：当前 S3Client 显式配置 WHEN_REQUIRED、LegacyMd5Plugin、path-style 和禁用分块编码，下载器也设置 s3v4/WHEN_REQUIRED；生产旧镜像通过两个环境变量修复的记录不表示当前代码仍缺此配置。S3FailureDiagnostics.failure/trace 已有结构化诊断及安全原因链/栈帧/suppressed，测试定义覆盖脱敏、循环链和批量删除 HTTP200 下的单项错误，本轮未执行。`artifacts/` 是对象前缀，启动不创建空目录，首次写对象自然形成；桶须预建，平台没有 CreateBucket。环境密钥只初始化缺失的配置管理项；切换存储不自动搬对象、更新已有作业/Session 或替换已保存密钥。详见 [部署指南](../../deployment.md#更换-s3-兼容服务2026-10-10)。

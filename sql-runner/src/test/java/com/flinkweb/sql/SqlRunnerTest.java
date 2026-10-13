@@ -9,6 +9,65 @@ import org.junit.jupiter.api.Test;
 
 /** 使用真实 Flink Planner 验证 SQL Runner 计划构建，并检查参数和密钥替换。 */
 class SqlRunnerTest {
+  /** 使用真实提交上下文执行 SQL，磁盘 local 路径不得覆盖上传 JAR，同时保留运行与状态配置。 */
+  @Test
+  @org.junit.jupiter.api.Timeout(45)
+  void executesSqlWithoutOverwritingResolvedSubmissionJars() throws Exception {
+    var global = new org.apache.flink.configuration.Configuration();
+    global.set(
+        org.apache.flink.configuration.PipelineOptions.JARS,
+        List.of("local:///opt/flink/usrlib/runner.jar"));
+    global.set(
+        org.apache.flink.configuration.PipelineOptions.CLASSPATHS,
+        List.of("local:///opt/flink/usrlib/connector.jar"));
+    global.setString("parallelism.default", "1");
+    global.setString("pipeline.name", "initial-sql-regression");
+    String stateDirectory =
+        java.nio.file.Files.createTempDirectory("runner-state-").toUri().toString();
+    global.setString("state.checkpoints.dir", stateDirectory);
+    global.setString("s3.endpoint", "https://s3.example.invalid");
+    var config = SqlRunner.executionConfiguration(global);
+    assertEquals(stateDirectory, config.getString("state.checkpoints.dir", ""));
+    assertEquals("https://s3.example.invalid", config.getString("s3.endpoint", ""));
+    assertTrue(global.contains(org.apache.flink.configuration.PipelineOptions.JARS));
+    var context = new org.apache.flink.configuration.Configuration();
+    context.setString("execution.target", "local");
+    context.setString("execution.attached", "true");
+    String jar =
+        TableEnvironment.class.getProtectionDomain().getCodeSource().getLocation().toExternalForm();
+    context.set(org.apache.flink.configuration.PipelineOptions.JARS, List.of(jar));
+    context.set(org.apache.flink.configuration.PipelineOptions.CLASSPATHS, List.of(jar));
+    org.apache.flink.client.program.StreamContextEnvironment.setAsContext(
+        new org.apache.flink.core.execution.DefaultExecutorServiceLoader(),
+        context,
+        Thread.currentThread().getContextClassLoader(),
+        true,
+        true);
+    try {
+      TableEnvironment environment =
+          TableEnvironment.create(
+              EnvironmentSettings.newInstance()
+                  .withConfiguration(config)
+                  .inStreamingMode()
+                  .build());
+      var result =
+          SqlRunner.prepare(
+                  environment,
+                  List.of(
+                      "CREATE TEMPORARY TABLE source_events (id BIGINT, payload STRING) WITH"
+                          + " ('connector'='datagen', 'number-of-rows'='3')",
+                      "CREATE TEMPORARY TABLE sink_events (id BIGINT, payload STRING) WITH"
+                          + " ('connector'='print')",
+                      "INSERT INTO sink_events SELECT id, payload FROM source_events"),
+                  key -> null)
+              .execute();
+      result.await();
+      assertTrue(result.getJobClient().isPresent());
+    } finally {
+      org.apache.flink.client.program.StreamContextEnvironment.unsetAsContext();
+    }
+  }
+
   /** 验证模式不解析原 Sink 连接器，而是真实执行 Print 输出并限制一百条。 */
   @Test
   @org.junit.jupiter.api.Timeout(45)

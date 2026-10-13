@@ -1,6 +1,6 @@
 # 元数据、权限与数据管理
 
-更新：2026-10-12。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-13。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：数据库配置/迁移、JSON记录修订控制、登录/角色/用户组/作业ACL、普通配置/密钥、数据源与Catalog元数据。用户登录→一次性挑战→EncryptedLoginFilter/Session→CSRF+角色/ACL；数据修改带revision，用户相关修订使旧会话失效。
 
@@ -27,3 +27,14 @@ SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接�
 - [FlinkCatalogServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/sql/catalog/impl/FlinkCatalogServiceImpl.java)
 - [PlatformIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/PlatformIntegrationTest.java)
 - [LocalStorageTest.java](../../../backend/src/test/java/com/flinkweb/datasource/metadata/LocalStorageTest.java)
+
+## 启动与传输取证补充（2026-10-13）
+
+已核对当前实现：缺失数据库且 initialize=false 才拒绝自动创建；SchemaInitializer 对已有库检查完整性并补 V1–V5 缺失迁移。管理员仅在用户库为空时初始化，密码至少 12 字符且 UTF-8 最多 72 字节；已有用户不会被启动环境变量覆盖。主清单已合并 Secret 和 initialize=true，不再依赖首次安装补丁。
+
+敏感传输用途明确为 login、user-password、config-secret，前后端须配套；一次性挑战每会话最多 8 项。启动环境变量使用原始初始密码，不能填 fwenc1 信封。旧回复中“主密钥仍为空”仅是 09-29 当时观察，当前固定非空配置的待处理事项见 [风险清单](../open-questions.md)。
+
+- [UserServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/permission/impl/UserServiceImpl.java)：空用户库初始化及密码校验；其启动提示仍写 Deployment，待按当前 StatefulSet 修正文案。
+- [StartupFailureAnalyzer.java](../../../backend/src/main/java/com/flinkweb/config/platform/StartupFailureAnalyzer.java)：展开启动配置异常的原因与处理步骤。
+- [BootstrapAdminTest.java](../../../backend/src/test/java/com/flinkweb/service/permission/impl/BootstrapAdminTest.java)：管理员初始化回归入口。
+- [secretTransport.ts](../../../frontend/src/shared/api/secretTransport.ts)：三类敏感字段传输入口。

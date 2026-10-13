@@ -243,6 +243,11 @@ async function upload(event: Event) {
 </script>
 <template>
   <div class="artifact-picker">
+    <p v-if="runner" class="muted">
+      <a href="/api/sql/runner/download" class="text-button" download>下载平台 SQL Runner</a>
+      · 上传到下方 SQL Runner 列表后选择。内置版本已验证 Flink 1.20.3 /
+      1.20.5，其他版本按部署指南构建。
+    </p>
     <div class="field-heading picker-heading">
       <strong>{{ label }}</strong>
       <div class="picker-actions">

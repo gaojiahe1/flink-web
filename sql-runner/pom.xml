@@ -6,7 +6,8 @@
   <artifactId>flink-web-sql-runner</artifactId>
   <version>0.1.0</version>
   <properties>
-    <maven.compiler.release>11</maven.compiler.release>
+    <maven.compiler.release>8</maven.compiler.release>
+    <maven.compiler.testRelease>17</maven.compiler.testRelease>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <flink.version>1.20.3</flink.version>
   </properties>

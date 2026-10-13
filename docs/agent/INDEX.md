@@ -1,14 +1,14 @@
 # 项目知识索引
 
-更新：2026-10-12。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
+更新：2026-10-13。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |
 | --- | --- | --- | --- |
-| savepoint、停止、启动、快照、UID、纳管、删除草稿、日志、Flink UI | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [身份与安全停止](decisions/ADR-002-safe-stop.md) |
+| savepoint、停止、启动、快照、UID、纳管、删除草稿、日志、Flink UI、前端启动、Nginx、代理 | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [身份与安全停止](decisions/ADR-002-safe-stop.md) |
 | 刷新、轮询、Operator、状态、ACCEPTED | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [按需观测](decisions/ADR-001-on-demand.md) |
 | JAR、YAML、表单、ServiceAccount、PodTemplate、模板、JM/TM | [REQ-002](requirements/REQ-002-authoring.md) | [作业配置](modules/job-authoring.md) | [模板分层](decisions/ADR-004-templates.md) |
 | SQL、Session、验证、Runner、Parser、Catalog、StatementSet | [REQ-003](requirements/REQ-003-sql-session.md) | [SQL 与 Session](modules/sql-session.md) | [按需观测与验证例外](decisions/ADR-001-on-demand.md) |
-| S3、文件、目录、制品、复制、下载器、插件、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
+| S3、文件、目录、制品、复制、下载器、插件、Kylin、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | 权限、登录、密钥、SQLite、MySQL、迁移、数据源、JDBC、Kafka | [REQ-004](requirements/REQ-004-storage-security.md) | [元数据与权限](modules/metadata-security.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | 治理、清理、记忆、新会话、增量、索引 | [REQ-005](requirements/REQ-005-governance.md) | [工作说明](workflow.md) | [轻量记忆](decisions/ADR-005-memory.md) |
 
