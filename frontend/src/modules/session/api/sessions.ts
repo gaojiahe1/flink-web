@@ -1,4 +1,6 @@
 import { request, jsonBody } from '../../../shared/api/http'
+import type { Diagnostic } from '../../../shared/types/workbench'
+import type { LogQuery } from '../../job-management/api/workbench'
 export interface SessionCluster {
   id: string
   name: string
@@ -12,6 +14,8 @@ export interface SessionCluster {
   configuredTaskManagers?: number
   registeredTaskManagers?: number
   taskManagerMessage?: string
+  queriedAt?: string
+  uid?: string
   runtime: {
     baseYaml?: string
     deploymentYaml?: string
@@ -34,6 +38,15 @@ export interface SessionCluster {
   }
 }
 export const sessionsApi = {
+  diagnostics: (id: string) =>
+    request<Diagnostic>('/api/sessions/' + encodeURIComponent(id) + '/diagnostics', {
+      method: 'POST',
+    }),
+  logs: (id: string, input: LogQuery) =>
+    request<{ text: string; queriedAt?: string; limitBytes?: number; lines?: number }>(
+      '/api/sessions/' + encodeURIComponent(id) + '/logs',
+      { method: 'POST', ...jsonBody(input) },
+    ),
   configuration: (value: unknown) =>
     request<{ yaml: string; runtime: SessionCluster['runtime']; formIssue?: string }>(
       '/api/sessions/configuration',

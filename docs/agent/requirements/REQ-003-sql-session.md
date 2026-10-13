@@ -10,11 +10,13 @@
 
 - 删除部署草稿解除SQL关联，编辑进入关联SQL草稿；保存不自动执行。
 - BASIC、精确版本Parser、真实Planner三个层次清楚；缺少适配器不冒充语法通过。
-- 专用Session仅一个，输出最多100条、两分钟取消，不写原Sink；修改SQL使检查失效，Runner明确选择。
+- 专用 Session 仅一个，同时只能验证一份 SQL；累计最多 1000 条变更事件、两分钟取消，不写原 Sink；修改 SQL 使检查失效，Runner 明确选择。2026-10-13 最新要求替代此前 100 条上限。
 - 2026-10-12：初始SQL在Flink1.20.5 Application正常执行，磁盘local URI不覆盖提交上下文；Runner/Parser产物兼容JDK8/17，精确1.20.3/1.20.5 Parser可用。SQL辅助面板可拖动/键盘缩放，窄屏保持上下布局，共同配置名称与JAR一致，页面给出实际使用入口。
 - 2026-10-13：Session/SQL 配置支持表单/YAML 双向编辑，往返保留额外字段，错误原文不得被转换或数据源插入覆盖；Runner/身份/下载器边界仍由后端约束。Session 支持显式 Standalone 固定 TaskManager 数量，Native 保留按需行为，显示配置数与已注册数；dry-run 接受等值数值并报告脱敏字段差异。Parser 错误分类、上传 JAR 清理诊断及面板取消/1000px 边界回归均纳入本轮验证，现场 Operator/CRD 不据此视为已验收。
 
 关联：[模块](../modules/sql-session.md)、[ADR](../decisions/ADR-001-on-demand.md)。关键代码及测试由模块链接定位，不维护第二份路径清单。
+
+2026-10-13 追加：Session 复用作业 Pod/事件/脱敏日志抽屉，状态悬浮显示摘要，提供只读 Flink UI，刷新移至每行末尾。SQL 支持格式化、撤销和 Flink 类型/Connector 选项提示。验证 Session 强制固定 logConfiguration；后端监听固定文件，以顺序号处理轮转和重复行，区分 +I、-U、+U、-D，离页仍执行 1000 行上限取消。
 
 重要变更：10-09移除重复执行SQL入口，补唯一验证Session；10-10Runner改手动选择；10-12共用账号/模板。
 

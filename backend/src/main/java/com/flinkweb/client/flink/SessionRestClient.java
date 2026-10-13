@@ -117,6 +117,38 @@ public class SessionRestClient {
     }
   }
 
+  /** 只读取两个固定验证文件，兼容 Flink 完整响应；轮转副本不存在时返回空内容。 */
+  public String validationLog(String deployment, String taskmanager, String filename) {
+    if (!taskmanager.matches("[A-Za-z0-9_.-]{1,200}")
+        || !com.flinkweb.config.sql.SqlValidationLog.FILES.contains(filename))
+      throw unavailable("验证日志标识无效");
+    var request =
+        HttpRequest.newBuilder(
+                target(deployment, "/taskmanagers/" + taskmanager + "/logs/" + filename))
+            .timeout(Duration.ofSeconds(15))
+            .GET()
+            .build();
+    try {
+      var response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+      try (var stream = response.body()) {
+        if (response.statusCode() == 404) return "";
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
+          throw unavailable("无法读取固定验证日志 (HTTP " + response.statusCode() + ")");
+        return readTail(
+            stream,
+            com.flinkweb.config.sql.SqlValidationLog.FILE_BYTES + 1024 * 1024,
+            128L * 1024 * 1024);
+      }
+    } catch (BusinessException ex) {
+      throw ex;
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw unavailable("验证日志请求已中断");
+    } catch (Exception ex) {
+      throw unavailable("无法读取固定验证日志，请检查专用 Session 日志配置");
+    }
+  }
+
   /** 环形缓冲仅保留最后一段日志，内存固定；总读取量受限，防止无限上游流。 */
   static String readTail(InputStream stream, int capacity, long maximum)
       throws java.io.IOException {

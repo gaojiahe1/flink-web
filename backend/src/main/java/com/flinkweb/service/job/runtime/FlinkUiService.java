@@ -12,4 +12,11 @@ public interface FlinkUiService {
   /** 校验作业和请求路径，向集群内 REST Service 转发只读请求并处理配置脱敏。 */
   void proxy(String id, HttpServletRequest request, HttpServletResponse response)
       throws IOException;
+
+  /** 核验 Session 资源后规范化只读 UI 地址。 */
+  void sessionTrailingSlash(String id, HttpServletResponse response) throws IOException;
+
+  /** 向固定 Namespace 内已核验 Session 转发受限只读请求。 */
+  void sessionProxy(String id, HttpServletRequest request, HttpServletResponse response)
+      throws IOException;
 }

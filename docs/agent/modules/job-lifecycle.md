@@ -10,6 +10,8 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 
 诊断入口为 PodStatusDrawer 和 DiagnosticServiceImpl；日志最多10000行、尾部4 MiB、传输64 MiB，核验归属。FlinkUiServiceImpl 代理只读受控目标。刷新规则另见 [ADR-001](../decisions/ADR-001-on-demand.md)。
 
+2026-10-13：Session 复用相同 Pod/事件/日志投影与抽屉，先由 SessionClusterService.observedResource 校验 Session 标签/UID，再校验 Pod 所有者链；新增共享基础设施入口不需要伪造作业草稿。Session 日志只允许管理员/运维，UI 代理沿用敏感路径和配置脱敏边界；事件二次读取也重新核对 Pod 归属。
+
 已知边界：本轮本地回归通过；现场保存点恢复历史仅验证过特定 test2/Flink 1.20.5，不能推及所有版本。修改停止流程需优先检查 WorkbenchIntegrationTest 与 KubernetesClientTest。
 
 ## 定位代码与验证

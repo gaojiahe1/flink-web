@@ -68,10 +68,10 @@ class SqlRunnerTest {
     }
   }
 
-  /** 验证模式不解析原 Sink 连接器，而是真实执行 Print 输出并限制一百条。 */
+  /** 验证模式不解析原 Sink 连接器，真实输出原查询的全部一百二十条数据。 */
   @Test
   @org.junit.jupiter.api.Timeout(45)
-  void validationReplacesSinkAndLimitsPrintResults() throws Exception {
+  void validationReplacesSinkWithoutChangingQuery() throws Exception {
     TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
     environment.getConfig().getConfiguration().setString("parallelism.default", "1");
     String id = "0123456789abcdef0123456789abcdef";
@@ -98,7 +98,7 @@ class SqlRunnerTest {
       System.setOut(original);
     }
     assertEquals(
-        100,
+        120,
         output
             .toString(StandardCharsets.UTF_8.name())
             .lines()

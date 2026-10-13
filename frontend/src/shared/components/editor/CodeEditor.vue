@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
+import { keymap } from '@codemirror/view'
+import { isolateHistory } from '@codemirror/commands'
 import { EditorState, Compartment } from '@codemirror/state'
 import { yaml } from '@codemirror/lang-yaml'
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
@@ -20,6 +22,35 @@ const host = ref<HTMLElement>(),
 const editability = new Compartment()
 const language = new Compartment()
 const languageError = ref('')
+const formatError = ref('')
+async function formatSql() {
+  if (!view || props.readonly || props.language !== 'sql') return
+  const original = view.state.doc.toString()
+  formatError.value = ''
+  try {
+    const { format } = await import('sql-formatter')
+    const { sameSqlTokens } = await import('../../utils/sqlEditing')
+    const formatted = format(original, {
+      language: 'sql',
+      tabWidth: 2,
+      keywordCase: 'preserve',
+      linesBetweenQueries: 1,
+    })
+    if (!sameSqlTokens(original, formatted)) throw new Error('格式化改变了 SQL token')
+    if (!disposed && view && !props.readonly && view.state.doc.toString() === original) {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: formatted },
+        annotations: isolateHistory.of('full'),
+        userEvent: 'input.format',
+      })
+      view.focus()
+    }
+  } catch {
+    if (!disposed)
+      formatError.value = '当前 SQL 无法格式化，请检查未闭合的引号、注释或括号。原文已保留。'
+  }
+}
+defineExpose({ format: formatSql })
 let languageEpoch = 0,
   disposed = false
 async function updateLanguage() {
@@ -28,7 +59,7 @@ async function updateLanguage() {
   issues.value = []
   try {
     const extension =
-      props.language === 'sql' ? (await import('@codemirror/lang-sql')).sql() : yaml()
+      props.language === 'sql' ? (await import('../../utils/sqlEditing')).flinkSqlSupport() : yaml()
     if (!disposed && epoch === languageEpoch)
       view?.dispatch({ effects: language.reconfigure(extension) })
   } catch {
@@ -43,6 +74,16 @@ onMounted(() => {
     state: EditorState.create({
       doc: props.modelValue,
       extensions: [
+        keymap.of([
+          {
+            key: 'Mod-Shift-f',
+            run: () => {
+              if (props.language !== 'sql' || props.readonly) return false
+              void formatSql()
+              return true
+            },
+          },
+        ]),
         basicSetup,
         language.of(props.language === 'yaml' ? yaml() : []),
         lintGutter(),
@@ -128,6 +169,7 @@ onBeforeUnmount(() => {
   >
     <div ref="host" class="code-editor-host"></div>
     <p v-if="languageError" class="muted" role="status">{{ languageError }}</p>
+    <p v-if="formatError" class="editor-errors" role="alert">{{ formatError }}</p>
     <div v-if="issues.length" class="editor-errors" role="alert">{{ issues[0] }}</div>
   </div>
 </template>

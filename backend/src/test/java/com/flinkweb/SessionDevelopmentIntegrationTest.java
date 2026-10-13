@@ -158,10 +158,16 @@ class SessionDevelopmentIntegrationTest {
             });
     when(bundles.build(anyList()))
         .thenAnswer(invocation -> Files.createTempFile("validation-test-", ".jar"));
+    when(rest.validationLog(anyString(), anyString(), anyString())).thenReturn("");
     when(rest.upload(anyString(), any()))
         .thenReturn(mapper.createObjectNode().put("filename", "/tmp/upload_sql-validation.jar"));
     when(rest.call(anyString(), anyString(), anyString(), nullable(JsonNode.class)))
         .thenReturn(mapper.createObjectNode().put("state", "RUNNING"));
+    var files = mapper.createObjectNode();
+    files.putArray("logs").addObject().put("name", "sql-validation.log");
+    ((ArrayNode) files.path("logs")).addObject().put("name", "sql-validation.log.1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers/tm-1/logs"), isNull()))
+        .thenReturn(files);
   }
 
   /** 最小运行配置复用普通 Flink 镜像与挂载 Runner。 */
@@ -489,7 +495,7 @@ class SessionDevelopmentIntegrationTest {
         .isEqualTo("tm");
   }
 
-  /** 提交进行二次 SQL 检查，重复请求只提交一次；日志保留重复业务行且只收集本次一百条。 */
+  /** 提交进行二次 SQL 检查，重复请求只提交一次；日志保留重复业务行且只收集本次一千条。 */
   @Test
   void validationIsIdempotentAndWaitsForCancelConfirmation() {
     startCluster();
@@ -505,20 +511,27 @@ class SessionDevelopmentIntegrationTest {
     managers.putArray("taskmanagers").addObject().put("id", "tm-1");
     when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
     String output =
-        "FWV_other_0> +I[wrong]\n"
-            + java.util.stream.IntStream.range(0, 120)
-                .mapToObj(i -> "log prefix FWV_" + id + "_0:1> +I[repeated, row]")
-                .collect(java.util.stream.Collectors.joining("\n"));
-    when(rest.log(anyString(), eq("tm-1"))).thenReturn(output);
+        validationEvent("00000000000000000000000000000000", 1, 0, "+I", "wrong")
+            + java.util.stream.IntStream.range(0, 1200)
+                .mapToObj(
+                    i ->
+                        validationEvent(
+                            id,
+                            i + 2,
+                            i % 2,
+                            new String[] {"+I", "-U", "+U", "-D"}[i % 4],
+                            "repeated, row"))
+                .collect(java.util.stream.Collectors.joining(""));
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log"))).thenReturn(output);
     var running = executions.status(id);
-    assertThat(running.path("rows").size()).isEqualTo(100);
+    assertThat(running.path("rows").size()).isEqualTo(1000);
     assertThat(running.path("rows").get(0).path("value").asText()).isEqualTo("repeated, row");
     assertThat(running.path("state").asText()).isEqualTo("CANCELING");
     when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
         .thenReturn(mapper.createObjectNode().put("state", "CANCELED"));
     var completed = executions.status(id);
     assertThat(completed.path("state").asText()).isEqualTo("COMPLETED");
-    assertThat(completed.path("rows").size()).isEqualTo(100);
+    assertThat(completed.path("rows").size()).isEqualTo(1000);
     verify(rest).call(anyString(), eq("DELETE"), eq("/jars/upload_sql-validation.jar"), isNull());
   }
 
@@ -628,14 +641,163 @@ class SessionDevelopmentIntegrationTest {
     var managers = mapper.createObjectNode();
     managers.putArray("taskmanagers").addObject().put("id", "tm-1");
     when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
-    String output = "INFO FWV_" + id + "_0> +I[one,\n多行]\nINFO FWV_" + id + "_0> +I[repeated]\n";
-    when(rest.log(anyString(), eq("tm-1"))).thenReturn(output);
+    String output =
+        validationEvent(id, 1, 0, "+I", "one,\n多行") + validationEvent(id, 2, 0, "+I", "repeated");
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log"))).thenReturn(output);
     assertThat(executions.status(id).path("rows").get(0).path("value").asText())
         .isEqualTo("one,\n多行");
     assertThat(executions.status(id).path("rows").size()).isEqualTo(2);
-    when(rest.log(anyString(), eq("tm-1")))
-        .thenReturn(output + "INFO FWV_" + id + "_0> +I[repeated]\n");
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenReturn(output + validationEvent(id, 3, 0, "+I", "repeated"));
     assertThat(executions.status(id).path("rows").size()).isEqualTo(3);
+  }
+
+  /** 构造与 Log4j2 JSON 转义布局一致的完整日志事件。 */
+  String validationEvent(String id, long sequence, int sink, String kind, String value) {
+    String encoded =
+        mapper
+            .getNodeFactory()
+            .textNode("FWV_" + id + "_" + sink + ":1> " + kind + "[" + value + "]")
+            .toString();
+    return "FWV_EVENT|" + sequence + "|" + encoded.substring(1, encoded.length() - 1) + "\n";
+  }
+
+  /** 固定文件轮转、重复行、四种变更和半条写入不会导致重复或漏读。 */
+  @Test
+  void validationReadsRotatedEventsAndAllRowKinds() {
+    startCluster();
+    var draft = draft();
+    var run = executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString());
+    String id = run.path("id").asText();
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    String first = validationEvent(id, 11, 0, "+I", "同一值");
+    String second = validationEvent(id, 12, 0, "-U", "同一值");
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenReturn(first + second.substring(0, second.length() - 1));
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(1);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log.1")))
+        .thenReturn(first + second);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenReturn(
+            validationEvent(id, 13, 1, "+U", "同一值")
+                + validationEvent(id, 14, 1, "-D", "多行\nFWV_EVENT|fake|中文\"\\值"));
+    var result = executions.status(id).path("rows");
+    assertThat(result.findValuesAsText("kind")).containsExactly("+I", "-U", "+U", "-D");
+    assertThat(result.get(3).path("value").asText()).isEqualTo("多行\nFWV_EVENT|fake|中文\"\\值");
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(4);
+  }
+
+  /** 不依赖浏览器查询也会在一千条后取消，确认结束前继续占用全局验证入口。 */
+  @Test
+  void validationListenerCancelsWithoutBrowserAndKeepsSingleActiveRun() throws Exception {
+    startCluster();
+    var draft = draft();
+    var run = executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString());
+    String id = run.path("id").asText();
+    assertThatThrownBy(
+            () -> executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()))
+        .hasMessageContaining("正在验证其他 SQL");
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    String output =
+        java.util.stream.IntStream.range(0, 1200)
+            .mapToObj(i -> validationEvent(id, i + 1, 0, "+I", "value"))
+            .collect(java.util.stream.Collectors.joining());
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log"))).thenReturn(output);
+    long end = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
+    while (!"CANCELING".equals(records.require("sql_validations", id).path("state").asText())
+        && System.nanoTime() < end) Thread.sleep(50);
+    assertThat(records.require("sql_validations", id).path("state").asText())
+        .isEqualTo("CANCELING");
+    verify(rest).call(anyString(), eq("PATCH"), eq("/jobs/" + id + "?mode=cancel"), isNull());
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(1000);
+  }
+
+  /** 专用配置固定且旧运行资源必须显式重启，普通 Session 不强制日志配置。 */
+  @Test
+  void validationLogConfigurationIsFixedAndRequiredBeforeSubmission() {
+    var ordinary = sessions.configuration(new SessionRequest("ordinary", "", false, runtime(), 0));
+    assertThat(
+            yaml.parse(ordinary.path("yaml").asText()).at("/spec/logConfiguration").isMissingNode())
+        .isTrue();
+    startCluster();
+    assertThat(cluster.get().at("/spec/logConfiguration/log4j-console.properties").asText())
+        .contains("sql-validation.log", "FWV_EVENT|%sn|%enc{%m}{JSON}");
+    cluster.get().withObject("/spec").remove("logConfiguration");
+    var draft = draft();
+    assertThatThrownBy(
+            () -> executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()))
+        .hasMessageContaining("固定日志配置");
+    verify(rest, never()).upload(anyString(), any());
+  }
+
+  /** Session Pod 沿用所有者 UID 校验，伪造相同标签的 Pod 不能读取日志。 */
+  @Test
+  void sessionPodDiagnosticsCheckOwnershipAndLogPermissions() throws Exception {
+    startCluster();
+    var pods = mapper.createObjectNode();
+    var owned = pods.putArray("items").addObject();
+    owned
+        .withObject("/metadata")
+        .put("name", "session-tm")
+        .put("uid", "pod-uid")
+        .putArray("ownerReferences")
+        .addObject()
+        .put("kind", "FlinkDeployment")
+        .put("uid", "test-session-uid");
+    owned
+        .withObject("/spec")
+        .putArray("containers")
+        .addObject()
+        .put("name", "flink-main-container");
+    owned.withObject("/status").put("phase", "Running");
+    var other = owned.deepCopy();
+    other
+        .withObject("/metadata")
+        .put("name", "external-pod")
+        .putArray("ownerReferences")
+        .addObject()
+        .put("kind", "FlinkDeployment")
+        .put("uid", "external-uid");
+    ((ArrayNode) pods.path("items")).add(other);
+    when(kubernetes.call(eq("GET"), startsWith("/core/pods?"), isNull())).thenReturn(pods);
+    when(kubernetes.call(eq("GET"), eq("/core/pods/session-tm"), isNull())).thenReturn(owned);
+    when(kubernetes.call(eq("GET"), eq("/core/pods/external-pod"), isNull())).thenReturn(other);
+    when(kubernetes.text(startsWith("/core/pods/session-tm/log"), eq(4 * 1024 * 1024)))
+        .thenReturn("password=hide-me");
+    mvc.perform(post("/api/sessions/sql-validation/diagnostics").with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.pods.length()").value(1));
+    String body = "{\"pod\":\"session-tm\",\"container\":\"flink-main-container\"}";
+    mvc.perform(
+            post("/api/sessions/sql-validation/logs")
+                .with(csrf())
+                .contentType("application/json")
+                .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.text").value("password=******"));
+    mvc.perform(
+            post("/api/sessions/sql-validation/logs")
+                .with(csrf())
+                .contentType("application/json")
+                .content(body.replace("session-tm", "external-pod")))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            post("/api/sessions/sql-validation/logs")
+                .with(csrf())
+                .with(
+                    org.springframework.security.test.web.servlet.request
+                        .SecurityMockMvcRequestPostProcessors.user("viewer")
+                        .roles("VIEWER"))
+                .contentType("application/json")
+                .content(body))
+        .andExpect(status().isForbidden());
+    cluster.get().withObject("/metadata").put("uid", "replaced");
+    mvc.perform(post("/api/sessions/sql-validation/diagnostics").with(csrf()))
+        .andExpect(status().isConflict());
   }
 
   /** 缺失或格式错误的修订与请求编号在接口层拒绝，不调用运行服务。 */

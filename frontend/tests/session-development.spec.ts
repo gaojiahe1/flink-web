@@ -52,6 +52,7 @@ test('SQL 辅助面板可拖动和键盘缩放，名称与 JAR 一致，窄屏�
   )
   await page.getByText('SQL Runner 与语法验证器怎么用？', { exact: true }).click()
   await expect(page.locator('.sql-runtime-guide')).toContainText('SQL 验证专用 Session')
+  await expect(page.locator('.sql-runtime-guide')).toContainText('最多 1000')
   await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
   await expect(handle).toBeVisible()
   await handle.press('Home')
@@ -99,7 +100,7 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
     jobId: 'fixed-id',
     sqlId: sql.id,
     sqlRevision: 2,
-    limit: 100,
+    limit: 1000,
     state: 'RUNNING',
     message: '正在验证',
     rows: [],
@@ -198,9 +199,34 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
         desiredState: 'stopped',
       }
       data = session
-    } else if (path === '/api/sessions/sql-validation/status') data = session
+    } else if (path === '/api/sessions/sql-validation/diagnostics') {
+      data = {
+        queriedAt: new Date().toISOString(),
+        error: '',
+        events: [],
+        pods: [
+          {
+            name: 'validation-tm',
+            phase: 'Running',
+            node: 'test-node',
+            containers: ['flink-main-container'],
+            conditions: [],
+            states: [{ name: 'flink-main-container', ready: true, state: 'running', restarts: 0 }],
+          },
+        ],
+      }
+    } else if (path === '/api/sessions/sql-validation/logs')
+      data = { text: 'test log', queriedAt: new Date().toISOString() }
+    else if (path === '/api/sessions/sql-validation/status') data = session
     else if (path === '/api/sessions/sql-validation/start') {
-      session = { ...session, state: 'READY', desiredState: 'running', revision: 3 }
+      session = {
+        ...session,
+        uid: 'session-uid',
+        state: 'READY',
+        desiredState: 'running',
+        revision: 3,
+        queriedAt: new Date().toISOString(),
+      }
       data = session
     } else if (path.endsWith('/access'))
       data = { canEdit: true, canOperate: true, readGroups: [], operateGroups: [], editGroups: [] }
@@ -488,7 +514,7 @@ test('SQL 检查约束、Session 引导、结果页签与停止监听', async ({
   await verify.click()
   await expect(page.getByRole('tab', { name: '作业状态', exact: true })).toBeVisible()
   await expect(page.getByRole('tabpanel')).toContainText('有界 SQL 验证完成')
-  await page.getByRole('tab', { name: '作业数据 · 2 / 100' }).click()
+  await page.getByRole('tab', { name: '作业数据 · 2 / 1000', exact: true }).click()
   await expect(page.locator('.verification-table tbody tr')).toHaveCount(2)
   await page.screenshot({ path: 'test-results/sql-verification.png', fullPage: true })
   const reads = f.verificationReads()
@@ -540,10 +566,77 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
   await page.getByRole('button', { name: '启动', exact: true }).click()
   await expect(page.getByRole('row').filter({ hasText: 'validation' })).toContainText('已就绪')
   await expect(page.getByRole('button', { name: '配置', exact: true })).toBeDisabled()
+  const row = page.getByRole('row').filter({ hasText: 'validation' })
+  await expect(row.getByRole('link', { name: 'Flink UI ↗' })).toHaveAttribute(
+    'href',
+    '/flink-ui/sessions/sql-validation/',
+  )
+  await expect(row.locator('.badge').filter({ hasText: '已就绪' })).toHaveAttribute(
+    'title',
+    /查询时间/,
+  )
+  const beforeRowRefresh = f.reads()
+  await row.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(row.getByRole('button', { name: /秒后刷新|正在查询/ })).toBeDisabled()
+  expect(f.reads()).toBe(beforeRowRefresh)
+  await row.getByRole('button', { name: 'Pod 状态', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: /Pod 状态/ })
+  await expect(drawer).toContainText('validation-tm')
+  await expect(drawer).toContainText('test-node')
+  await drawer.getByRole('button', { name: '关闭 Pod 状态' }).click()
   await page.screenshot({ path: 'test-results/session-clusters.png', fullPage: true })
   const reads = f.reads()
   await page.waitForTimeout(1200)
   expect(f.reads()).toBe(reads)
+})
+
+test('SQL 格式化保留注释、引用和环境变量，支持撤销，失败保留原文', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  const editor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
+  await expect(editor).toContainText('CREATE TABLE')
+  const original =
+    "-- 保留注释\nCREATE TABLE `sink` (n INT, value STRING) WITH ('connector'='jdbc','password'='{{env:PASSWORD}}'); INSERT INTO `sink` VALUES (1,'a;''b');"
+  await editor.fill(original)
+  await page.getByRole('button', { name: '格式化 SQL', exact: true }).click()
+  await expect.poll(async () => (await editor.innerText()).split('\n').length).toBeGreaterThan(4)
+  await expect(editor).toContainText('保留注释')
+  await editor.press('Control+End')
+  await expect(editor).toContainText("'a;''b'")
+  await expect(editor).toContainText('{{env:PASSWORD}}')
+  await editor.press('Control+z')
+  await expect(editor).toContainText("WITH ('connector'='jdbc','password'")
+  await editor.fill("SELECT 'unfinished")
+  await editor.press('Control+Shift+F')
+  await expect(page.getByRole('alert')).toContainText('原文已保留')
+  await expect(editor).toHaveText("SELECT 'unfinished")
+})
+
+test('SQL 提示包含 Flink 类型、Connector 名称及对应选项，注释不提示', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  const editor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
+  await expect(editor).toContainText('CREATE TABLE')
+  await editor.fill('CREATE TABLE sink (n TIMESTAMP_L')
+  await editor.press('Control+End')
+  await editor.press('Control+Space')
+  await expect(page.getByRole('option', { name: /^TIMESTAMP_LTZ/ }).first()).toBeVisible()
+  await editor.press('Escape')
+  await editor.fill("CREATE TABLE sink (n INT) WITH ('connector' = 'k")
+  await editor.press('Control+End')
+  await editor.press('Control+Space')
+  await expect(page.getByRole('option', { name: /^kafka/ })).toBeVisible()
+  await page.getByRole('option', { name: /^kafka/ }).click()
+  await expect(editor).toContainText("'kafka")
+  await editor.fill("CREATE TABLE sink (n INT) WITH ('connector' = 'kafka', 'properties.b")
+  await editor.press('Control+End')
+  await editor.press('Control+Space')
+  await expect(page.getByRole('option', { name: /^properties.bootstrap.servers/ })).toBeVisible()
+  await editor.press('Escape')
+  await editor.fill("-- WITH ('connector' = 'k")
+  await editor.press('Control+End')
+  await editor.press('Control+Space')
+  await expect(page.locator('.cm-tooltip-autocomplete [role="option"]')).toHaveCount(0)
 })
 
 test('JAR 草稿删除支持取消、失败保留和成功移除', async ({ page }) => {

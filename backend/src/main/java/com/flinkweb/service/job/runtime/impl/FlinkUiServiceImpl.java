@@ -21,6 +21,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
   private static final org.slf4j.Logger log =
       org.slf4j.LoggerFactory.getLogger(FlinkUiServiceImpl.class);
   private final JobService jobs;
+  private final com.flinkweb.service.session.SessionClusterService sessions;
   private final String namespace;
   private final HttpClient client =
       HttpClient.newBuilder()
@@ -29,8 +30,12 @@ public class FlinkUiServiceImpl implements FlinkUiService {
           .build();
 
   /** 注入草稿查询服务并读取固定 Namespace，限制代理目标范围。 */
-  public FlinkUiServiceImpl(JobService jobs, PlatformProperties properties) {
+  public FlinkUiServiceImpl(
+      JobService jobs,
+      PlatformProperties properties,
+      com.flinkweb.service.session.SessionClusterService sessions) {
     this.jobs = jobs;
+    this.sessions = sessions;
     this.namespace = properties.namespace();
   }
 
@@ -44,8 +49,36 @@ public class FlinkUiServiceImpl implements FlinkUiService {
   public void proxy(String id, HttpServletRequest request, HttpServletResponse response)
       throws IOException {
     var job = jobs.get(id);
-    String prefix = "/flink-ui/" + id + "/",
-        path = request.getRequestURI().substring(prefix.length());
+    proxyResource(id, job.deploymentName(), "/flink-ui/" + id + "/", request, response);
+  }
+
+  /** 仅在 Session 身份仍有效时打开 UI，不接受外部目标地址。 */
+  public void sessionTrailingSlash(String id, HttpServletResponse response) throws IOException {
+    sessions.observedResource(id);
+    response.sendRedirect("/flink-ui/sessions/" + id + "/");
+  }
+
+  /** 每个 Session 请求重新核验标签和 UID，避免代理同名外部资源。 */
+  public void sessionProxy(String id, HttpServletRequest request, HttpServletResponse response)
+      throws IOException {
+    var resource = sessions.observedResource(id);
+    proxyResource(
+        "session:" + id,
+        resource.at("/metadata/name").asText(),
+        "/flink-ui/sessions/" + id + "/",
+        request,
+        response);
+  }
+
+  /** Job 与 Session 共用只读路径限制、响应限制及配置脱敏。 */
+  private void proxyResource(
+      String id,
+      String deploymentName,
+      String prefix,
+      HttpServletRequest request,
+      HttpServletResponse response)
+      throws IOException {
+    String path = request.getRequestURI().substring(prefix.length());
     if (!path.matches("[a-zA-Z0-9_./-]*") || path.contains("..") || path.contains("//"))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PROXY_PATH", "代理路径无效");
     if (path.matches(
@@ -53,7 +86,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       throw new BusinessException(
           HttpStatus.FORBIDDEN, "SENSITIVE_ENDPOINT", "平台代理不开放可能泄露密钥的环境和原始日志接口");
     // 目标地址仅由已登记作业名和固定 Namespace 生成，不接受外部目标 URL。
-    String host = job.deploymentName() + "-rest." + namespace + ".svc:8081";
+    String host = deploymentName + "-rest." + namespace + ".svc:8081";
     String query = request.getQueryString();
     String upstreamPath = path;
     URI target =
@@ -84,7 +117,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
           log.warn(
               "Flink UI upstream response jobId={} deployment={} path={} status={}",
               id,
-              job.deploymentName(),
+              deploymentName,
               upstreamPath,
               upstream.statusCode(),
               new IOException("Flink REST returned HTTP " + upstream.statusCode()));
@@ -101,7 +134,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
             log.warn(
                 "Flink UI unavailable: JobManager Metaspace exhausted jobId={} deployment={}",
                 id,
-                job.deploymentName(),
+                deploymentName,
                 new IOException("JobManager returned Metaspace error"));
             response.setHeader("X-Flink-UI-Error", "metaspace");
             response.setContentType("text/html;charset=UTF-8");
@@ -146,7 +179,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       log.warn(
           "Flink UI proxy interrupted jobId={} deployment={} path={}",
           id,
-          job.deploymentName(),
+          deploymentName,
           upstreamPath,
           ex);
       throw unavailable(ex);
@@ -154,7 +187,7 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       log.warn(
           "Flink UI proxy transport failed jobId={} deployment={} path={} errorType={}",
           id,
-          job.deploymentName(),
+          deploymentName,
           upstreamPath,
           ex.getClass().getSimpleName(),
           ex);

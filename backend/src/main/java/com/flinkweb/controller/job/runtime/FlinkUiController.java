@@ -15,6 +15,21 @@ public class FlinkUiController {
     this.service = service;
   }
 
+  /** 将 Session UI 地址规范化为带尾斜杠的路由。 */
+  @GetMapping("/flink-ui/sessions/{id}")
+  public void sessionTrailingSlash(@PathVariable String id, HttpServletResponse response)
+      throws IOException {
+    service.sessionTrailingSlash(id, response);
+  }
+
+  /** Session 复用同源只读代理，业务服务重新核验资源身份。 */
+  @GetMapping("/flink-ui/sessions/{id}/**")
+  public void sessionProxy(
+      @PathVariable String id, HttpServletRequest request, HttpServletResponse response)
+      throws IOException {
+    service.sessionProxy(id, request, response);
+  }
+
   /** 将不带尾斜杠的 UI 地址规范化，保证相对静态资源路径正确。 */
   @GetMapping("/flink-ui/{id}")
   public void trailingSlash(@PathVariable String id, HttpServletResponse response)

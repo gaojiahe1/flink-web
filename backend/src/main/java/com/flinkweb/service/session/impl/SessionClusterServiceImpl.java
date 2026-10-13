@@ -122,8 +122,7 @@ public class SessionClusterServiceImpl implements SessionClusterService {
     node.withObject("/metadata/labels").remove("flink-web/editor");
     node.withObject("/spec").remove("job");
     if (record.path("validation").asBoolean()) {
-      node.withObject("/spec/flinkConfiguration").put("taskmanager.system-out.mode", "LOG");
-      node.withObject("/spec/flinkConfiguration").put("web.refresh-interval", "1000");
+      com.flinkweb.config.sql.SqlValidationLog.configure(node);
     }
     runtimeYaml.verifyManaged(options, node, true);
     return node;
@@ -140,6 +139,13 @@ public class SessionClusterServiceImpl implements SessionClusterService {
                 && !record.path("uid").asText().equals(current.at("/metadata/uid").asText())))
       fail("SESSION_IDENTITY_CONFLICT", "Session 资源身份已改变，请检查集群，禁止覆盖同名外部资源");
     return current;
+  }
+
+  /** 对共享诊断和代理仍执行 Session 身份核验，禁止访问同名替换资源。 */
+  public synchronized JsonNode observedResource(String id) {
+    var resource = current(id, records.require("sessions", id));
+    if (resource.isMissingNode()) fail("SESSION_MISSING", "Session 资源不存在，请启动后刷新");
+    return resource;
   }
 
   /** 按需刷新状态，保留 Operator 错误摘要并对输出脱敏。 */
@@ -272,7 +278,14 @@ public class SessionClusterServiceImpl implements SessionClusterService {
       fail(
           "VALIDATION_SESSION_NOT_READY",
           "SQL 验证 Session 尚未就绪，请前往 Session 集群启动或检查错误：" + result.path("message").asText());
+    if (!com.flinkweb.config.sql.SqlValidationLog.configured(observedResource("sql-validation")))
+      fail("VALIDATION_LOG_CONFIGURATION_REQUIRED", "验证 Session 尚未使用固定日志配置，请停止并重新启动该集群后再验证");
     return result;
+  }
+
+  /** 验证生命周期内部查询不附带 TaskManager 数量观测。 */
+  public ObjectNode validationStatus() {
+    return status("sql-validation", false);
   }
 
   /** 服务端默认值可增加，但提交字段不允许被修改或裁剪。 */

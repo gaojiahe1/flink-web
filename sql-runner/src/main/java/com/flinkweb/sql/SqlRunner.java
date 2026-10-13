@@ -38,7 +38,7 @@ public final class SqlRunner {
     return configuration;
   }
 
-  /** 将每个写入目标替换成临时 Print 表；原 Sink 不发生写入，每个输出最多一百条。 */
+  /** 将写入目标替换成临时 Print 表，保留原查询的变更流，由平台按总输出限额取消。 */
   static StatementSet prepareValidation(
       TableEnvironment environment,
       List<String> statements,
@@ -74,7 +74,7 @@ public final class SqlRunner {
                 .build());
         // INSERT OVERWRITE 在验证中变为 INTO；临时表不继承原 Sink 的连接参数与主键约束。
         String columns = match.group(2) == null ? "" : match.group(2);
-        Table query = environment.sqlQuery("SELECT * FROM (" + match.group(3) + ") LIMIT 100");
+        Table query = environment.sqlQuery(match.group(3));
         String view = "fw_query_" + validation + "_" + count;
         environment.createTemporaryView(view, query);
         String fields =

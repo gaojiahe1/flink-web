@@ -18,6 +18,9 @@ public interface SessionClusterService {
   /** 刷新单个 Session 的真实状态。 */
   ObjectNode status(String id);
 
+  /** 核验当前资源标签及绑定 UID，供诊断和只读代理复用。 */
+  com.fasterxml.jackson.databind.JsonNode observedResource(String id);
+
   /** 创建 Session 资源并返回受理状态。 */
   ObjectNode start(String id, long revision);
 
@@ -29,4 +32,7 @@ public interface SessionClusterService {
 
   /** 获取可用于 SQL 验证的专用配置。 */
   ObjectNode validationCluster();
+
+  /** 验证监听只核对专用集群状态和 UID，不轮询列表数量。 */
+  ObjectNode validationStatus();
 }

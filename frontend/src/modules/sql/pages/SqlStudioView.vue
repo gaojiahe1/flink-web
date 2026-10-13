@@ -238,6 +238,7 @@ const check = ref<{
   message: string
 } | null>(null)
 const verification = ref<SqlVerification | null>(null)
+const sqlEditor = ref<InstanceType<typeof CodeEditor>>()
 const resultTab = ref('status')
 const needsSession = ref(false)
 const verifying = computed(
@@ -885,7 +886,7 @@ watch(
             "
             :title="
               check
-                ? '提交到 SQL 验证 Session，最多展示 100 条数据'
+                ? '提交到 SQL 验证 Session，最多展示 1000 条变更数据'
                 : '请先通过 SQL 检查；修改 SQL 或配置后需重新检查'
             "
             @click="verifySql"
@@ -931,8 +932,17 @@ watch(
         <button class="text-button" :disabled="!runtime.catalogId || busy" @click="previewCatalog">
           初始化 SQL
         </button>
+        <button
+          class="text-button"
+          :disabled="!editable || loading || busy"
+          title="Ctrl / Cmd + Shift + F"
+          @click="sqlEditor?.format()"
+        >
+          格式化 SQL
+        </button>
       </div>
       <CodeEditor
+        ref="sqlEditor"
         data-field="sql"
         v-model="form.sql"
         language="sql"
@@ -966,8 +976,8 @@ watch(
           </p>
           <p>
             试运行使用 SQL 验证：管理员先配置并启动与 SQL 镜像相同的 SQL 验证专用
-            Session。检查通过后点击 SQL 验证，结果在本页下方查看，最多 100
-            条、两分钟，并将写入目标换为控制台输出。
+            Session。检查通过后点击 SQL 验证，结果在本页下方查看，最多 1000
+            条变更事件、两分钟，并将写入目标换为固定日志输出；旧 Runner 需重新选择新版文件。
           </p>
         </details>
       </div>
@@ -1017,7 +1027,8 @@ watch(
           </p>
           <p class="verification-message">{{ verification.message }}</p>
           <small class="muted"
-            >Flink Job ID：{{ verification.jobId }} · 达到 100 条或两分钟后自动取消。</small
+            >Flink Job ID：{{ verification.jobId }} · 达到 1000
+            条或两分钟后自动取消；平台同时仅验证一个 SQL。</small
           >
         </div>
         <div v-else role="tabpanel" class="table-wrap verification-table">
@@ -1036,6 +1047,11 @@ watch(
                 <td>Sink {{ row.sink }}</td>
                 <td>
                   <code>{{ row.kind }}</code>
+                  {{
+                    { '+I': '新增', '-U': '更新前', '+U': '更新后', '-D': '删除' }[
+                      row.kind as '+I' | '-U' | '+U' | '-D'
+                    ] || ''
+                  }}
                 </td>
                 <td class="verification-value">{{ row.value }}</td>
               </tr>

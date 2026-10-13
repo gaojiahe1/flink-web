@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import com.flinkweb.client.flink.SessionRestClient;
 import com.flinkweb.collector.job.DeploymentYamlSnapshot;
+import com.flinkweb.config.sql.SqlValidationLog;
 import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.repository.metadata.RecordRepository;
 import com.flinkweb.service.audit.AuditService;
@@ -21,7 +22,7 @@ import java.util.regex.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-/** 提交短时验证任务，按需读取 TaskManager 日志，结果不落库，一百条或两分钟后取消。 */
+/** 提交短时验证任务，监听固定 TaskManager 日志，结果不落库，一千条或两分钟后取消。 */
 @Service
 public class SqlExecutionServiceImpl implements SqlExecutionService {
   private final RecordRepository records;
@@ -35,7 +36,15 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
   private final DeploymentYamlSnapshot secrets;
   private final AuditService audit;
   private final Map<String, ArrayNode> rows = new HashMap<>();
-  private final Map<String, Map<String, Integer>> offsets = new HashMap<>();
+  private final Map<String, Map<String, Long>> offsets = new HashMap<>();
+  private final Map<String, ScheduledFuture<?>> listeners = new HashMap<>();
+  private final ScheduledExecutorService collection =
+      Executors.newSingleThreadScheduledExecutor(
+          r -> {
+            Thread thread = new Thread(r, "sql-validation-log");
+            thread.setDaemon(true);
+            return thread;
+          });
   private final ScheduledExecutorService deadlines =
       Executors.newSingleThreadScheduledExecutor(
           r -> {
@@ -81,6 +90,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
   @PreDestroy
   public void close() {
     deadlines.shutdownNow();
+    collection.shutdownNow();
   }
 
   /** 提交时重新检查保存修订和 SQL，服务端不信任浏览器的检查通过标记。 */
@@ -143,7 +153,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
             .put("state", "SUBMITTING")
             .put("message", "正在提交验证")
             .put("deadline", Instant.now().plusSeconds(120).toString())
-            .put("limit", 100);
+            .put("limit", SqlValidationLog.ROW_LIMIT);
     run = records.save("sql_validations", id, run, 0);
     rows.put(id, mapper.createArrayNode());
     offsets.put(id, new HashMap<>());
@@ -209,9 +219,15 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
   /** 查询运行状态和带本次标识的数据，达到固定上限主动取消。 */
   public synchronized ObjectNode status(String id) {
     var run = require(id);
+    return observe(run);
+  }
+
+  /** 用户显式验证期间由后台和页面复用同一观察流程；后台不扩大读取权限。 */
+  private ObjectNode observe(ObjectNode run) {
+    String id = run.path("id").asText();
     if (TERMINAL.contains(run.path("state").asText())) return visible(run);
     try {
-      var cluster = sessions.status("sql-validation");
+      var cluster = sessions.validationStatus();
       if (!run.path("sessionUid").asText().equals(cluster.path("uid").asText())
           || "STOPPED".equals(cluster.path("state").asText()))
         return finish(run, "ABORTED", "验证 Session 已停止或被替换");
@@ -228,7 +244,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         logError = "；暂未读到日志：" + redact(ex.getMessage());
       }
       // Flink UI 缓存和日志刷新可能晚于有界任务结束，给最后一批 Print 结果留出读取时间。
-      if ("FINISHED".equals(state) && rows.get(id).size() < 100) {
+      if ("FINISHED".equals(state) && rows.get(id).size() < SqlValidationLog.ROW_LIMIT) {
         if (!run.has("terminalObservedAt")) run.put("terminalObservedAt", Instant.now().toString());
         if (Instant.now()
                 .isBefore(Instant.parse(run.path("terminalObservedAt").asText()).plusSeconds(3))
@@ -237,6 +253,8 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
           return visible(records.save("sql_validations", id, run, run.path("revision").asLong()));
         }
       }
+      if (rows.get(id).size() >= SqlValidationLog.ROW_LIMIT && !run.has("cancelTarget"))
+        return stop(run, "COMPLETED", "已展示 1000 条验证数据，正在取消验证任务");
       if ("FINISHED".equals(state) || "CANCELED".equals(state))
         return finish(
             run,
@@ -246,9 +264,8 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         run.put("state", "CANCELING");
         return visible(records.save("sql_validations", id, run, run.path("revision").asLong()));
       }
-      if (rows.get(id).size() >= 100) return stop(run, "COMPLETED", "已展示 100 条验证数据，正在取消验证任务");
       run.put("state", state)
-          .put("message", "正在验证，已获取 " + rows.get(id).size() + " / 100 条数据" + logError);
+          .put("message", "正在验证，已获取 " + rows.get(id).size() + " / 1000 条数据" + logError);
     } catch (Exception ex) {
       if (ex instanceof BusinessException business
           && Set.of("NOT_FOUND", "SESSION_IDENTITY_CONFLICT").contains(business.code()))
@@ -277,30 +294,50 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     return run;
   }
 
-  /** 从各 TaskManager 日志只提取本次标识并按已读取数量去重，重复业务行仍保留。 */
+  /** 从轮转副本和当前固定文件提取本次标识，按事件顺序号去重，保留四种变更及重复业务行。 */
   private void collect(ObjectNode run) {
     String id = run.path("id").asText();
     var result = rows.computeIfAbsent(id, k -> mapper.createArrayNode());
     var read = offsets.computeIfAbsent(id, k -> new HashMap<>());
     String deployment = run.path("deploymentName").asText();
-    Pattern pattern =
+    Pattern recordsPattern = Pattern.compile("(?m)^FWV_EVENT\\|(\\d+)\\|([^\\r\\n]*)\\r?\\n");
+    Pattern rowPattern =
         Pattern.compile(
-            "FWV_" + id + "_(\\d+)(?::\\d+)?>\\s*([+-][IUD])\\[(.*?)](?=\\r?\\n|$)",
-            Pattern.DOTALL);
+            "^FWV_" + id + "_(\\d+)(?::\\d+)?>\\s*(\\+I|-U|\\+U|-D)\\[(.*)]$", Pattern.DOTALL);
     for (var tm : rest.call(deployment, "GET", "/taskmanagers", null).path("taskmanagers")) {
       String key = tm.path("id").asText();
-      String log = rest.log(deployment, key);
-      int count = 0, previous = read.getOrDefault(key, 0);
-      Matcher match = pattern.matcher(log);
-      while (match.find()) {
-        if (++count <= previous || result.size() >= 100) continue;
-        result
-            .addObject()
-            .put("sink", Integer.parseInt(match.group(1)) + 1)
-            .put("kind", match.group(2))
-            .put("value", redact(match.group(3)));
+      long previous = read.getOrDefault(key, 0L);
+      Set<String> available = new HashSet<>();
+      for (var file :
+          rest.call(deployment, "GET", "/taskmanagers/" + key + "/logs", null).path("logs"))
+        available.add(file.path("name").asText());
+      for (String filename : SqlValidationLog.FILES) {
+        if (!available.contains(filename)) continue;
+        Matcher match = recordsPattern.matcher(rest.validationLog(deployment, key, filename));
+        while (match.find()) {
+          long sequence = Long.parseLong(match.group(1));
+          if (sequence <= previous || result.size() >= SqlValidationLog.ROW_LIMIT) continue;
+          String message;
+          try {
+            message = mapper.readTree("\"" + match.group(2) + "\"").asText();
+          } catch (java.io.IOException ex) {
+            continue;
+          }
+          Matcher row = rowPattern.matcher(message);
+          if (!row.matches()) continue;
+          result
+              .addObject()
+              .put("sink", Integer.parseInt(row.group(1)) + 1)
+              .put("kind", row.group(2))
+              .put("value", redact(row.group(3)));
+          previous = sequence;
+          if (result.size() >= SqlValidationLog.ROW_LIMIT) {
+            read.put(key, previous);
+            return;
+          }
+        }
       }
-      read.put(key, Math.max(previous, count));
+      read.put(key, previous);
     }
   }
 
@@ -313,6 +350,30 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
             Duration.between(Instant.now(), Instant.parse(run.path("deadline").asText()))
                 .toMillis());
     deadlines.schedule(() -> expire(id), delay, TimeUnit.MILLISECONDS);
+    listen(id);
+  }
+
+  /** 显式验证期间每两秒监听一次；浏览器关闭仍执行行数上限，完成后停止。 */
+  private void listen(String id) {
+    listeners.put(id, collection.schedule(() -> collectNext(id), 2, TimeUnit.SECONDS));
+  }
+
+  /** 后台只处理已授权运行，不返回结果给其他用户，失败由原状态流程脱敏处理。 */
+  private synchronized void collectNext(String id) {
+    listeners.remove(id);
+    var run = records.find("sql_validations", id);
+    if (run == null || TERMINAL.contains(run.path("state").asText())) return;
+    try {
+      observe(run);
+    } catch (Exception ex) {
+      org.slf4j.LoggerFactory.getLogger(SqlExecutionServiceImpl.class)
+          .warn(
+              "SQL validation observation failed validationId={} type={}",
+              id,
+              ex.getClass().getSimpleName());
+    }
+    var latest = records.find("sql_validations", id);
+    if (latest != null && !TERMINAL.contains(latest.path("state").asText())) listen(id);
   }
 
   /** 到期动作属于用户提交验证时已授权的清理，失败保留取消状态供后续请求重试。 */
@@ -343,7 +404,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
   /** 固定 JobID 和 Session UID 保护取消操作，不影响其他任务或新建集群。 */
   private ObjectNode stop(ObjectNode run, String state, String message) {
-    var cluster = sessions.status("sql-validation");
+    var cluster = sessions.validationStatus();
     if (!run.path("sessionUid").asText().equals(cluster.path("uid").asText())
         || "STOPPED".equals(cluster.path("state").asText()))
       return finish(run, "ABORTED", "验证 Session 已停止或被替换");
@@ -354,7 +415,10 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     }
     if (Set.of("CANCELED", "FINISHED").contains(observed.path("state").asText()))
       return finish(
-          run, run.path("cancelTarget").asText(observed.path("state").asText()), "验证任务已结束");
+          run,
+          run.path("cancelTarget")
+              .asText("COMPLETED".equals(state) ? state : observed.path("state").asText()),
+          "验证任务已结束");
     rest.call(deployment, "PATCH", "/jobs/" + run.path("jobId").asText() + "?mode=cancel", null);
     run.put("state", "CANCELING").put("cancelTarget", state).put("message", message);
     return visible(
@@ -364,6 +428,8 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
 
   /** 保存结果状态并清理已上传 JAR；结果数据仅保留于本进程内。 */
   private ObjectNode finish(ObjectNode run, String state, String message) {
+    var listener = listeners.remove(run.path("id").asText());
+    if (listener != null) listener.cancel(false);
     run.put("state", state).put("message", message);
     var saved =
         records.save(
@@ -404,7 +470,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
                 ex.getClass().getSimpleName());
       }
     String id = run.path("id").asText();
-    if (rows.size() > 100) {
+    if (rows.size() > 10) {
       var retained = new HashSet<String>();
       retained.add(id);
       for (var old : records.list("sql_validations"))

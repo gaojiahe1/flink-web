@@ -2,6 +2,20 @@
 
 初始治理记录日期：2026-10-12。基线 `2e21351`；治理分支 `codex/project-governance-20261012`。之后的验证按各小节日期、基线和环境范围理解，不提升旧聊天报告为本轮结果。
 
+## Session Pod 与 SQL 固定日志验证（2026-10-13）
+
+基线本地 master `ff3e9fc`，开发分支 `codex/session-observation-sql-logs`；开始工作区干净。从知识索引只读取 SQL/Session、作业诊断及相关代码，没有读取全量历史。
+
+- 后端完整 package：194 项，193 通过，0 失败/错误；两份镜像内精确 Parser 已启用，独立 MinIO 用例未启用。Runner 8 项通过；JDK 8u361/17.0.10 各真实执行三行，Runner/Parser major52，两个精确 Parser 共 32 次协议检查通过。
+- 前端类型/生产构建/全源格式通过；Session/SQL/模板/文件选择 29 项，实际 app/web 上 Catalog/JAR/SQL/工作台 10 项通过。覆盖格式化注释/引用/环境变量/token 保留、撤销/失败保护、快捷键、Flink 类型/Connector 上下文提示及注释屏蔽。
+- Session 诊断所有者链、外部 Pod 拒绝、日志脱敏/角色权限、替换 UID 拦截、只读代理路径/基路径通过。固定配置拒绝旧运行资源、四种变更、跨 Sink 上限、重复行/多行/半条/轮转与不依赖浏览器的后台取消通过；取消确认前拒绝第二份验证。
+- 真实 Flink 1.20.5/JDK17 Session：使用最终镜像配置 API 生成的 log4j-console.properties，经固定命名文件 REST 读取 Debezium 事件，得到 +I/-U/+U/-D 和中文多行；原 Sink 使用不存在的连接器仍不写入。脚本在累计 1000 行时发送取消并确认 CANCELED。平台后台自动取消由上述真实 SQLite/模拟 REST 集成测试证明，不能将这两层描述成生产平台与真实集群的整体联调。
+- 最终 app/web 为 linux/amd64、Kylin V10 SP3、UID/GID10001；只读根文件系统/临时 SQLite、真实加密登录、Session 本地配置及 dry-run/启停、Pod 抽屉、逐行冷却、1.20.5 PARSER、Runner 下载哈希一致通过。Kubernetes 为本任务隔离协议替身，未访问现场。收尾历史缓存限额/使用说明修正后，28 项 Session 集成、2 项页面及最终镜像接口/页面重新通过。
+
+镜像摘要、发布与清理结果见 [部署指南](../deployment.md)。沿用 app/web:0.0.4，不改 latest/downloader。现场 Pod/RBAC、真实 Operator/CRD/固定副本数和其他 Flink/Connector 版本未验收；既有验证 Session 需停止再启动以应用固定配置，旧 Runner 需显式重新选择。
+
+收尾：临时 Flink 与平台验证容器/网络、本次 Vite 服务、检查/临时基础标签及本轮已确认的中间镜像已清理；九项已确认的私有构建缓存回收 164.9 MB，最终标记镜像、已有 registry、共享依赖/缓存与原数据库/备份保留。本任务独占日志/数据库/凭据占位文件和打包副本清理。
+
 ## Session/SQL YAML 与启动诊断（2026-10-13）
 
 基线本地 master `bbe861e`，开发分支 `codex/session-sql-yaml`；开始工作区干净，master 已包含此前修复分支。本轮从知识索引定向恢复 SQL/Session/配置上下文，未读取全量历史或扫描全量运行代码。

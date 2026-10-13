@@ -27,6 +27,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
   private final ObjectMapper mapper;
   private final RecordRepository records;
   private final SecretCipher cipher;
+  private final com.flinkweb.service.session.SessionClusterService sessions;
 
   /** 注入集群、作业身份和脱敏依赖。 */
   public DiagnosticServiceImpl(
@@ -36,7 +37,8 @@ public class DiagnosticServiceImpl implements DiagnosticService {
       AccessService access,
       ObjectMapper mapper,
       RecordRepository records,
-      SecretCipher cipher) {
+      SecretCipher cipher,
+      com.flinkweb.service.session.SessionClusterService sessions) {
     this.client = client;
     this.jobs = jobs;
     this.ownership = ownership;
@@ -44,6 +46,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     this.mapper = mapper;
     this.records = records;
     this.cipher = cipher;
+    this.sessions = sessions;
   }
 
   /** 手动查询当前作业事件与 Pod 概览，不返回容器环境变量。 */
@@ -51,6 +54,16 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     var job = jobs.get(id);
     var deployment = client.require(job.deploymentName());
     ownership.assertManaged(deployment, id);
+    return inspectResource(deployment);
+  }
+
+  /** 共享 Session 诊断不需要虚构作业草稿，资源身份由 Session 服务核验。 */
+  public ObjectNode inspectSession(String id) {
+    return inspectResource(sessions.observedResource(id));
+  }
+
+  /** 对已核验工作负载复用相同的 Pod、容器和事件投影。 */
+  private ObjectNode inspectResource(JsonNode deployment) {
     String uid = deployment.path("metadata").path("uid").asText();
     var result =
         mapper
@@ -62,7 +75,9 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         client
             .call(
                 "GET",
-                client.core() + "/pods?labelSelector=" + encode("app=" + job.deploymentName()),
+                client.core()
+                    + "/pods?labelSelector="
+                    + encode("app=" + deployment.at("/metadata/name").asText()),
                 null)
             .path("items")) {
       if (!belongs(pod, uid, 0, new HashSet<>())) continue;
@@ -116,7 +131,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     addEvents(events, uid);
     for (JsonNode pod : pods) {
       var resource = client.call("GET", client.core() + "/pods/" + pod.path("name").asText(), null);
-      if (!resource.isMissingNode())
+      if (!resource.isMissingNode() && belongs(resource, uid, 0, new HashSet<>()))
         addEvents(events, resource.path("metadata").path("uid").asText());
     }
     return result;
@@ -130,6 +145,27 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     var job = jobs.get(id);
     var deployment = client.require(job.deploymentName());
     ownership.assertManaged(deployment, id);
+    return logResource(id, "JOB_LOG_READ", deployment, podName, container, lines, previous);
+  }
+
+  /** Session 日志仅由控制器允许管理员及运维读取，仍校验 Pod 所有者链。 */
+  public ObjectNode sessionLog(
+      String id, String podName, String container, int lines, boolean previous) {
+    return logResource(
+        id, "SESSION_LOG_READ", sessions.observedResource(id), podName, container, lines, previous);
+  }
+
+  /** 核对容器归属后读取受限日志并审计，不返回 Secret 值。 */
+  private ObjectNode logResource(
+      String id,
+      String action,
+      JsonNode deployment,
+      String podName,
+      String container,
+      int lines,
+      boolean previous) {
+    if (!podName.matches("[a-z0-9][a-z0-9.-]{0,252}")
+        || !container.matches("[a-z0-9][a-z0-9-]{0,62}")) fail("Pod 或容器名称无效");
     var pod = client.call("GET", client.core() + "/pods/" + podName, null);
     if (pod.isMissingNode()
         || !belongs(pod, deployment.path("metadata").path("uid").asText(), 0, new HashSet<>()))
@@ -157,7 +193,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         UUID.randomUUID().toString(),
         mapper
             .createObjectNode()
-            .put("action", "JOB_LOG_READ")
+            .put("action", action)
             .put("target", id)
             .put("actor", access.actor())
             .put("outcome", "SUCCESS"),

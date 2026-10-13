@@ -7,6 +7,7 @@ import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import PodStatusDrawer from '../../job-management/components/PodStatusDrawer.vue'
 import { parseDeploymentYaml } from '../../../shared/utils/deploymentYaml'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
 import { emptyPodTemplates } from '../../../shared/utils/podTemplates'
@@ -64,10 +65,12 @@ const form = reactive(defaults())
 const editorMode = ref<'form' | 'yaml'>('form'),
   deploymentYaml = ref('')
 const hasValidation = computed(() => clusters.value.some((c) => c.validation))
+const podCluster = ref<SessionCluster | null>(null)
 const labels: Record<string, string> = {
   READY: '已就绪',
   STARTING: '启动中',
   DEPLOYING: '部署中',
+  DEPLOYED_NOT_READY: '已部署，尚未就绪',
   STOPPED: '已停止',
   STOPPING: '停止中',
   MISSING: '资源缺失',
@@ -98,6 +101,28 @@ async function load() {
       }
     }),
   )
+}
+async function refreshCluster(item: SessionCluster) {
+  try {
+    const latest = await sessionsApi.status(item.id)
+    delete item.registeredTaskManagers
+    delete item.configuredTaskManagers
+    delete item.taskManagerMessage
+    Object.assign(item, latest)
+  } catch (e) {
+    item.state = 'ERROR'
+    item.message = (e as Error).message
+  }
+}
+function stateDescription(item: SessionCluster) {
+  return [
+    labels[item.state || ''] || item.state || '尚未查询',
+    item.message,
+    item.taskManagerMessage,
+    item.queriedAt ? '查询时间：' + new Date(item.queriedAt).toLocaleString() : '尚未查询',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 function open(item?: SessionCluster) {
   clearValidationErrors()
@@ -252,8 +277,9 @@ onMounted(async () => {
   <p v-if="message" class="notice">{{ message }}</p>
   <section v-if="!editing" class="panel">
     <div class="filter-bar">
-      <span class="muted">{{ hasValidation ? 'SQL 验证集群已登记' : '尚未创建 SQL 验证集群' }}</span
-      ><ManualRefreshButton :action="() => run(load)" :disabled="busy" />
+      <span class="muted">{{
+        hasValidation ? 'SQL 验证集群已登记' : '尚未创建 SQL 验证集群'
+      }}</span>
     </div>
     <p v-if="loading" class="empty-state">正在加载…</p>
     <div v-else-if="clusters.length" class="table-wrap">
@@ -290,6 +316,7 @@ onMounted(async () => {
             <td>
               <span
                 class="badge"
+                :title="stateDescription(item)"
                 :class="{ running: item.state === 'READY', failed: item.state === 'ERROR' }"
                 >{{ labels[item.state || ''] || item.state || '尚未查询' }}</span
               ><small v-if="item.message" class="table-description">{{ item.message }}</small>
@@ -317,6 +344,13 @@ onMounted(async () => {
             </td>
             <td>
               <div class="row-actions">
+                <button
+                  class="text-button"
+                  :disabled="busy || !item.uid || ['STOPPED', 'MISSING'].includes(item.state || '')"
+                  @click="podCluster = item"
+                >
+                  Pod 状态
+                </button>
                 <button
                   v-if="operator"
                   class="text-button"
@@ -353,6 +387,15 @@ onMounted(async () => {
                 >
                   删除
                 </button>
+                <a
+                  v-if="item.uid && !['STOPPED', 'MISSING'].includes(item.state || '')"
+                  class="text-button"
+                  :href="'/flink-ui/sessions/' + encodeURIComponent(item.id) + '/'"
+                  target="_blank"
+                  rel="noopener"
+                  >Flink UI ↗</a
+                >
+                <ManualRefreshButton :action="() => refreshCluster(item)" :disabled="busy" />
               </div>
             </td>
           </tr>
@@ -363,7 +406,15 @@ onMounted(async () => {
       暂无 Session 集群。管理员可创建普通 Session 或唯一的 SQL 验证集群。
     </p>
   </section>
-  <form v-else class="job-editor-form session-editor" @submit.prevent="save">
+  <PodStatusDrawer
+    v-if="podCluster"
+    :key="podCluster.id"
+    :job="podCluster"
+    kind="session"
+    :can-read-logs="!!operator"
+    @close="podCluster = null"
+  />
+  <form v-if="editing" class="job-editor-form session-editor" @submit.prevent="save">
     <div class="filter-bar" role="group" aria-label="Session 配置编辑方式">
       <button
         type="button"
@@ -443,6 +494,10 @@ onMounted(async () => {
                   ? '已存在 SQL 验证集群，本集群作为普通 Session 使用。'
                   : 'SQL 验证须选择与此集群相同的运行镜像；普通 Session 用于其他常驻任务。'
               }}
+            </p>
+            <p v-if="form.validation" class="muted">
+              专用集群使用平台固定日志配置；验证按变更事件累计，1000
+              行或两分钟后停止，同时仅允许一个 SQL 验证。
             </p>
           </div>
         </section>

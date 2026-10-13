@@ -35,7 +35,12 @@ class FlinkUiProxyTest {
                 Instant.now(),
                 7,
                 "flink-0000007"));
-    var service = new FlinkUiServiceImpl(jobs, new PlatformProperties("flink-ns", null, null));
+    var sessions = mock(com.flinkweb.service.session.SessionClusterService.class);
+    var resource = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+    resource.withObject("/metadata").put("name", "fw-session-sql-validation");
+    when(sessions.observedResource("sql-validation")).thenReturn(resource);
+    var service =
+        new FlinkUiServiceImpl(jobs, new PlatformProperties("flink-ns", null, null), sessions);
     ReflectionTestUtils.setField(service, "client", client);
     return service;
   }
@@ -66,6 +71,38 @@ class FlinkUiProxyTest {
         .isEqualTo("http://flink-0000007-rest.flink-ns.svc:8081/");
     assertThat(output.getContentAsString()).contains("<base href=\"/flink-ui/job-id/\">");
     assertThat(output.getStatus()).isEqualTo(200);
+  }
+
+  /** Session 目标固定且重写基路径，敏感接口沿用同一只读限制。 */
+  @Test
+  void sessionUsesVerifiedTargetAndRestrictsSensitivePaths() throws Exception {
+    var client = mock(HttpClient.class);
+    var upstream = upstream(200, "text/html", "<base href=\"/\">");
+    when(client.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(upstream);
+    var service = service(client);
+    var output = new MockHttpServletResponse();
+    service.sessionProxy(
+        "sql-validation",
+        new MockHttpServletRequest("GET", "/flink-ui/sessions/sql-validation/"),
+        output);
+    var request = ArgumentCaptor.forClass(HttpRequest.class);
+    verify(client).send(request.capture(), any(HttpResponse.BodyHandler.class));
+    assertThat(request.getValue().uri().toString())
+        .isEqualTo("http://fw-session-sql-validation-rest.flink-ns.svc:8081/");
+    assertThat(output.getContentAsString())
+        .contains("<base href=\"/flink-ui/sessions/sql-validation/\">");
+    assertThatThrownBy(
+            () ->
+                service.sessionProxy(
+                    "sql-validation",
+                    new MockHttpServletRequest(
+                        "GET",
+                        "/flink-ui/sessions/sql-validation/taskmanagers/tm/logs/sql-validation.log"),
+                    new MockHttpServletResponse()))
+        .hasMessageContaining("不开放");
+    var redirect = new MockHttpServletResponse();
+    service.sessionTrailingSlash("sql-validation", redirect);
+    assertThat(redirect.getRedirectedUrl()).isEqualTo("/flink-ui/sessions/sql-validation/");
   }
 
   /** REST 子路径及查询参数不添加代理前缀，上游错误可以区分于传输错误。 */

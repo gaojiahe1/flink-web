@@ -8,6 +8,12 @@ public interface DiagnosticService {
   /** 手动查询当前作业事件与 Pod 概览，不返回容器环境变量。 */
   ObjectNode inspect(String id);
 
-  /** 获取最多 1000 行、256 KiB 的日志，Pod 与容器必须属于该作业。 */
+  /** 获取最多 10000 行、4 MiB 的日志，Pod 与容器必须属于该作业。 */
   ObjectNode log(String id, String podName, String container, int lines, boolean previous);
+
+  /** 核验 Session 身份后读取同格式的 Pod 与事件。 */
+  ObjectNode inspectSession(String id);
+
+  /** 读取已核验 Session 所属 Pod 日志，沿用脱敏和长度限制。 */
+  ObjectNode sessionLog(String id, String podName, String container, int lines, boolean previous);
 }

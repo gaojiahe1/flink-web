@@ -15,10 +15,33 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/sessions")
 public class SessionClusterController {
   private final SessionClusterService sessions;
+  private final com.flinkweb.service.job.runtime.DiagnosticService diagnostics;
 
   /** 注入 Session 集群服务。 */
-  public SessionClusterController(SessionClusterService sessions) {
+  public SessionClusterController(
+      SessionClusterService sessions,
+      com.flinkweb.service.job.runtime.DiagnosticService diagnostics) {
     this.sessions = sessions;
+    this.diagnostics = diagnostics;
+  }
+
+  /** 按需读取 Session 的 Pod 与事件，沿用作业诊断响应。 */
+  @PostMapping("/{id}/diagnostics")
+  public ApiResponse<ObjectNode> diagnostics(@PathVariable String id) {
+    return ApiResponse.ok(diagnostics.inspectSession(id));
+  }
+
+  /** 管理员和运维可读取归属校验、脱敏及受限的容器日志。 */
+  @PostMapping("/{id}/logs")
+  @PreAuthorize("hasAnyRole('ADMIN','OPERATOR')")
+  public ApiResponse<ObjectNode> logs(@PathVariable String id, @RequestBody ObjectNode input) {
+    return ApiResponse.ok(
+        diagnostics.sessionLog(
+            id,
+            input.path("pod").asText(),
+            input.path("container").asText(),
+            input.path("lines").asInt(10000),
+            input.path("previous").asBoolean()));
   }
 
   /** 查询平台配置列表。 */

@@ -2,11 +2,17 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { X, RefreshCw, Box, Server, CircleAlert, FileText } from '@lucide/vue'
 import { workbenchApi } from '../api/workbench'
+import { sessionsApi } from '../../session/api/sessions'
 import LogViewer from '../../../shared/components/editor/LogViewer.vue'
 import { useManualRefresh } from '../../../shared/composables/useManualRefresh'
 import type { JobDraft } from '../../../shared/types/api'
 import type { Diagnostic, DiagnosticPod } from '../../../shared/types/workbench'
-const props = defineProps<{ job: JobDraft; canReadLogs: boolean }>()
+const props = defineProps<{
+  job: Pick<JobDraft, 'id' | 'name' | 'deploymentName'>
+  canReadLogs: boolean
+  kind?: 'session' | 'job'
+}>()
+const api = computed(() => (props.kind === 'session' ? sessionsApi : workbenchApi))
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
 const data = ref<Diagnostic | null>(null),
@@ -56,7 +62,7 @@ const { refresh, busy, disabled, remaining } = useManualRefresh(async () => {
   error.value = ''
   clearLog()
   try {
-    const result = await workbenchApi.diagnostics(props.job.id)
+    const result = await api.value.diagnostics(props.job.id)
     if (disposed) return
     data.value = result
     if (!result.pods.some((p) => p.name === selected.value))
@@ -80,7 +86,7 @@ const {
   clearLog()
   const epoch = logEpoch
   try {
-    const result = await workbenchApi.logs(props.job.id, {
+    const result = await api.value.logs(props.job.id, {
       pod: selected.value,
       container: container.value,
       lines: 10000,
@@ -119,7 +125,7 @@ onUnmounted(() => {
   >
     <header class="drawer-heading">
       <div>
-        <span class="muted">作业运行诊断</span>
+        <span class="muted">{{ kind === 'session' ? 'Session 集群诊断' : '作业运行诊断' }}</span>
         <h2 id="pod-drawer-title">{{ job.name }} · Pod 状态</h2>
         <small>{{ job.deploymentName }}</small>
       </div>

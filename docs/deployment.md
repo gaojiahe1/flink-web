@@ -133,9 +133,15 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:edccdf9103b29aba04b21df01d88825d9b90ee2663eaac6b57fad1044aaf1cbb |
+| 192.168.68.1:5000/flink-web/app | sha256:55006a81fce04fce6ed9ece2f9f123c51ad99eb14184f6fc40c30c04a48240f7 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:b642e57e622a785e596ba470d366748aedceb5b667cd3a7ff36e14a2fcdb23d9 |
+| 192.168.68.1:5000/flink-web/web | sha256:34a00d26be39541712f974c7bee6b60980469c6838743b0f3ceb70dc1d6a7a0b |
+
+2026-10-13 Session Pod/SQL 日志验证最终发布：app/web:0.0.4 已覆盖发布，当前摘要见上表，downloader 未改、不更新 latest。复用上一版已验证的 Kylin/JRE/Nginx 运行层，替换本轮离线校验的后端 JAR、新 Runner 和前端产物，保留两份已认证 Parser。最终 app config 为 sha256:4d0bd084c79f93eab763efa3f7d35d89bb66fd8301b70d91aa007885161f3ad8，web config 为 sha256:ff9ea4522460e63c66f27ccd57dec7f0d4b1fd1ce23e2b0c56a50cd7259e6153；通过指定仓库直连 V2 发布，核对 manifest 正文/响应摘要/config ID，并分别核对远端 17/13 层解压内容与本地已测试 rootfs diff ID 一致。
+
+本轮完整 194 项后端中 193 项通过、MinIO 未启用；Runner 8 项、JDK8/17 Runner/Parser、39 项页面回归通过。最终非 root/只读镜像加密登录、Session Pod/逐行刷新/配置和 Runner 哈希检查通过；真实 Flink1.20.5 Session 固定文件中四种 RowKind、中文多行、1000 行边界和取消确认通过，平台后台取消另由集成测试核对。收尾缓存/文案修正后受影响范围及最终镜像重新校验，详见 [本轮验收](agent/validation.md#session-pod-与-sql-固定日志验证2026-10-13)。
+
+应用此更新仍需按授权重新拉取平台 Pod；本轮未更新实际 Kubernetes 工作负载。既有验证 Session 必须停止再启动以应用平台固定 logConfiguration，旧 Runner 必须下载、上传并显式选择新文件，不能自动替换旧作业。固定日志位于每个 TM 的 /opt/flink/log/sql-validation.log，32MiB/一个副本；该路径须可写并与 Flink REST 日志目录一致。接口/日志配置依据 [Operator1.14日志说明](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.14/docs/operations/metrics-logging/) 与 [Flink1.20 REST](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/rest_api/)。单后端实例限制继续有效，其他版本/现场 RBAC 与真实 Operator 调度仍需单独验收。
 
 2026-10-13 Session/SQL 配置编辑发布：app/web 的 0.0.4 已覆盖发布，不更新 latest，downloader 保持上述摘要。后端及两份精确 Parser 使用既有离线依赖构建；镜像沿用已发布的 Kylin SP3/JRE/Nginx 运行层并替换本轮产物，Web 清除旧静态资源。最终镜像在 linux/amd64、UID 10001、只读根文件系统下完成临时 SQLite 健康检查、真实加密登录、Session/SQL 配置 API 与页面双向编辑、数值规范化 dry-run、PARSER 及 Web 代理/DNS 恢复验证。SQLite 验证容器的 /tmp 使用可执行 tmpfs 供本地库加载。
 

@@ -12,7 +12,9 @@ SqlParserServiceImpl 按精确版本读取 validator.jar，独立进程限制并
 
 2026-10-12：Runner 的磁盘配置去除 pipeline.jars/classpaths 覆盖项，用户代码路径沿用 Flink 已解析的提交上下文，避免 Application 中 local URI 进入 Java URL 解码器；其余状态/S3/业务配置保留。Runner/Parser 使用 major52，已实测 JDK8/17；Parser 限制输入、数组与脚本，输出固定UTF-8。镜像与本地安装提供精确1.20.3/1.20.5 Parser；Runner下载接口固定读取安装文件、仅管理员/开发者允许。SQL/Session仍显式上传选择Runner，旧文件不自动替换。
 
-验证将原 Sink 换为 Print，最多100条/两分钟，行只留在进程内；验证标识过滤日志，未知提交仍按固定JobID清理。截止取消由单次安排的后台任务完成并重试/重启恢复，这是手动查询规则的明确例外。浏览器显式验证期间每2秒查状态，离页/终态停止。
+验证将原 Sink 换为 Print，保留查询变更流，跨 Sink/TM 最多 1000 条/两分钟，行只留在进程内。后端在活动验证期间每 2 秒监听固定 sql-validation.log 及轮转副本，按验证 ID/事件顺序号去重；四种 RowKind、重复行与 JSON 转义的多行数据保留。后台上限/截止取消及重启恢复是手动查询规则的明确例外；浏览器监听离页/终态停止，服务端继续处理已授权验证，取消确认前不释放单任务入口。日志配置由 SqlValidationLog 强制生成，旧运行配置须显式重启；Runner 不再添加 LIMIT，旧 Runner 须手动重新选择。
+
+Session 行末刷新独立冷却，复用 PodStatusDrawer 与 DiagnosticService 的所有者链/日志脱敏；新增 /api/sessions/{id}/diagnostics、/logs 及 /flink-ui/sessions/{id}/，代理每次调用 observedResource 核验身份。validationStatus 内部不查询 REST 数量。SQL CodeEditor 复用 sqlEditing 的 Flink 方言/Connector 补全，sql-formatter 的通用 SQL 规则受 token 不变检查保护，格式化历史独立可撤销。
 
 普通 Session 可多个，验证 Session 仅一个；运行中不得改配置。管理员配置、管理员/运维启停；开发者需 SQL 编辑权限。Runner 必须手动选具体 JAR，验证和 Application 必须选；运行 Session 镜像须与 SQL 相同。动态用户 bundle 合并服务发现、拒绝冲突类，不能删除看似重复的 META-INF 服务内容。
 
@@ -33,6 +35,7 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [SqlStudioView.vue](../../../frontend/src/modules/sql/pages/SqlStudioView.vue)
 - [SessionsView.vue](../../../frontend/src/modules/session/pages/SessionsView.vue)
 - [SessionDevelopmentIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/SessionDevelopmentIntegrationTest.java)
+- [固定日志协议](../../../backend/src/main/java/com/flinkweb/config/sql/SqlValidationLog.java)、[编辑器支持](../../../frontend/src/shared/utils/sqlEditing.ts)、[真实 Session 日志回归](../../../scripts/check_sql_validation.py)
 - [SqlParserServiceTest.java](../../../backend/src/test/java/com/flinkweb/service/SqlParserServiceTest.java)
 
 2026-10-13 归档补核：SqlJobServiceImpl.deploymentLink 在读取时兼容失效关联；JobServiceImpl.delete 先迁移仍被 SQL 草稿引用的专属依赖，再清原目录并解除 jobId/publishedAt。SQL 有有效部署关联时不能直接删草稿，JAR 开发映射只在新建或首次编辑时登记。页面检查状态绑定当前 SQL/配置，后端提交再次检查；验证 JAR 分发不能热更新 Session 环境、非 JAR 文件或 Flink 插件。Session 分区表单与草稿删除入口已有实现/测试定义，本轮未运行。来源和历史验收见 [归档核对](../validation.md#sql-与-session-开发聊天归档核对2026-10-13)。
