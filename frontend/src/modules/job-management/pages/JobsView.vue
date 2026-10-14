@@ -7,6 +7,7 @@ import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import JobWorkbench from '../components/JobWorkbench.vue'
 import PodStatusDrawer from '../components/PodStatusDrawer.vue'
+import AiJobAnalysis from '../../ai/components/AiJobAnalysis.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
@@ -77,6 +78,7 @@ const loading = ref(true),
   acting = ref(false),
   selected = ref<JobDraft | null>(null)
 const podJob = ref<JobDraft | null>(null)
+const aiJob = ref<JobDraft | null>(null)
 const snapshotNotice = ref('')
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
@@ -764,6 +766,18 @@ function resetFilters() {
             </td>
             <td class="row-actions">
               <button
+                v-if="
+                  operator &&
+                  (state(job)?.error ||
+                    ['FAILED', 'ERROR', 'RECONCILING_ERROR'].includes(state(job)?.jobState || '') ||
+                    state(job)?.healthState === 'ERROR')
+                "
+                class="text-button"
+                @click="aiJob = job"
+              >
+                AI 分析
+              </button>
+              <button
                 class="text-button"
                 :disabled="!state(job)?.yaml"
                 @click="showYaml(job.deploymentName)"
@@ -1103,6 +1117,14 @@ function resetFilters() {
       </table>
     </div>
   </section>
+  <AiJobAnalysis
+    v-if="aiJob"
+    :key="aiJob.id"
+    :job="aiJob"
+    :error="state(aiJob)?.error"
+    :can-read-logs="mayOperate(aiJob)"
+    @close="aiJob = null"
+  />
   <PodStatusDrawer
     v-if="podJob"
     :key="podJob.id"

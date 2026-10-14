@@ -10,4 +10,7 @@ public interface DataSourceService {
 
   /** 为指定数据源生成 CREATE TABLE 和必要的 Pod 环境变量，连接只在 Flink 运行时建立。 */
   ObjectNode snippet(String id);
+
+  /** 为当前作业的临时数据定义编译 DDL，不登记共享数据源。 */
+  ObjectNode snippetDefinition(String id, ObjectNode input);
 }

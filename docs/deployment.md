@@ -133,9 +133,17 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:afc7869fe9fa53de172e312127a17f20cbb191bbc7d03746ae253d36e2e9f412 |
+| 192.168.68.1:5000/flink-web/app | sha256:35a69563829c37dda97a76c884b98d145a48ded4333af153f9321d1c5136984c |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:7657f9aa4f4306e7afbfae9c3cb57b9e00aa083b8b4a8576fc627c0b768e859d |
+| 192.168.68.1:5000/flink-web/web | sha256:cac0255fc1de1bd4f589170d9cd3bae86b5e01b554af77b3de412d4137c5cb1b |
+
+2026-10-14 AI 第一阶段发布：app/web:0.0.4 已覆盖推送，downloader 和 latest 未改。复用已验证的 Kylin/JRE/Nginx 运行层，替换完整校验后的后端 JAR/前端 dist，依赖、Runner 和两份精确 Parser 未改；linux/amd64、UID/GID10001。最终 app config 为 sha256:5effe20c9b695ff74db47ab7777a87dbada19c36bfb7ed70ed66395d16ed23f4，web config 为 sha256:6455ddfc65ea6a2d52cc4992b3eddf2027e1bba146cbd2e623cbd41799a531b7。通过现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要、config ID；远端 app19层/web16层的压缩 SHA-256、大小和解压 diff ID 均与测试镜像一致。
+
+使用：管理员进入「系统设置→模型服务」，添加名称、实际模型标识、Base URL（如服务前缀 `/v1`）和可选 API Key，选择用途并测试；程序追加 `/chat/completions`，服务需支持非流式 Chat Completions 及 JSON 内容响应。API Key 通过一次性 config-secret 信封传输，以既有主密钥加密保存，不回显；留空保留，显式清除另选。私有模型可由管理员允许内网/本机和 HTTP，链路本地/元数据地址仍拒绝；公网使用 HTTPS，重定向不跟随。外部模型每次调用都需用户允许发送脱敏上下文。备份仍须同时保留原数据库和原加密主密钥，没有新增独立密钥或数据库迁移。
+
+本次临时验证资源、检查标签、独占打包/日志与凭据占位已清理，六项本次私有构建缓存回收约82.5MB；保留最终已标记镜像、原数据库/备份、已有registry和共享依赖。
+
+SQL 侧栏与作业报错「AI 分析」启用后可选上述模型；AI 不直接操作集群或自动应用 SQL。后端212项中211通过、可选MinIO跳过，52项相关页面及3项真实凭据页面通过；最终镜像8项链路、Web代理/DNS恢复检查通过。模型和 Kubernetes 为本地隔离协议替身，未认证真实厂商效果或现场运行环境。未更新实际 Kubernetes 工作负载；现有平台 Pod 按授权流程重新拉取 app/web 后生效，无需更新 Runner/Parser。详细结果见 [AI 验收](agent/validation.md#ai-助手第一阶段2026-10-14)。
 
 2026-10-14 SQL 采集并发/共享编辑发布：app/web:0.0.4 已覆盖发布，downloader 保持上述摘要，不更新 latest。复用既有 Kylin/JRE/Nginx 运行层，仅替换完整校验后的后端 JAR 和前端 dist，Runner/两份 Parser 未修改。最终 app config 为 sha256:8a58ee8ca61ebbce8b39445aa3910d726fd61d9ab3f7835e6209ffa3fa4738dd，web config 为 sha256:7e1376e7f4d4982eadbac3ddf0c6b314c71f6db6a391fb4a1dcfe9cd679c4f99。沿用仓库直连 V2 发布，manifest 正文/响应摘要/config ID 及远端 18/15 层的压缩摘要、解压 diff ID 均与最终已测试镜像一致。
 

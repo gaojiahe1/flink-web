@@ -14,6 +14,8 @@ import {
   type ColumnDefinition,
 } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
+import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
+import type { AiResult } from '../../ai/api/ai'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
@@ -267,6 +269,65 @@ const check = ref<{
 const verification = ref<SqlVerification | null>(null)
 const sqlEditor = ref<InstanceType<typeof CodeEditor>>()
 const resultTab = ref('status')
+const aiContextVersion = ref(0)
+watch(
+  () => snapshot(),
+  () => {
+    aiContextVersion.value++
+  },
+  { flush: 'sync' },
+)
+
+/** 应用前核对上下文，先准备完整配置再一次提交，避免覆盖新编辑或产生半份建议。 */
+function applyAiSuggestion(suggestion: AiResult, version: number) {
+  return run(async () => {
+    if (!editable.value) throw new Error('当前不可应用 AI 建议')
+    if (version !== aiContextVersion.value) throw new Error('SQL 或配置已修改，请重新生成建议')
+    configurationEditor.validate()
+    if (!suggestion.sql || new TextEncoder().encode(suggestion.sql).length > 32768)
+      throw new Error('AI SQL 为空或超过32 KiB')
+    const document = editorMode.value === 'yaml' ? parseDeploymentYaml(deploymentYaml.value) : null
+    const template = document
+      ? readPodTemplates(document.toJS().spec).podTemplate
+      : JSON.parse(pod.value)
+    if (!template || typeof template !== 'object' || Array.isArray(template))
+      throw new Error('PodTemplate 必须为对象')
+    for (const env of suggestion.env || []) {
+      template.spec ??= {}
+      template.spec.containers ??= []
+      let main = template.spec.containers.find((c: any) => c.name === 'flink-main-container')
+      if (!main) {
+        main = { name: 'flink-main-container', env: [] }
+        template.spec.containers.push(main)
+      }
+      main.env ??= []
+      const existing = main.env.find((item: any) => item.name === env.name)
+      if (existing && JSON.stringify(existing) !== JSON.stringify(env))
+        throw new Error('密钥环境变量已存在不同配置，请先核对')
+      if (!existing) main.env.push(env)
+    }
+    const nextConfig = document
+      ? document.toJS().spec.flinkConfiguration || {}
+      : JSON.parse(config.value)
+    for (const [key, value] of Object.entries(suggestion.flinkConfiguration || {})) {
+      if (nextConfig[key] !== undefined && String(nextConfig[key]) !== value)
+        throw new Error('AI 建议的运行配置与当前值冲突：' + key)
+      nextConfig[key] = value
+    }
+    if (document) {
+      document.setIn(['spec', 'podTemplate'], template)
+      document.setIn(['spec', 'flinkConfiguration'], nextConfig)
+      deploymentYaml.value = document.toString()
+    } else {
+      pod.value = JSON.stringify(template, null, 2)
+      config.value = JSON.stringify(nextConfig, null, 2)
+    }
+    form.sql = suggestion.sql
+    check.value = null
+    await nextTick()
+    message.value = 'AI 建议已应用到编辑器。尚未保存或执行，请重新检查和验证。'
+  })
+}
 const needsSession = ref(false)
 const verifying = computed(
   () => !!verification.value && !verificationTerminal(verification.value.state),
@@ -1352,7 +1413,26 @@ watch(
         @restored="run(reloadRestoredSql)"
       />
     </aside>
+    <AiSqlAssistant
+      v-if="sideTab === 'ai'"
+      :sql="form.sql"
+      :sql-id="selected"
+      :flink-version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || ''"
+      :context-key="aiContextVersion"
+      :editable="!!editable && !busy && !loading"
+      :sources="sources"
+      @close="sideTab = ''"
+      @apply="applyAiSuggestion"
+    />
     <nav class="studio-rail" aria-label="SQL 辅助面板">
+      <button
+        v-if="editable"
+        :class="{ active: sideTab === 'ai' }"
+        :aria-expanded="sideTab === 'ai'"
+        @click="sideTab = sideTab === 'ai' ? '' : 'ai'"
+      >
+        AI 助手
+      </button>
       <button
         :class="{ active: sideTab === 'runtime' }"
         :aria-expanded="sideTab === 'runtime'"

@@ -4,6 +4,7 @@ const { status, hint, refresh, disabled, remaining, busy } = useOperator()
 import DownloaderSettings from '../components/DownloaderSettings.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import { systemInfo } from '../stores/system'
+import { currentUser } from '../../permission/stores/auth'
 </script>
 <template>
   <PageHeader eyebrow="ENVIRONMENT"
@@ -11,6 +12,15 @@ import { systemInfo } from '../stores/system'
     ><template #description>当前服务的部署配置与接入状态。</template></PageHeader
   >
   <DownloaderSettings />
+  <section v-if="currentUser?.roles.includes('ROLE_ADMIN')" class="panel form-panel operator-panel">
+    <div class="panel-toolbar">
+      <div>
+        <h3>AI 模型服务</h3>
+        <p class="muted">管理 SQL 助手、数据定义与作业报错分析使用的模型。</p>
+      </div>
+      <RouterLink class="button primary" to="/settings/models">管理模型服务</RouterLink>
+    </div>
+  </section>
   <section class="panel form-panel operator-panel">
     <div class="panel-toolbar">
       <h3>Flink Kubernetes Operator</h3>

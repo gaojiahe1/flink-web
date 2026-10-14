@@ -68,6 +68,10 @@ const router = createRouter({
         { path: 'users', component: () => import('../../modules/permission/pages/UsersView.vue') },
         { path: 'audit', component: () => import('../../modules/audit/pages/AuditView.vue') },
         {
+          path: 'settings/models',
+          component: () => import('../../modules/system/pages/ModelsView.vue'),
+        },
+        {
           path: 'settings',
           component: () => import('../../modules/system/pages/SettingsView.vue'),
         },

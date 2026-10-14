@@ -150,7 +150,12 @@ public class DataSourceServiceImpl implements DataSourceService {
 
   /** 为指定数据源生成 CREATE TABLE 和必要的 Pod 环境变量，连接只在 Flink 运行时建立。 */
   public ObjectNode snippet(String id) {
-    ObjectNode source = validate(records.require("datasources", id));
+    return snippetDefinition(id, records.require("datasources", id));
+  }
+
+  /** 编译当前作业的数据定义，复用同一验证和凭据引用规则而不写共享登记。 */
+  public ObjectNode snippetDefinition(String id, ObjectNode input) {
+    ObjectNode source = validate(input);
     StringBuilder ddl =
         new StringBuilder("CREATE TEMPORARY TABLE `")
             .append(source.path("tableName").asText())

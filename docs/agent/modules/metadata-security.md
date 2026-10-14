@@ -1,8 +1,10 @@
 # 元数据、权限与数据管理
 
-更新：2026-10-13。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-14。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：数据库配置/迁移、JSON记录修订控制、登录/角色/用户组/作业ACL、普通配置/密钥、数据源与Catalog元数据。用户登录→一次性挑战→EncryptedLoginFilter/Session→CSRF+角色/ACL；数据修改带revision，用户相关修订使旧会话失效。
+
+2026-10-14：模型服务已在系统设置子页实现，由管理员维护；按任务用途选择，密钥复用一次性传输信封和现有主密钥加密保存，响应不返还正文。目标地址、内网许可与外部发送确认由后端约束；当前作业字段/Connector 草稿不自动登记共享数据源。接口、代码及验证边界见 [AI 模块](ai-assistant.md)，真实厂商接入仍需配置后验收。
 
 SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接池1、DELETE回滚日志；MySQL另方言和连接池。V1–V5/全量DDL均保留，不把schema.sql当可删除重复文件。配置切换不迁移数据。原主密钥必须保留才能解密配置及停止前实际部署配置。
 

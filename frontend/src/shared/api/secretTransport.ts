@@ -83,11 +83,14 @@ export async function protectSensitiveRequest(
   }
   const user = /^\/api\/users\/([^/?]+)$/.exec(url)
   const config = /^\/api\/catalog\/configs\/([^/?]+)$/.exec(url)
-  if (method !== 'PUT' || (!user && !config) || typeof init.body !== 'string') return init
+  const model = /^\/api\/ai\/models\/([^/?]+)$/.exec(url)
+  if (method !== 'PUT' || (!user && !config && !model) || typeof init.body !== 'string') return init
   const data = JSON.parse(init.body)
   if (user && typeof data.password === 'string' && data.password.length)
     data.password = await encrypt(data.password, 'user-password', decodeURIComponent(user[1]!))
   if (config && data.kind === 'secret' && typeof data.value === 'string' && data.value.length)
     data.value = await encrypt(data.value, 'config-secret', decodeURIComponent(config[1]!))
+  if (model && typeof data.apiKey === 'string' && data.apiKey.length)
+    data.apiKey = await encrypt(data.apiKey, 'config-secret', decodeURIComponent(model[1]!))
   return { ...init, body: JSON.stringify(data) }
 }
