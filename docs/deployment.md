@@ -133,11 +133,15 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:55006a81fce04fce6ed9ece2f9f123c51ad99eb14184f6fc40c30c04a48240f7 |
+| 192.168.68.1:5000/flink-web/app | sha256:afc7869fe9fa53de172e312127a17f20cbb191bbc7d03746ae253d36e2e9f412 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:34a00d26be39541712f974c7bee6b60980469c6838743b0f3ceb70dc1d6a7a0b |
+| 192.168.68.1:5000/flink-web/web | sha256:7657f9aa4f4306e7afbfae9c3cb57b9e00aa083b8b4a8576fc627c0b768e859d |
 
-2026-10-13 Session Pod/SQL 日志验证最终发布：app/web:0.0.4 已覆盖发布，当前摘要见上表，downloader 未改、不更新 latest。复用上一版已验证的 Kylin/JRE/Nginx 运行层，替换本轮离线校验的后端 JAR、新 Runner 和前端产物，保留两份已认证 Parser。最终 app config 为 sha256:4d0bd084c79f93eab763efa3f7d35d89bb66fd8301b70d91aa007885161f3ad8，web config 为 sha256:ff9ea4522460e63c66f27ccd57dec7f0d4b1fd1ce23e2b0c56a50cd7259e6153；通过指定仓库直连 V2 发布，核对 manifest 正文/响应摘要/config ID，并分别核对远端 17/13 层解压内容与本地已测试 rootfs diff ID 一致。
+2026-10-14 SQL 采集并发/共享编辑发布：app/web:0.0.4 已覆盖发布，downloader 保持上述摘要，不更新 latest。复用既有 Kylin/JRE/Nginx 运行层，仅替换完整校验后的后端 JAR 和前端 dist，Runner/两份 Parser 未修改。最终 app config 为 sha256:8a58ee8ca61ebbce8b39445aa3910d726fd61d9ab3f7835e6209ffa3fa4738dd，web config 为 sha256:7e1376e7f4d4982eadbac3ddf0c6b314c71f6db6a391fb4a1dcfe9cd679c4f99。沿用仓库直连 V2 发布，manifest 正文/响应摘要/config ID 及远端 18/15 层的压缩摘要、解压 diff ID 均与最终已测试镜像一致。
+
+完整后端 201 项中 200 通过、MinIO 未启用；34 项受影响页面/逻辑及最终镜像 10 项真实 API 页面通过。最终镜像为 linux/amd64、UID/GID10001，只读根文件系统与临时 SQLite、加密登录、Session/SQL 无损往返通过。与隔离真实 Flink1.20.5/JDK17 联调，四种变更/中文多行、固定命名日志、后台自动取消和精确 1000 条输出通过，等待取消期间没有平台状态请求。Kubernetes 为协议替身，未更新现场工作负载或验收真实 Operator/RBAC/其他版本。详细结果和提交合并见 [本轮验收](agent/validation.md#sql-采集并发与共享配置编辑2026-10-14)。升级只需按已有授权流程重新拉取 app/web；本次不要求替换 Runner 或改 Session 日志配置。
+
+2026-10-13 Session Pod/SQL 日志验证最终发布：app/web:0.0.4 已覆盖发布，当时 app manifest 为 sha256:55006a81fce04fce6ed9ece2f9f123c51ad99eb14184f6fc40c30c04a48240f7、web 为 sha256:34a00d26be39541712f974c7bee6b60980469c6838743b0f3ceb70dc1d6a7a0b，已由 10-14 发布替代；downloader 未改、不更新 latest。复用上一版已验证的 Kylin/JRE/Nginx 运行层，替换本轮离线校验的后端 JAR、新 Runner 和前端产物，保留两份已认证 Parser。最终 app config 为 sha256:4d0bd084c79f93eab763efa3f7d35d89bb66fd8301b70d91aa007885161f3ad8，web config 为 sha256:ff9ea4522460e63c66f27ccd57dec7f0d4b1fd1ce23e2b0c56a50cd7259e6153；通过指定仓库直连 V2 发布，核对 manifest 正文/响应摘要/config ID，并分别核对远端 17/13 层解压内容与本地已测试 rootfs diff ID 一致。
 
 本轮完整 194 项后端中 193 项通过、MinIO 未启用；Runner 8 项、JDK8/17 Runner/Parser、39 项页面回归通过。最终非 root/只读镜像加密登录、Session Pod/逐行刷新/配置和 Runner 哈希检查通过；真实 Flink1.20.5 Session 固定文件中四种 RowKind、中文多行、1000 行边界和取消确认通过，平台后台取消另由集成测试核对。收尾缓存/文案修正后受影响范围及最终镜像重新校验，详见 [本轮验收](agent/validation.md#session-pod-与-sql-固定日志验证2026-10-13)。
 

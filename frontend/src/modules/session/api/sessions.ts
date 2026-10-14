@@ -47,10 +47,11 @@ export const sessionsApi = {
       '/api/sessions/' + encodeURIComponent(id) + '/logs',
       { method: 'POST', ...jsonBody(input) },
     ),
-  configuration: (value: unknown) =>
+  configuration: (value: unknown, signal?: AbortSignal) =>
     request<{ yaml: string; runtime: SessionCluster['runtime']; formIssue?: string }>(
       '/api/sessions/configuration',
       {
+        signal,
         method: 'POST',
         ...jsonBody(value),
       },

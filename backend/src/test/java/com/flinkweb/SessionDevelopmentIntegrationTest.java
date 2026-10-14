@@ -97,6 +97,7 @@ class SessionDevelopmentIntegrationTest {
   @Autowired DevelopmentService development;
   @Autowired YamlService yaml;
   @Autowired MockMvc mvc;
+  @Autowired org.springframework.context.ApplicationContext applicationContext;
   @MockitoBean KubernetesClient kubernetes;
   @MockitoBean SessionRestClient rest;
   @MockitoBean ValidationJarBundle bundles;
@@ -168,6 +169,24 @@ class SessionDevelopmentIntegrationTest {
     ((ArrayNode) files.path("logs")).addObject().put("name", "sql-validation.log.1");
     when(rest.call(anyString(), eq("GET"), eq("/taskmanagers/tm-1/logs"), isNull()))
         .thenReturn(files);
+    when(rest.budgetedCall(
+            anyString(),
+            anyString(),
+            anyString(),
+            nullable(JsonNode.class),
+            any(java.time.Duration.class)))
+        .thenAnswer(
+            call ->
+                rest.call(
+                    call.getArgument(0),
+                    call.getArgument(1),
+                    call.getArgument(2),
+                    call.getArgument(3)));
+    when(rest.budgetedValidationLog(
+            anyString(), anyString(), anyString(), any(java.time.Duration.class)))
+        .thenAnswer(
+            call ->
+                rest.validationLog(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
   }
 
   /** 最小运行配置复用普通 Flink 镜像与挂载 Runner。 */
@@ -660,6 +679,230 @@ class SessionDevelopmentIntegrationTest {
             .textNode("FWV_" + id + "_" + sink + ":1> " + kind + "[" + value + "]")
             .toString();
     return "FWV_EVENT|" + sequence + "|" + encoded.substring(1, encoded.length() - 1) + "\n";
+  }
+
+  /** 部分文件成功后失败，恢复读取不能重复计入事件，相同值的后续事件仍保留。 */
+  @Test
+  void partialFileFailureKeepsRowsAndCursorConsistent() {
+    startCluster();
+    var draft = draft();
+    String id =
+        executions
+            .submit(draft.path("id").asText(), 1, UUID.randomUUID().toString())
+            .path("id")
+            .asText();
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log.1")))
+        .thenReturn(
+            validationEvent(id, 11, 0, "+I", "same") + validationEvent(id, 12, 0, "+I", "same"));
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenThrow(new IllegalStateException("temporary read failure"));
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(2);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenReturn(validationEvent(id, 13, 0, "+I", "same"));
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(3);
+    assertThat(executions.status(id).path("rows").size()).isEqualTo(3);
+  }
+
+  /** 取消失败保留独占及意图，重试成功后仍等待 Flink 终态确认。 */
+  @Test
+  void cancellationFailureRetriesWithoutReleasingSession() {
+    startCluster();
+    var draft = draft();
+    String id =
+        executions
+            .submit(draft.path("id").asText(), 1, UUID.randomUUID().toString())
+            .path("id")
+            .asText();
+    when(rest.call(anyString(), eq("PATCH"), eq("/jobs/" + id + "?mode=cancel"), isNull()))
+        .thenThrow(new IllegalStateException("temporary control failure"))
+        .thenReturn(mapper.createObjectNode());
+    assertThat(executions.cancel(id).path("state").asText()).isEqualTo("CANCEL_PENDING");
+    assertThatThrownBy(
+            () -> executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()))
+        .hasMessageContaining("正在验证其他 SQL");
+    assertThat(executions.status(id).path("state").asText()).isEqualTo("CANCELING");
+    when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
+        .thenReturn(mapper.createObjectNode().put("state", "CANCELED"));
+    assertThat(executions.status(id).path("state").asText()).isEqualTo("CANCELED");
+  }
+
+  /** 实例重建恢复旧 SUBMITTING 的固定 JobID 和截止取消，结果数据不从数据库恢复。 */
+  @Test
+  void recoveredLegacySubmissionRetainsIdentityAndDeadline() throws Exception {
+    startCluster();
+    var draft = draft();
+    var first =
+        applicationContext
+            .getAutowireCapableBeanFactory()
+            .createBean(com.flinkweb.service.sql.impl.SqlExecutionServiceImpl.class);
+    String id;
+    try {
+      id =
+          first
+              .submit(draft.path("id").asText(), 1, UUID.randomUUID().toString())
+              .path("id")
+              .asText();
+    } finally {
+      first.close();
+    }
+    var run = records.require("sql_validations", id);
+    run.put("state", "SUBMITTING")
+        .put("deadline", java.time.Instant.now().minusSeconds(1).toString());
+    run.remove("submissionAttempted");
+    records.save("sql_validations", id, run, run.path("revision").asLong());
+    var canceled = new java.util.concurrent.CountDownLatch(1);
+    when(rest.call(anyString(), eq("PATCH"), eq("/jobs/" + id + "?mode=cancel"), isNull()))
+        .thenAnswer(
+            call -> {
+              canceled.countDown();
+              return mapper.createObjectNode();
+            });
+    var recovered =
+        applicationContext
+            .getAutowireCapableBeanFactory()
+            .createBean(com.flinkweb.service.sql.impl.SqlExecutionServiceImpl.class);
+    try {
+      assertThat(canceled.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
+          .thenReturn(mapper.createObjectNode().put("state", "CANCELED"));
+      long end = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(3);
+      ObjectNode status;
+      do {
+        status = recovered.status(id);
+        if (!"TIMED_OUT".equals(status.path("state").asText())) Thread.sleep(20);
+      } while (!"TIMED_OUT".equals(status.path("state").asText()) && System.nanoTime() < end);
+      assertThat(status.path("state").asText()).isEqualTo("TIMED_OUT");
+      assertThat(status.path("jobId").asText()).isEqualTo(id);
+      assertThat(status.path("rows").size()).isZero();
+    } finally {
+      recovered.close();
+    }
+  }
+
+  /** 提交请求仍在途时 404 不释放独占，迟到失败不覆盖已经保存的截止取消。 */
+  @Test
+  void unknownSubmissionCannotOverwriteDeadlineIntent() throws Exception {
+    startCluster();
+    var draft = draft();
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    when(rest.call(anyString(), eq("POST"), contains("/run"), any()))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+              throw new IllegalStateException("network timeout");
+            });
+    var context = org.springframework.security.core.context.SecurityContextHolder.getContext();
+    var submission =
+        java.util.concurrent.CompletableFuture.supplyAsync(
+            () -> {
+              org.springframework.security.core.context.SecurityContextHolder.setContext(context);
+              try {
+                return executions.submit(
+                    draft.path("id").asText(), 1, UUID.randomUUID().toString());
+              } finally {
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
+              }
+            });
+    assertThat(entered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    var run = records.list("sql_validations").get(0);
+    String id = run.path("id").asText();
+    run.put("deadline", java.time.Instant.now().minusSeconds(1).toString());
+    records.save("sql_validations", id, run, run.path("revision").asLong());
+    when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
+        .thenThrow(
+            new BusinessException(
+                org.springframework.http.HttpStatus.BAD_GATEWAY,
+                "SESSION_REST_NOT_FOUND",
+                "not visible yet"));
+    try {
+      org.springframework.test.util.ReflectionTestUtils.invokeMethod(executions, "expire", id);
+      assertThat(records.require("sql_validations", id).path("state").asText())
+          .isEqualTo("CANCEL_PENDING");
+      assertThatThrownBy(
+              () -> executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()))
+          .hasMessageContaining("正在验证其他 SQL");
+    } finally {
+      release.countDown();
+    }
+    var result = submission.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    assertThat(result.path("state").asText()).isEqualTo("CANCEL_PENDING");
+    assertThat(records.require("sql_validations", id).path("cancelTarget").asText())
+        .isEqualTo("TIMED_OUT");
+    when(rest.call(anyString(), eq("GET"), eq("/jobs/" + id), isNull()))
+        .thenReturn(mapper.createObjectNode().put("state", "CANCELED"));
+    assertThat(executions.status(id).path("state").asText()).isEqualTo("TIMED_OUT");
+  }
+
+  /** 慢日志 I/O 期间截止任务仍及时取消，迟到的数据不能回填已进入取消的验证。 */
+  @Test
+  void slowLogDoesNotBlockDeadlineCancellation() throws Exception {
+    startCluster();
+    var draft = draft();
+    String id =
+        executions
+            .submit(draft.path("id").asText(), 1, UUID.randomUUID().toString())
+            .path("id")
+            .asText();
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    var entered = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    var canceled = new java.util.concurrent.CountDownLatch(1);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log")))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+              return validationEvent(id, 1, 0, "+I", "late");
+            });
+    when(rest.call(anyString(), eq("PATCH"), eq("/jobs/" + id + "?mode=cancel"), isNull()))
+        .thenAnswer(
+            call -> {
+              canceled.countDown();
+              return mapper.createObjectNode();
+            });
+    var run = records.require("sql_validations", id);
+    run.put("deadline", java.time.Instant.now().minusSeconds(1).toString());
+    records.save("sql_validations", id, run, run.path("revision").asLong());
+    var context = org.springframework.security.core.context.SecurityContextHolder.getContext();
+    var observation =
+        java.util.concurrent.CompletableFuture.supplyAsync(
+            () -> {
+              org.springframework.security.core.context.SecurityContextHolder.setContext(context);
+              try {
+                return executions.status(id);
+              } finally {
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
+              }
+            });
+    assertThat(entered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    long started = System.nanoTime();
+    var expiry =
+        java.util.concurrent.CompletableFuture.runAsync(
+            () ->
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                    executions, "expire", id));
+    boolean timely;
+    try {
+      timely = canceled.await(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+    } finally {
+      release.countDown();
+    }
+    expiry.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    observation.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    System.out.println(
+        "SQL deadline cancellation latencyMs="
+            + java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+    assertThat(timely).isTrue();
+    assertThat(records.require("sql_validations", id).path("cancelTarget").asText())
+        .isEqualTo("TIMED_OUT");
+    assertThat(executions.status(id).path("rows").size()).isZero();
   }
 
   /** 固定文件轮转、重复行、四种变更和半条写入不会导致重复或漏读。 */

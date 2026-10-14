@@ -60,6 +60,87 @@ public class SessionRestClient {
     }
   }
 
+  /** 为观察和控制请求限制包含正文读取的时间，保留固定目标与响应大小边界。 */
+  public JsonNode budgetedCall(
+      String deployment, String method, String path, JsonNode body, Duration budget) {
+    var request =
+        HttpRequest.newBuilder(target(deployment, path))
+            .timeout(budget)
+            .header("Content-Type", "application/json")
+            .method(
+                method,
+                body == null
+                    ? HttpRequest.BodyPublishers.noBody()
+                    : HttpRequest.BodyPublishers.ofString(body.toString()))
+            .build();
+    var response = bounded(request, 1024 * 1024, 1024 * 1024, budget);
+    String text = new String(response.body(), StandardCharsets.UTF_8);
+    checkStatus(response.statusCode(), text);
+    try {
+      return text.isBlank() ? mapper.createObjectNode() : mapper.readTree(text);
+    } catch (Exception ex) {
+      throw unavailable("Flink REST 返回无效响应");
+    }
+  }
+
+  /** 固定日志使用剩余预算覆盖响应头和全部正文，超时取消上游传输。 */
+  public String budgetedValidationLog(
+      String deployment, String taskmanager, String filename, Duration budget) {
+    if (!taskmanager.matches("[A-Za-z0-9_.:-]{1,200}")
+        || !com.flinkweb.config.sql.SqlValidationLog.FILES.contains(filename))
+      throw unavailable("验证日志标识无效");
+    var request =
+        HttpRequest.newBuilder(
+                target(deployment, "/taskmanagers/" + taskmanager + "/logs/" + filename))
+            .timeout(budget)
+            .GET()
+            .build();
+    var response =
+        bounded(
+            request,
+            com.flinkweb.config.sql.SqlValidationLog.FILE_BYTES + 1024 * 1024,
+            128L * 1024 * 1024,
+            budget);
+    if (response.statusCode() == 404) return "";
+    checkStatus(response.statusCode(), "固定验证日志");
+    return new String(response.body(), StandardCharsets.UTF_8);
+  }
+
+  /** 异步订阅在完整正文完成后返回；到期及中断关闭传输，内存和时间同时受限。 */
+  private HttpResponse<byte[]> bounded(
+      HttpRequest request, int capacity, long maximum, Duration budget) {
+    var subscriber = new BoundedResponseBody(capacity, maximum);
+    var future = client.sendAsync(request, info -> subscriber);
+    try {
+      return future.get(Math.max(1, budget.toNanos()), java.util.concurrent.TimeUnit.NANOSECONDS);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw unavailable("Flink 请求已中断");
+    } catch (java.util.concurrent.TimeoutException ex) {
+      throw unavailable("Flink 请求时间预算已耗尽");
+    } catch (Exception ex) {
+      throw unavailable("Flink 请求失败或响应超过传输上限");
+    } finally {
+      if (!future.isDone() || future.isCompletedExceptionally()) {
+        subscriber.cancel();
+        future.cancel(true);
+      }
+    }
+  }
+
+  /** 保留稳定错误类型，调用方负责脱敏上游摘要。 */
+  private void checkStatus(int status, String text) {
+    if (status < 200 || status >= 300)
+      throw new BusinessException(
+          HttpStatus.BAD_GATEWAY,
+          status == 404
+              ? "SESSION_REST_NOT_FOUND"
+              : status >= 400 && status < 500 && status != 408
+                  ? "SESSION_REST_REJECTED"
+                  : "SESSION_REST_FAILED",
+          "Flink 请求失败 (HTTP " + status + ")：" + text.substring(0, Math.min(text.length(), 12000)));
+  }
+
   /** 使用流式 multipart 上传本次 Runner 与依赖包，避免一次性读入内存。 */
   public ObjectNode upload(String deployment, Path jar) {
     String boundary = "fw" + java.util.UUID.randomUUID().toString().replace("-", "");
@@ -93,7 +174,7 @@ public class SessionRestClient {
 
   /** 流式读取 TaskManager 日志尾部；Flink 1.20 忽略 Range，兼容完整文件响应。 */
   public String log(String deployment, String taskmanager) {
-    if (!taskmanager.matches("[A-Za-z0-9_.-]{1,200}")) throw unavailable("TaskManager 标识无效");
+    if (!taskmanager.matches("[A-Za-z0-9_.:-]{1,200}")) throw unavailable("TaskManager 标识无效");
     var request =
         HttpRequest.newBuilder(target(deployment, "/taskmanagers/" + taskmanager + "/log"))
             .timeout(Duration.ofSeconds(15))
@@ -119,7 +200,7 @@ public class SessionRestClient {
 
   /** 只读取两个固定验证文件，兼容 Flink 完整响应；轮转副本不存在时返回空内容。 */
   public String validationLog(String deployment, String taskmanager, String filename) {
-    if (!taskmanager.matches("[A-Za-z0-9_.-]{1,200}")
+    if (!taskmanager.matches("[A-Za-z0-9_.:-]{1,200}")
         || !com.flinkweb.config.sql.SqlValidationLog.FILES.contains(filename))
       throw unavailable("验证日志标识无效");
     var request =
@@ -181,36 +262,10 @@ public class SessionRestClient {
 
   /** 统一关闭响应流、限制正文大小，并保留中断语义。 */
   private String send(HttpRequest request, int limit) {
-    try {
-      var response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-      try (var stream = response.body()) {
-        byte[] bytes = stream.readNBytes(limit + 1);
-        if (bytes.length > limit) throw unavailable("Flink 响应过大，请检查 Session 日志大小");
-        String text = new String(bytes, StandardCharsets.UTF_8);
-        if (response.statusCode() < 200 || response.statusCode() >= 300)
-          throw new BusinessException(
-              HttpStatus.BAD_GATEWAY,
-              response.statusCode() == 404
-                  ? "SESSION_REST_NOT_FOUND"
-                  : response.statusCode() >= 400
-                          && response.statusCode() < 500
-                          && response.statusCode() != 408
-                      ? "SESSION_REST_REJECTED"
-                      : "SESSION_REST_FAILED",
-              "Flink 请求失败 (HTTP "
-                  + response.statusCode()
-                  + ")："
-                  + text.substring(0, Math.min(text.length(), 12000)));
-        return text;
-      }
-    } catch (BusinessException ex) {
-      throw ex;
-    } catch (InterruptedException ex) {
-      Thread.currentThread().interrupt();
-      throw unavailable("Flink 请求已中断");
-    } catch (Exception ex) {
-      throw unavailable("无法连接 Session Flink REST，请检查集群就绪状态及网络");
-    }
+    var response = bounded(request, limit, limit, request.timeout().orElse(Duration.ofSeconds(30)));
+    String text = new String(response.body(), StandardCharsets.UTF_8);
+    checkStatus(response.statusCode(), text);
+    return text;
   }
 
   /** 将通信错误转换为上游不可用错误，调用方负责过滤敏感信息。 */

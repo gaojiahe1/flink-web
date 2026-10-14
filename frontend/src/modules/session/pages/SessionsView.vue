@@ -8,7 +8,7 @@ import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEdit
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import PodStatusDrawer from '../../job-management/components/PodStatusDrawer.vue'
-import { parseDeploymentYaml } from '../../../shared/utils/deploymentYaml'
+import { useDeploymentConfigurationEditor } from '../../../shared/composables/useDeploymentConfigurationEditor'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
 import { emptyPodTemplates } from '../../../shared/utils/podTemplates'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
@@ -31,9 +31,7 @@ const operator = computed(() =>
 const editing = ref(false),
   selected = ref(''),
   uploading = ref(false),
-  configValid = ref(true),
-  pods = ref(emptyPodTemplates()),
-  podValid = ref(true)
+  pods = ref(emptyPodTemplates())
 const defaults = () => ({
   name: '',
   description: '',
@@ -62,8 +60,26 @@ const defaults = () => ({
   },
 })
 const form = reactive(defaults())
-const editorMode = ref<'form' | 'yaml'>('form'),
-  deploymentYaml = ref('')
+const configurationEditor = useDeploymentConfigurationEditor<SessionCluster['runtime']>({
+  snapshot: () => ({ form, pods: pods.value }),
+  payload: () => payload(),
+  convert: (value, signal) => sessionsApi.configuration(value, signal),
+  applyRuntime: (runtime) => {
+    Object.assign(form.runtime, runtime)
+    pods.value = {
+      podTemplate: runtime.podTemplate || {},
+      jmPodTemplate: runtime.jmPodTemplate || {},
+      tmPodTemplate: runtime.tmPodTemplate || {},
+    }
+  },
+})
+const {
+  mode: editorMode,
+  yaml: deploymentYaml,
+  configValid,
+  podValid,
+  dirty: configurationDirty,
+} = configurationEditor
 const hasValidation = computed(() => clusters.value.some((c) => c.validation))
 const podCluster = ref<SessionCluster | null>(null)
 const labels: Record<string, string> = {
@@ -139,16 +155,12 @@ function open(item?: SessionCluster) {
     tmPodTemplate: form.runtime.tmPodTemplate || {},
   }
   podValid.value = true
-  deploymentYaml.value = form.runtime.deploymentYaml || ''
-  editorMode.value = deploymentYaml.value ? 'yaml' : 'form'
+  configurationEditor.reset(form.runtime)
+  configurationEditor.markSaved()
   editing.value = true
 }
-function payload() {
-  if (editorMode.value === 'yaml') parseDeploymentYaml(deploymentYaml.value)
-  else {
-    if (!configValid.value) throw new Error('请先修正 Flink 配置')
-    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
-  }
+function payload(): Omit<SessionCluster, 'id' | 'deploymentName' | 'desiredState'> {
+  configurationEditor.validate()
   return {
     ...form,
     runtime: {
@@ -169,20 +181,8 @@ watch(
   },
 )
 async function switchEditor(mode: 'form' | 'yaml') {
-  if (mode === editorMode.value) return
   await run(async () => {
-    const result = await sessionsApi.configuration(payload())
-    if (mode === 'form' && result.formIssue) throw new Error(result.formIssue)
-    if (mode === 'yaml') deploymentYaml.value = result.yaml
-    else {
-      Object.assign(form.runtime, result.runtime, { deploymentYaml: '', baseYaml: result.yaml })
-      pods.value = {
-        podTemplate: result.runtime.podTemplate || {},
-        jmPodTemplate: result.runtime.jmPodTemplate || {},
-        tmPodTemplate: result.runtime.tmPodTemplate || {},
-      }
-    }
-    editorMode.value = mode
+    await configurationEditor.switchTo(mode)
   })
 }
 async function save() {
@@ -619,7 +619,9 @@ onMounted(async () => {
       </div>
     </fieldset>
     <div class="form-actions editor-actionbar">
-      <span class="muted">保存配置后不会自动启动集群</span>
+      <span class="muted"
+        >{{ configurationDirty ? '有未保存的配置 · ' : '' }}保存配置后不会自动启动集群</span
+      >
       <button type="button" class="button" :disabled="busy || uploading" @click="editing = false">
         取消
       </button>

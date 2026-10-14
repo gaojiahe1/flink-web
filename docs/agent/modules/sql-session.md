@@ -1,8 +1,12 @@
 # SQL 与 Session
 
-更新：2026-10-13。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-14。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
+
+2026-10-14：SqlValidationLogReader 负责固定日志请求/解析，整轮五秒预算覆盖 TM/文件列表及正文，受限响应订阅器到期取消传输。每个成功文件独立交付；SqlExecutionService 在短临界区同时追加事件和推进 TM 游标，不按业务值去重。观察、取消、准备分别占用单次运行资格，外部 I/O 不持验证状态锁；状态提交核对元数据修订，迟到响应不会复活终态或追加取消后的数据。先持久化首次取消目标，独立控制请求五秒预算，确认前不释放独占。准备阶段即安排截止；未知提交保持固定 JobID，404 在请求未结束及短暂不可见窗口内不释放，旧记录重启兼容恢复。清理前重新核对 Session UID，关闭后不再提交观察或重新安排采集。TaskManager 日志路由兼容 Flink 的地址:端口型 ResourceID，仍拒绝斜线、查询参数和路径穿越。
+
+Session 先迁移、SQL 后迁移至 useDeploymentConfigurationEditor；共享原文/模式/有效性/脏状态及转换版本，页面提供业务快照、请求和回填。单调版本处理编辑后还原，草稿上下文处理切换和组件销毁，AbortSignal 取消旧请求；响应先完整验证再修改状态。后端 RuntimeYamlMapper 和各页面保存/发布流程不变。
 
 2026-10-13：`POST /api/sql/configuration`、`POST /api/sessions/configuration` 只做本地配置渲染/回填，不保存、不访问 Kubernetes；沿用原 SQL/Session DTO，运行配置增加可选 `deploymentYaml`/`baseYaml`，兼容旧表单记录。解析和受控字段比较由 [RuntimeYamlMapper](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/RuntimeYamlMapper.java) 完成。Session 的 `deploymentMode`/`tmReplicas` 显式表达按需/固定数量，运行中仍不能保存配置。dry-run 数值按十进制等值比较，真实改变输出最多八处路径及类别，不输出值。状态数量来自显式刷新中的 Flink REST `/overview`，内部验证就绪核对不增加数量请求。
 
@@ -27,6 +31,7 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [SqlJobServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/sql/impl/SqlJobServiceImpl.java)
 - [SqlParserServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/sql/impl/SqlParserServiceImpl.java)
 - [SqlExecutionServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/sql/impl/SqlExecutionServiceImpl.java)
+- [SqlValidationLogReader.java](../../../backend/src/main/java/com/flinkweb/service/sql/support/SqlValidationLogReader.java)、[SessionRestClient.java](../../../backend/src/main/java/com/flinkweb/client/flink/SessionRestClient.java)、[受限正文](../../../backend/src/main/java/com/flinkweb/client/flink/BoundedResponseBody.java)
 - [SessionClusterServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/session/impl/SessionClusterServiceImpl.java)
 - [ValidationJarBundle.java](../../../backend/src/main/java/com/flinkweb/service/sql/support/ValidationJarBundle.java)
 - [SqlRunner.java](../../../sql-runner/src/main/java/com/flinkweb/sql/SqlRunner.java)
@@ -34,6 +39,7 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [ParserMain.java](../../../sql-validator/src/main/java/com/flinkweb/validation/ParserMain.java)
 - [SqlStudioView.vue](../../../frontend/src/modules/sql/pages/SqlStudioView.vue)
 - [SessionsView.vue](../../../frontend/src/modules/session/pages/SessionsView.vue)
+- [共享配置编辑器](../../../frontend/src/shared/composables/useDeploymentConfigurationEditor.ts)、[转换版本回归](../../../frontend/tests/configuration-editor.spec.ts)、[正文预算回归](../../../backend/src/test/java/com/flinkweb/client/flink/SessionRestClientTest.java)
 - [SessionDevelopmentIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/SessionDevelopmentIntegrationTest.java)
 - [固定日志协议](../../../backend/src/main/java/com/flinkweb/config/sql/SqlValidationLog.java)、[编辑器支持](../../../frontend/src/shared/utils/sqlEditing.ts)、[真实 Session 日志回归](../../../scripts/check_sql_validation.py)
 - [SqlParserServiceTest.java](../../../backend/src/test/java/com/flinkweb/service/SqlParserServiceTest.java)

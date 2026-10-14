@@ -26,6 +26,7 @@ import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
 import { parseDocument } from 'yaml'
 import { parseDeploymentYaml } from '../../../shared/utils/deploymentYaml'
+import { useDeploymentConfigurationEditor } from '../../../shared/composables/useDeploymentConfigurationEditor'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -125,9 +126,6 @@ const initialRuntime = (): Runtime => ({
 })
 const form = reactive({ name: '', description: '', sql: example, revision: 0 })
 const runtime = reactive<Runtime>(initialRuntime())
-const editorMode = ref<'form' | 'yaml'>('form'),
-  deploymentYaml = ref('')
-const podValid = ref(true)
 const podOptions = computed<PodTemplateOptions>({
   get: () => ({
     podTemplate: JSON.parse(pod.value),
@@ -145,7 +143,6 @@ const records = ref<SqlDraft[]>([]),
   artifacts = ref<Artifact[]>([])
 const stateConfigBusy = ref(false)
 const artifactUploading = ref(false),
-  configValid = ref(true),
   templates = ref<Catalog[]>([]),
   podTemplateId = ref('')
 const flinkCatalogs = ref<FlinkCatalog[]>([]),
@@ -231,6 +228,36 @@ const error = ref(''),
   preview = ref(''),
   config = ref('{}'),
   pod = ref('{}')
+const configurationEditor = useDeploymentConfigurationEditor<Runtime>({
+  snapshot: () => ({
+    form,
+    runtime,
+    config: config.value,
+    pod: pod.value,
+    podTemplateId: podTemplateId.value,
+  }),
+  payload: () => payload(),
+  convert: (value, signal) =>
+    request<{ yaml: string; runtime: Runtime; formIssue?: string }>('/api/sql/configuration', {
+      method: 'POST',
+      signal,
+      ...jsonBody(value),
+    }),
+  applyRuntime: (value, pods) => {
+    Object.assign(runtime, value)
+    config.value = JSON.stringify(value.flinkConfiguration || {}, null, 2)
+    podOptions.value = pods
+  },
+})
+const {
+  mode: editorMode,
+  yaml: deploymentYaml,
+  configValid,
+  podValid,
+  savedSnapshot,
+  snapshot,
+  dirty,
+} = configurationEditor
 const check = ref<{
   level: string
   statementCount: number
@@ -315,17 +342,6 @@ const filtered = computed(() =>
   ),
 )
 const bytes = computed(() => new TextEncoder().encode(form.sql).length)
-const savedSnapshot = ref('')
-const snapshot = () =>
-  JSON.stringify({
-    form,
-    runtime,
-    config: config.value,
-    pod: pod.value,
-    podValid: podValid.value,
-    deploymentYaml: editorMode.value === 'yaml' ? deploymentYaml.value : '',
-  })
-const dirty = computed(() => savedSnapshot.value !== snapshot())
 watch(
   () => systemInfo.value?.namespace,
   (namespace) => {
@@ -394,11 +410,10 @@ async function open(record: SqlDraft, force = false) {
     revision: record.revision,
   })
   Object.assign(runtime, initialRuntime(), JSON.parse(JSON.stringify(record.runtime)))
-  deploymentYaml.value = runtime.deploymentYaml || ''
-  editorMode.value = deploymentYaml.value ? 'yaml' : 'form'
   if (record.jobId) runtime.workspaceId = record.jobId
   config.value = JSON.stringify(runtime.flinkConfiguration || {}, null, 2)
   pod.value = JSON.stringify(runtime.podTemplate || {}, null, 2)
+  configurationEditor.reset(runtime)
   preview.value = ''
   check.value = null
   catalogPreview.value = ''
@@ -425,10 +440,9 @@ async function create() {
   linkedJob.value = ''
   Object.assign(form, { name: '', description: '', sql: example, revision: 0 })
   Object.assign(runtime, initialRuntime())
-  deploymentYaml.value = ''
-  editorMode.value = 'form'
   config.value = '{}'
   pod.value = '{}'
+  configurationEditor.reset(runtime)
   preview.value = ''
   check.value = null
   catalogPreview.value = ''
@@ -464,12 +478,8 @@ async function applyPodTemplate() {
   message.value = '已复制模板 PodTemplate，可继续编辑'
   error.value = ''
 }
-function payload() {
-  if (editorMode.value === 'yaml') parseDeploymentYaml(deploymentYaml.value)
-  else {
-    if (!podValid.value) throw new Error('请先修正 PodTemplate YAML')
-    if (!configValid.value) throw new Error('请先修正 Flink 配置')
-  }
+function payload(): Pick<SqlDraft, 'name' | 'description' | 'sql' | 'revision' | 'runtime'> {
+  configurationEditor.validate()
   return {
     ...form,
     runtime: {
@@ -482,27 +492,8 @@ function payload() {
   }
 }
 async function switchEditor(mode: 'form' | 'yaml') {
-  if (mode === editorMode.value) return
   return run(async () => {
-    const before = snapshot()
-    const result = await request<{ yaml: string; runtime: Runtime; formIssue?: string }>(
-      '/api/sql/configuration',
-      {
-        method: 'POST',
-        ...jsonBody(payload()),
-      },
-    )
-    if (before !== snapshot()) throw new Error('配置已修改，请重新切换编辑方式')
-    if (mode === 'form' && result.formIssue) throw new Error(result.formIssue)
-    if (mode === 'yaml') deploymentYaml.value = result.yaml
-    else {
-      Object.assign(runtime, result.runtime, { deploymentYaml: '', baseYaml: result.yaml })
-      config.value = JSON.stringify(result.runtime.flinkConfiguration || {}, null, 2)
-      podOptions.value = readPodTemplates(parseDeploymentYaml(result.yaml).toJS().spec)
-      configValid.value = true
-      podValid.value = true
-    }
-    editorMode.value = mode
+    await configurationEditor.switchTo(mode)
   })
 }
 async function persist() {
