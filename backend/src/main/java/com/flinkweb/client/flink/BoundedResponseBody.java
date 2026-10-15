@@ -8,7 +8,8 @@ import java.util.concurrent.Flow.Subscription;
 
 /** 有界响应订阅器；完整正文在预算内完成，取消同时关闭上游，不留下阻塞读取线程。 */
 final class BoundedResponseBody implements HttpResponse.BodySubscriber<byte[]> {
-  private final byte[] tail;
+  private byte[] tail = new byte[0];
+  private final int capacity;
   private final long maximum;
   private final CompletableFuture<byte[]> body = new CompletableFuture<>();
   private Subscription subscription;
@@ -16,9 +17,11 @@ final class BoundedResponseBody implements HttpResponse.BodySubscriber<byte[]> {
   private int position, size;
   private long total;
 
-  /** 分配固定尾部容量，限制整个上游传输量。 */
+  /** 只保存尾部容量上限，收到正文后再增长分配，空响应不预分配。 */
   BoundedResponseBody(int capacity, long maximum) {
-    tail = new byte[capacity];
+    if (capacity <= 0 || maximum <= 0)
+      throw new IllegalArgumentException("Invalid response limits");
+    this.capacity = capacity;
     this.maximum = maximum;
   }
 
@@ -37,28 +40,31 @@ final class BoundedResponseBody implements HttpResponse.BodySubscriber<byte[]> {
   /** 分块累计和滚动尾部缓存，不持有整个文件。 */
   public void onNext(List<ByteBuffer> buffers) {
     try {
-      byte[] chunk = new byte[8192];
-      for (var buffer : buffers)
+      if (canceled) return;
+      for (var buffer : buffers) {
+        total += buffer.remaining();
+        if (total > maximum) throw new java.io.IOException("Flink response exceeds transfer limit");
+        grow((int) Math.min(capacity, total));
         while (buffer.hasRemaining()) {
-          int count = Math.min(buffer.remaining(), chunk.length);
-          buffer.get(chunk, 0, count);
-          total += count;
-          if (total > maximum)
-            throw new java.io.IOException("Flink response exceeds transfer limit");
-          int start = 0;
-          while (start < count) {
-            int length = Math.min(count - start, tail.length - position);
-            System.arraycopy(chunk, start, tail, position, length);
-            position = (position + length) % tail.length;
-            size = Math.min(tail.length, size + length);
-            start += length;
-          }
+          int length = Math.min(buffer.remaining(), tail.length - position);
+          buffer.get(tail, position, length);
+          position = (position + length) % tail.length;
+          size = Math.min(tail.length, size + length);
         }
+      }
       subscription.request(1);
     } catch (Exception error) {
       cancel();
       body.completeExceptionally(error);
     }
+  }
+
+  /** 倍增至实际所需容量，达到尾部上限后按环形缓冲覆盖，增长时保留原顺序。 */
+  private void grow(int required) {
+    if (required <= tail.length) return;
+    int length = (int) Math.min(capacity, Math.max(required, Math.max(8192L, tail.length * 2L)));
+    tail = java.util.Arrays.copyOf(tail, length);
+    position = size;
   }
 
   /** 将通信异常传递给等待者。 */

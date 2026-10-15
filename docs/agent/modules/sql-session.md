@@ -1,8 +1,10 @@
 # SQL 与 Session
 
-更新：2026-10-14。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-15。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
+
+2026-10-15：parseDeploymentYaml 明确检查 spec 为非空对象且非数组，拒绝布尔/数字/文本；Connector 提示先只遮蔽注释，保留字符串和原位置，再匹配真实 Connector/已用键。BoundedResponseBody 从空缓冲按正文倍增到原容量上限，取消和 128MiB 传输边界不变；小日志不再预分配 33MiB，满/绕回/跨增长边界有回归。[编辑校验用例](../../../frontend/tests/editor-validation.spec.ts) 与原客户端/Session 测试覆盖边界；分配量是合成测量，不能等同生产吞吐收益。
 
 2026-10-14：按用户确认的侧栏设计实现 SQL 智能体第一阶段，含生成/解释/修复、字段/Connector 草稿、需求确认、差异显式应用及历史。编辑使旧建议与检查失效，继续复用既有 Parser/Session 验证；模型不部署或执行。模型服务、作业主动诊断、接口及代码统一见 [AI 模块](ai-assistant.md)。
 

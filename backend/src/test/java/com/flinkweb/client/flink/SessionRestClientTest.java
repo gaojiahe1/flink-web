@@ -14,6 +14,55 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /** 固定验证文件路由、传输限制及缺失轮转副本的兼容性。 */
 class SessionRestClientTest {
+  /** 小日志分配量按真实大小增长，不为一次空响应预留三十三 MiB。 */
+  @Test
+  void smallBodyAllocationRemainsBoundedByActualContent() {
+    var bean =
+        (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+    var subscription = mock(java.util.concurrent.Flow.Subscription.class);
+    var warmup = new BoundedResponseBody(1, 1);
+    warmup.onSubscribe(subscription);
+    warmup.onComplete();
+    clearInvocations(subscription);
+    long thread = Thread.currentThread().getId(), before = bean.getThreadAllocatedBytes(thread);
+    var body = new BoundedResponseBody(33 * 1024 * 1024, 128L * 1024 * 1024);
+    body.onSubscribe(subscription);
+    body.onNext(java.util.List.of(java.nio.ByteBuffer.wrap(new byte[32])));
+    body.onComplete();
+    long allocated = bean.getThreadAllocatedBytes(thread) - before;
+    System.out.println("Small validation log allocated bytes=" + allocated);
+    assertThat(body.getBody().toCompletableFuture().join()).hasSize(32);
+    assertThat(allocated).isLessThan(2 * 1024 * 1024);
+  }
+
+  /** 响应头已到但正文停滞时仍按预算返回，上游正文订阅被取消。 */
+  @Test
+  void growingTailPreservesEmptySmallFullAndWrappedBodies() {
+    for (int capacity : new int[] {9, 20000})
+      for (int length :
+          new int[] {0, 1, 8, capacity - 1, capacity, capacity + 1, capacity * 3 + 2}) {
+        var body = new BoundedResponseBody(capacity, capacity * 4L);
+        var subscription = mock(java.util.concurrent.Flow.Subscription.class);
+        body.onSubscribe(subscription);
+        byte[] bytes = new byte[length];
+        for (int index = 0; index < length; index++) bytes[index] = (byte) index;
+        for (int start = 0; start < length; start += 1111)
+          body.onNext(
+              java.util.List.of(
+                  java.nio.ByteBuffer.wrap(bytes, start, Math.min(1111, length - start))));
+        body.onComplete();
+        assertThat(body.getBody().toCompletableFuture().join())
+            .isEqualTo(java.util.Arrays.copyOfRange(bytes, Math.max(0, length - capacity), length));
+      }
+    var body = new BoundedResponseBody(9, 40);
+    var subscription = mock(java.util.concurrent.Flow.Subscription.class);
+    body.onSubscribe(subscription);
+    body.cancel();
+    body.onNext(java.util.List.of(java.nio.ByteBuffer.wrap(new byte[8])));
+    verify(subscription).cancel();
+    assertThat(body.getBody().toCompletableFuture()).isCompletedExceptionally();
+  }
+
   /** 响应头已到但正文停滞时仍按预算返回，上游正文订阅被取消。 */
   @Test
   @SuppressWarnings("unchecked")

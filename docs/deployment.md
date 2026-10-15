@@ -133,9 +133,13 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:35a69563829c37dda97a76c884b98d145a48ded4333af153f9321d1c5136984c |
+| 192.168.68.1:5000/flink-web/app | sha256:0d40098271903e06d951a54535f77b5dd21c9b33b34b45a4ee719d60bc2f70f9 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:cac0255fc1de1bd4f589170d9cd3bae86b5e01b554af77b3de412d4137c5cb1b |
+| 192.168.68.1:5000/flink-web/web | sha256:377ee4a1af10635ab3d37d19905738be4225d0c6f06857431098b43b4cff83f2 |
+
+2026-10-15 AI 健壮性/日志缓冲发布：app/web:0.0.4 已覆盖推送，不更新 latest/downloader。复用已发布 Kylin/JRE/Nginx 层，仅替换本轮完整验证的后端 JAR 和前端 dist；无数据库迁移或新增密钥。最终 app config 为 sha256:2de2377bbea1c4e631b3a5576ec219ea88b143d858e0f1489023944f64ff4248，web config 为 sha256:a773b337bb5ebdcf54d6520ba8189ef61a5343c2a26834cd542070726b5c7d48。经现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要/config ID；远端 app20层/web18层的大小、压缩摘要和解压 diff ID 均与最终已测试镜像一致。
+
+完整后端 224 项中 223 通过、可选 MinIO 跳过；51 项相关前端回归及最终镜像另 10 项真实 API 页面通过。实际容器中创建响应丢失后前端查询原编号恢复，协议模型仅调用一次；异常定义拒绝、加密登录/密钥保存、合法草稿及模式失效通过。SQL/Session 尾部和取消边界回归保留，小日志实测分配显著减少；不将合成结果外推为生产吞吐。详见 [本轮验收](agent/validation.md#ai-健壮性与按需日志缓冲2026-10-15)。平台 Pod 按已有授权流程重新拉取 app/web 生效，Runner/Parser/固定 Session 日志配置均无需替换；未更新实际 Kubernetes 工作负载，模型和 Kubernetes 使用隔离协议替身。
 
 2026-10-14 AI 第一阶段发布：app/web:0.0.4 已覆盖推送，downloader 和 latest 未改。复用已验证的 Kylin/JRE/Nginx 运行层，替换完整校验后的后端 JAR/前端 dist，依赖、Runner 和两份精确 Parser 未改；linux/amd64、UID/GID10001。最终 app config 为 sha256:5effe20c9b695ff74db47ab7777a87dbada19c36bfb7ed70ed66395d16ed23f4，web config 为 sha256:6455ddfc65ea6a2d52cc4992b3eddf2027e1bba146cbd2e623cbd41799a531b7。通过现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要、config ID；远端 app19层/web16层的压缩 SHA-256、大小和解压 diff ID 均与测试镜像一致。
 

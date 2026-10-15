@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Sparkles, X } from '@lucide/vue'
 import AiModelSelect from './AiModelSelect.vue'
 import AiResultReport from './AiResultReport.vue'
@@ -7,7 +7,7 @@ import AiDataDefinitionEditor from './AiDataDefinitionEditor.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import { aiApi, type AiModel, type AiResult, type AiTask } from '../api/ai'
 import { useAiTask } from '../composables/useAiTask'
-import { mergeDefinitions } from '../utils/definitions'
+import { mergeDefinitions, validateDefinitions } from '../utils/definitions'
 const props = defineProps<{
   sql: string
   sqlId: string
@@ -30,7 +30,7 @@ const windowMinutes = ref(5),
   eventTime = ref(''),
   dedup = ref(''),
   startPosition = ref('latest-offset')
-const { task, busy, error, start, cancel } = useAiTask()
+const { task, busy, error, uncertain, retry, start, cancel } = useAiTask()
 const history = ref<AiTask[]>([]),
   base = ref(-1),
   stale = ref(false),
@@ -42,6 +42,10 @@ const statusLabels: Record<string, string> = {
   FAILED: '失败',
   CANCELED: '已取消',
 }
+let contextVersion = 0,
+  compileRequest = 0,
+  historyRequest = 0,
+  disposed = false
 const result = computed(() => (task.value?.state === 'SUCCEEDED' ? task.value.result : undefined))
 const purpose = computed(() => (mode.value === 'definition' ? 'definition' : 'sql'))
 const canApply = computed(
@@ -63,13 +67,15 @@ const differences = computed(() => {
   }))
 })
 function invalidate() {
+  contextVersion++
+  compiledMessage.value = ''
   stale.value = true
   if (busy.value) void cancel()
 }
 watch(() => props.contextKey, invalidate, { flush: 'sync' })
 watch(instruction, invalidate, { flush: 'sync' })
 watch(
-  [sourceIds, definitionsText, windowMinutes, eventTime, dedup, startPosition, modelId],
+  [sourceIds, definitionsText, windowMinutes, eventTime, dedup, startPosition, modelId, mode],
   invalidate,
   { deep: true, flush: 'sync' },
 )
@@ -83,13 +89,8 @@ watch(modelId, () => {
 })
 function definitions() {
   const value: unknown = JSON.parse(definitionsText.value)
-  if (
-    !Array.isArray(value) ||
-    value.length > 8 ||
-    value.some((v) => !v || typeof v !== 'object' || Array.isArray(v))
-  )
-    throw new Error('数据定义应为最多八项的 JSON 对象数组')
-  return value as Record<string, unknown>[]
+  validateDefinitions(value)
+  return value
 }
 function addDefinition(sink: boolean) {
   try {
@@ -109,15 +110,19 @@ function addDefinition(sink: boolean) {
   }
 }
 async function compile() {
+  const version = contextVersion,
+    request = ++compileRequest
+  const current = () => !disposed && version === contextVersion && request === compileRequest
   localError.value = ''
   compiledMessage.value = ''
   try {
     const value = await aiApi.compile(definitions())
+    if (!current()) return
     compiledMessage.value = value.valid
       ? '数据定义编译通过，尚未应用到 SQL 或登记为共享数据源。'
       : value.pending.map((p) => p.table + '：' + p.message).join('\n')
   } catch (cause) {
-    localError.value = (cause as Error).message
+    if (current()) localError.value = (cause as Error).message
   }
 }
 async function send() {
@@ -165,10 +170,16 @@ function applyDefinitions() {
   }
 }
 async function loadHistory() {
+  const version = contextVersion,
+    request = ++historyRequest,
+    sqlId = props.sqlId
+  const current = () =>
+    !disposed && version === contextVersion && request === historyRequest && sqlId === props.sqlId
   try {
-    history.value = await aiApi.history(props.sqlId)
+    const value = await aiApi.history(sqlId)
+    if (current()) history.value = value
   } catch (cause) {
-    localError.value = (cause as Error).message
+    if (current()) localError.value = (cause as Error).message
   }
 }
 function showHistory() {
@@ -183,6 +194,10 @@ watch(
   },
 )
 onMounted(loadHistory)
+onBeforeUnmount(() => {
+  disposed = true
+  contextVersion++
+})
 </script>
 <template>
   <aside class="sql-runtime ai-sql-panel">
@@ -317,6 +332,7 @@ onMounted(loadHistory)
                   ? '确认并生成 SQL'
                   : '发送'
           }}</button
+        ><button v-if="uncertain" class="button" @click="retry">核对原任务并重试</button
         ><button v-if="busy" class="button" @click="cancel">取消任务</button>
       </div>
       <p v-if="task" class="muted" role="status">

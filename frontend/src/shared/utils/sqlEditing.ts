@@ -78,13 +78,18 @@ export function connectorCompletion(context: CompletionContext): CompletionResul
   const scope = masked.slice(start)
   if (scope.includes(';') || (scope.match(/\(/g)?.length ?? 0) <= (scope.match(/\)/g)?.length ?? 0))
     return null
-  const optionsText = text.slice(start)
+  // 保留字符串和原始位置，只遮蔽注释，避免注释中的 Connector/已用键影响候选。
+  const uncommented = text.replace(
+    /'(?:''|[^'])*'|`(?:``|[^`])*`|"(?:""|[^"])*"|--[^\n]*(?:\n|$)|\/\*[\s\S]*?(?:\*\/|$)/g,
+    (s) => (s.startsWith('--') || s.startsWith('/*') ? s.replace(/[^\r\n]/g, ' ') : s),
+  )
+  const optionsText = uncommented.slice(start)
   const token = /'([^'\n]*)$/.exec(optionsText)
   if (!token) return null
   // 当前未闭合字符串必须是真正的引号，不能是注释里的引号。
   const quote = context.pos - token[1]!.length - 1
   if (masked[quote] !== "'") return null
-  const before = text.slice(start, quote)
+  const before = uncommented.slice(start, quote)
   const key = /'([^']+)'\s*=\s*$/.exec(before)?.[1]
   const connector = /'connector'\s*=\s*'([^']+)'/i.exec(optionsText)?.[1]?.toLowerCase()
   let candidates = key

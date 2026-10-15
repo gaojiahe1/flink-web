@@ -18,7 +18,7 @@ const modelId = ref(''),
   allowExternal = ref(false),
   includeLogs = ref(true),
   instruction = ref('分析当前作业报错，给出原因、证据和分步解决方案。')
-const { task, busy, error: failure, start, cancel } = useAiTask()
+const { task, busy, error: failure, uncertain, retry, start, cancel } = useAiTask()
 watch(
   () => props.job.id,
   () => {
@@ -85,6 +85,7 @@ function analyze() {
         @click="analyze"
       >
         {{ busy ? '正在收集证据并分析…' : '开始 AI 分析' }}</button
+      ><button v-if="uncertain" class="button" @click="retry">核对原任务并重试</button
       ><button v-if="busy" class="button" @click="cancel">取消</button>
     </div>
     <p v-if="task" class="muted" role="status">{{ task.state }} · {{ task.model }}</p>

@@ -13,7 +13,13 @@ export function parseDeploymentYaml(source: string) {
     )
   }
   const value = document.toJS({ maxAliasCount: 0 })
-  if (!value || value.kind !== 'FlinkDeployment' || !value.spec || Array.isArray(value.spec))
+  if (
+    !value ||
+    value.kind !== 'FlinkDeployment' ||
+    !value.spec ||
+    typeof value.spec !== 'object' ||
+    Array.isArray(value.spec)
+  )
     throw new Error('请填写完整的 FlinkDeployment YAML')
   readPodTemplates(value.spec)
   return document
