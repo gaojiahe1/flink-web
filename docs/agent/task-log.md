@@ -29,4 +29,4 @@
 
 ## 2026-10-15 Session 界面与模型需求向导
 
-基线4abb34f、独立分支codex/session-ui-model-wizard，实现用户六项要求中的界面/模型/SQL功能；BES按最新指令暂缓，保留Tomcat。真实Flink检出web.submit.enable同时关闭JAR REST，已按普通/专用Session分开并通过代理统一限制用户入口；修正基础SQL词表高亮。后端227项含1可选跳过、收尾60项和前端55项通过，真实镜像及Flink联调、发布摘要核对完成；真实ModelScope返回账号邮箱验证403，未将其标为成功。范围及限制见 [本次验收](validation.md#session-界面与模型需求向导2026-10-15)，提交/合并及清理随收尾补录。
+基线4abb34f、独立分支codex/session-ui-model-wizard，实现用户六项要求中的界面/模型/SQL功能；BES按最新指令暂缓，保留Tomcat。真实Flink检出web.submit.enable同时关闭JAR REST，已按普通/专用Session分开并通过代理统一限制用户入口；修正基础SQL词表高亮。后端227项含1可选跳过、收尾60项和前端55项通过，真实镜像及Flink联调、发布摘要核对完成；真实ModelScope返回账号邮箱验证403，未将其标为成功。范围及限制见 [本次验收](validation.md#session-界面与模型需求向导2026-10-15)，临时容器/网络、Vite、独占文件、已核实截图与本轮私有缓存清理完成，原数据库/备份、共享/历史缓存、registry及最终镜像保留。功能提交 `0336805` 校验发布后快进合并本地master，无冲突、分支树一致；后续仅补录文档并检查，未推送源码Git。
