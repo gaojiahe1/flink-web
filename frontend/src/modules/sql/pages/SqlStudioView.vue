@@ -167,7 +167,10 @@ let resizeStart = { x: 0, width: 0 }
 function clampInspector(width = inspectorWidth.value) {
   const element = workbench.value
   if (!element) return
-  const explorer = parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
+  const explorer =
+    sideTab.value === 'ai'
+      ? 0
+      : parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
   inspectorMax.value = Math.max(300, Math.min(860, element.clientWidth - explorer - 42 - 8 - 320))
   inspectorWidth.value = Math.round(Math.min(inspectorMax.value, Math.max(300, width)))
 }
@@ -180,12 +183,15 @@ function startResize(event: PointerEvent) {
   event.preventDefault()
 }
 function resizeInspector(event: PointerEvent) {
-  if (resizing.value) clampInspector(resizeStart.width + resizeStart.x - event.clientX)
+  if (resizing.value)
+    clampInspector(
+      resizeStart.width + (sideTab.value === 'ai' ? 1 : -1) * (event.clientX - resizeStart.x),
+    )
 }
 function resizeWithKeys(event: KeyboardEvent) {
   const widths: Record<string, number> = {
-    ArrowLeft: inspectorWidth.value + 40,
-    ArrowRight: inspectorWidth.value - 40,
+    ArrowLeft: inspectorWidth.value + (sideTab.value === 'ai' ? -40 : 40),
+    ArrowRight: inspectorWidth.value + (sideTab.value === 'ai' ? 40 : -40),
     Home: 300,
     End: inspectorMax.value,
   }
@@ -194,7 +200,11 @@ function resizeWithKeys(event: KeyboardEvent) {
   clampInspector(widths[event.key])
 }
 function resetInspector() {
-  clampInspector(Math.min(380, Math.max(300, window.innerWidth * 0.26)))
+  clampInspector(
+    sideTab.value === 'ai'
+      ? ((workbench.value?.clientWidth || 1000) - 50) / 2
+      : Math.min(380, Math.max(300, window.innerWidth * 0.26)),
+  )
 }
 onMounted(() => {
   resizeObserver = new ResizeObserver(() => clampInspector())
@@ -202,6 +212,7 @@ onMounted(() => {
 })
 onUnmounted(() => resizeObserver?.disconnect())
 watch(explorerCollapsed, () => nextTick(() => clampInspector()))
+watch(sideTab, () => nextTick(resetInspector))
 const filteredSources = computed(() =>
   sources.value.filter((s) =>
     (s.name + s.id + s.connectorType).toLowerCase().includes(sourceQuery.value.toLowerCase()),
@@ -270,6 +281,7 @@ const verification = ref<SqlVerification | null>(null)
 const sqlEditor = ref<InstanceType<typeof CodeEditor>>()
 const resultTab = ref('status')
 const aiContextVersion = ref(0)
+const aiStep = ref(1)
 watch(
   () => snapshot(),
   () => {
@@ -828,12 +840,25 @@ watch(
       >前往 Session 集群，创建或启动 SQL 验证集群 ↗</RouterLink
     >
   </div>
+  <nav v-if="sideTab === 'ai'" class="sql-wizard-steps" aria-label="SQL 需求向导">
+    <button
+      v-for="(label, index) in ['选择数据', '确认需求', '查看 SQL', '检查与保存']"
+      :key="label"
+      :class="{ active: aiStep === index + 1 }"
+      :aria-current="aiStep === index + 1 ? 'step' : undefined"
+      @click="aiStep = index + 1"
+    >
+      <span>{{ index + 1 }}</span
+      >{{ label }}
+    </button>
+  </nav>
   <section
     ref="workbench"
     class="sql-workbench"
     :style="{ '--inspector-width': inspectorWidth + 'px' }"
     :class="{
       'with-inspector': !!sideTab,
+      'ai-guided': sideTab === 'ai',
       'explorer-collapsed': explorerCollapsed,
       'studio-maximized': maximized,
       'inspector-resizing': resizing,
@@ -1415,6 +1440,9 @@ watch(
     </aside>
     <AiSqlAssistant
       v-if="sideTab === 'ai'"
+      v-model:step="aiStep"
+      :check-summary="check?.message"
+      :dirty="dirty"
       :sql="form.sql"
       :sql-id="selected"
       :flink-version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || ''"
@@ -1423,6 +1451,8 @@ watch(
       :sources="sources"
       @close="sideTab = ''"
       @apply="applyAiSuggestion"
+      @check="validate"
+      @save="save"
     />
     <nav class="studio-rail" aria-label="SQL 辅助面板">
       <button

@@ -107,6 +107,7 @@ try:
         time.sleep(1)
     else:
         raise RuntimeError('Session 未就绪')
+    assert call('GET', '/config')['features']['web-submit'] is True
     # 在容器内上传同一经过构建验证的 Runner，避免宿主 multipart 工具依赖。
     uploaded = docker('exec', jm, 'curl', '-fsS', '-F', 'jarfile=@/opt/flink/usrlib/runner.jar', 'http://localhost:8081/jars/upload')
     jar = json.loads(uploaded)['filename'].split('/')[-1]

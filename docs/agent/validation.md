@@ -292,3 +292,15 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 本聊天适合以“已补录、未覆盖证据和待办已登记”归档；不等于全部原件/历史工具输出审阅、生产403已解决或华为全接口认证。继续工作从open-questions与相关模块检索即可，无需保留聊天为唯一待办来源。本轮只给归档判断，不操作应用归档。
 
 本轮最终校验：python scripts/check_agent_docs.py通过31份文档、251个本地链接/锚点及AGENTS原文规则；git diff --check通过。对22个已定位源码/测试/配置/清单/脚本及.gitignore的收尾SHA-256比对全部不变；运行目录Git差异为空，暂存区为空，HEAD仍e5d0245。工作区保留原有修改，另有本轮sql-session模块文档变更；本轮共增量维护14份既有文档，无新知识路径，无需重建索引。未创建临时脚本、保存聊天全文/凭据或清理共享文件。业务历史测试未重跑，外部URL未进行本轮HTTP可达性认证。
+
+## Session 界面与模型需求向导（2026-10-15）
+
+- 起点：干净master `4abb34f`，工作分支 `codex/session-ui-model-wizard`。本轮实现完整错误浮层及工具栏刷新、Session UI关闭提交、模型服务重设计/失败分类、Connector/类型提示高亮、四步需求向导和任务模型选择；BES由用户明确暂缓，继续Tomcat。
+- 后端完整227项：226通过、1可选MinIO跳过。收尾真实Flink发现开关同时禁用JAR REST，修正普通/专用Session差异及嵌套features后，受影响60项全部复测通过。精确Parser测试使用本次从原发布镜像提取的1.20.3/1.20.5 JAR；Runner/Parser运行代码未改。
+- 最终前端55项相关测试通过，含模式/异步版本和取消回归、模型切换/显式应用/检查、工具栏位置、完整错误尾部、桌面/390px和面板边界、Connector上下文及实际Keyword/Type语法节点。生产构建、类型、全源格式、Java分层/中文注释和Git差异校验通过；基础关键字丢失的问题已补实际解析回归。
+- 最终app/web实际只读、UID10001容器通过真实加密登录、Session配置/启动（Kubernetes协议替身）、模型密钥加密传输/保存且不回显、401/403/404/429脱敏提示、真实任务接口解释流程、SQL关键字/类型/字符串三种实际渲染颜色。Web DNS/代理恢复四类检查通过。
+- 实际Flink1.20.5/JDK17经平台只读代理验证Submit New Job隐藏，内部Runner上传/运行、固定日志、+I/-U/+U/-D、多行文本、1000条显示截断和取消确认通过。Flink API `/config`使用嵌套features；web.submit.enable=false同时禁用提交REST，所以只在普通Session强制false，专用验证保留true。未更新实际Kubernetes/Operator，协议替身不是生产验收。
+- ModelScope指定Qwen/Qwen3.5-27B的真实认证请求返回HTTP403，厂商明确要求完成邮箱验证；未取得成功生成结果。本库/镜像/知识文档不保存用户提供的密钥。ModelScope根地址、非流式关闭thinking及安全错误分类另有测试，不能据此声称真实模型可用。
+- app/web0.0.4发布完成：manifest分别为 `sha256:b34f4caa63841e9e20a3694f2fb2bbfe3c40d075cf89e42c75fbe955b5b8aaf8`、`sha256:5f47d45da2b92c27b9c78c65f5b47a3f95baca6e143e0b39d61e0d6ad0e9e20f`，config及全部21/20层内容与本地一致；未更新latest/downloader或现场工作负载。
+
+最终镜像另有2项真实凭据传输/重试回归通过。临时容器/网络、Vite、检查标签和中间镜像已清理，按已核实ID回收本轮私有构建缓存；共享/历史缓存、registry和最终发布镜像保留。独占目录及已核实测试截图收尾清理，原数据库/备份保留。提交、合并结果在收尾后增量补记。

@@ -8,7 +8,7 @@
 
 2026-10-14：按用户确认的侧栏设计实现 SQL 智能体第一阶段，含生成/解释/修复、字段/Connector 草稿、需求确认、差异显式应用及历史。编辑使旧建议与检查失效，继续复用既有 Parser/Session 验证；模型不部署或执行。模型服务、作业主动诊断、接口及代码统一见 [AI 模块](ai-assistant.md)。
 
-同日扩展设计：SQL 助手增加任务模型选择；数据定义增加自然语言建议、字段/Connector 表单编辑、继续对话补充、待补参数和显式应用。复用当前草稿/运行配置、数据源生成及独立检查流程；具体新接口未实现。用户新增的模型管理与主动报错分析设计边界集中记录在 REQ-003，不能再以此前阶段划分否定这项最新要求。
+现已实现（2026-10-15）：SQL 助手需求向导及任务模型选择；数据定义增加自然语言建议、字段/Connector 表单编辑、继续对话补充、待补参数和显式应用。复用当前草稿/运行配置、数据源生成及独立检查流程；复用已有 AI 任务与定义接口，原保存/发布边界保留。用户新增的模型管理与主动报错分析设计边界集中记录在 REQ-003，不能再以此前阶段划分否定这项最新要求。
 
 2026-10-14：SqlValidationLogReader 负责固定日志请求/解析，整轮五秒预算覆盖 TM/文件列表及正文，受限响应订阅器到期取消传输。每个成功文件独立交付；SqlExecutionService 在短临界区同时追加事件和推进 TM 游标，不按业务值去重。观察、取消、准备分别占用单次运行资格，外部 I/O 不持验证状态锁；状态提交核对元数据修订，迟到响应不会复活终态或追加取消后的数据。先持久化首次取消目标，独立控制请求五秒预算，确认前不释放独占。准备阶段即安排截止；未知提交保持固定 JobID，404 在请求未结束及短暂不可见窗口内不释放，旧记录重启兼容恢复。清理前重新核对 Session UID，关闭后不再提交观察或重新安排采集。TaskManager 日志路由兼容 Flink 的地址:端口型 ResourceID，仍拒绝斜线、查询参数和路径穿越。
 
@@ -51,3 +51,11 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [SqlParserServiceTest.java](../../../backend/src/test/java/com/flinkweb/service/SqlParserServiceTest.java)
 
 2026-10-13 归档补核：SqlJobServiceImpl.deploymentLink 在读取时兼容失效关联；JobServiceImpl.delete 先迁移仍被 SQL 草稿引用的专属依赖，再清原目录并解除 jobId/publishedAt。SQL 有有效部署关联时不能直接删草稿，JAR 开发映射只在新建或首次编辑时登记。页面检查状态绑定当前 SQL/配置，后端提交再次检查；验证 JAR 分发不能热更新 Session 环境、非 JAR 文件或 Flink 插件。Session 分区表单与草稿删除入口已有实现/测试定义，本轮未运行。来源和历史验收见 [归档核对](../validation.md#sql-与-session-开发聊天归档核对2026-10-13)。
+
+## Session UI 与 SQL 编辑提示（2026-10-15）
+
+SessionStateDetail 将完整脱敏错误浮层挂到 body，支持悬浮/聚焦/点击、Esc 关闭，JSON 格式化并限制滚动区域；右上角统一刷新状态，保留三秒冷却及按需观测，Pod 抽屉和 Flink UI 链接保留。最新位置要求替代旧逐行刷新。
+
+Session Flink UI 的 `/config` 改写嵌套 `features.web-submit/web-cancel/web-rescale=false`，禁止代理 JAR 路径；普通 Session 渲染强制 `web.submit.enable=false`。真实 Flink1.20.5 证明此开关也关闭 JAR REST，因此专用验证 Session 固定为 true，保留后台提交，面向用户的代理仍隐藏并拦截。不能把 UI 限制等同于直接暴露 Flink REST 的网络权限控制；按原部署边界通过平台访问。SQL Runner、日志、1000条及截止取消不变。
+
+SQL 提示参考 [Flink2.3 SQL](https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/sql/overview/)、[数据类型](https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/sql/reference/data-types/) 及各官方 Connector 文档，提供 Kafka/Upsert Kafka、JDBC、文件、DataGen、Print、BlackHole、Elasticsearch7、OpenSearch、HBase2.2、Kinesis、MongoDB 选项/值和说明。仅当前 WITH 上下文匹配，排除注释及已用键。修正 StandardSQL.spec 为空及自定义词表大小写造成基础关键词失去解析的问题，关键词/类型/字符串分别高亮。编辑提示不代表 Connector 已安装或新增2.3运行认证；精确 Parser 版本仍为1.20.3/1.20.5。

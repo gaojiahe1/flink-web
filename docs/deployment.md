@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:0d40098271903e06d951a54535f77b5dd21c9b33b34b45a4ee719d60bc2f70f9 |
+| 192.168.68.1:5000/flink-web/app | sha256:b34f4caa63841e9e20a3694f2fb2bbfe3c40d075cf89e42c75fbe955b5b8aaf8 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:377ee4a1af10635ab3d37d19905738be4225d0c6f06857431098b43b4cff83f2 |
+| 192.168.68.1:5000/flink-web/web | sha256:5f47d45da2b92c27b9c78c65f5b47a3f95baca6e143e0b39d61e0d6ad0e9e20f |
 
 2026-10-15 AI 健壮性/日志缓冲发布：app/web:0.0.4 已覆盖推送，不更新 latest/downloader。复用已发布 Kylin/JRE/Nginx 层，仅替换本轮完整验证的后端 JAR 和前端 dist；无数据库迁移或新增密钥。最终 app config 为 sha256:2de2377bbea1c4e631b3a5576ec219ea88b143d858e0f1489023944f64ff4248，web config 为 sha256:a773b337bb5ebdcf54d6520ba8189ef61a5343c2a26834cd542070726b5c7d48。经现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要/config ID；远端 app20层/web18层的大小、压缩摘要和解压 diff ID 均与最终已测试镜像一致。
 
@@ -582,3 +582,13 @@ SQL Application 和验证专用 Session 的 Runner 改为手动选择：在 SQL 
 
 
 2026-10-13 归档补核：10-08/10-09 聊天中的独立前端 Deployment 更新命令及桌面 YAML 检查属于当时环境；桌面附件原件现已缺失。本仓库主清单和 frontend-runtime-patch.yaml 已针对合并 StatefulSet/flink-web，前后端 Always、Pod enableServiceLinks=false。另一本SQL/Session聊天10-09生产图已有flink-web-0双容器2/2运行，同时请求Kubernetes失败；该图支持当时合并Pod已运行，但当前控制器与最新修复镜像摘要未核查。执行更新前先按授权核对资源类型，不将旧rollout命令盲套新清单。旧chat中的0.0.5/latest及共享S3插件下载不属于当前发布/插件规则；最新摘要继续以上表和后续发布记录为入口，本文补录不重新发布镜像或重新认证摘要。历史正文/附件/测试范围分别见 [作业与前端聊天核对](agent/validation.md#作业与前端修复聊天归档核对2026-10-13) 和 [SQL/Session聊天核对](agent/validation.md#sql-与-session-开发聊天归档核对2026-10-13)。
+
+### 2026-10-15 Session 界面与模型需求向导发布
+
+app/web 的0.0.4已覆盖发布至192.168.68.1:5000/flink-web，摘要以上表为准；未更新latest/downloader或实际Kubernetes工作负载。复用原Kylin/JRE17/Nginx层，仅替换通过校验的JAR/前端产物，linux/amd64、UID10001、只读根文件系统验证通过。由于守护进程代理不可用，使用同一registry的localhost:15000映射推送，再从指定192.168.68.1:5000校验manifest正文/响应摘要、config及全部21/20层的压缩内容和解压diff_id一致。
+
+后端继续使用Spring Boot3.5/Tomcat；BES11.5.0.x按用户最新要求暂缓。ModelScope根地址可自动补v1，推荐预设前缀https://api-inference.modelscope.cn/v1、模型Qwen/Qwen3.5-27B，密钥由管理员加密保存，不能写入清单或镜像。实际认证测试返回403：账号需完成邮箱验证；未认证真实生成效果。
+
+Session代理按嵌套features关闭Web提交/取消/缩放，并拦截JAR路径，已有运行集群在平台升级后也隐藏Submit New Job。新建/显式重启的普通Session强制web.submit.enable=false；专用SQL验证Session保留true以便内部JAR REST，不允许用户从平台代理上传。真实Flink1.20.5已验证这一差异，不能把该开关设为false后仍声称后台提交可用。运行配置变更须在用户授权下显式停止/启动，平台不自动重启现场资源。
+
+其余界面、SQL提示、高亮及验证范围见 [本轮验收](agent/validation.md#session-界面与模型需求向导2026-10-15)。Flink2.3资料仅作编辑提示依据，不增加运行版本认证。

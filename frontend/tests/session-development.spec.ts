@@ -571,13 +571,13 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
     'href',
     '/flink-ui/sessions/sql-validation/',
   )
-  await expect(row.locator('.badge').filter({ hasText: '已就绪' })).toHaveAttribute(
-    'title',
-    /查询时间/,
-  )
+  await row.locator('.session-state-trigger').hover()
+  await expect(page.getByRole('tooltip')).toContainText('查询时间')
+  await row.locator('.session-state-trigger').press('Escape')
   const beforeRowRefresh = f.reads()
-  await row.getByRole('button', { name: '刷新', exact: true }).click()
-  await expect(row.getByRole('button', { name: /秒后刷新|正在查询/ })).toBeDisabled()
+  await expect(row.getByRole('button', { name: '刷新', exact: true })).toHaveCount(0)
+  await page.locator('.panel > .filter-bar').getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(page.getByRole('button', { name: /秒后刷新|正在查询/ })).toBeDisabled()
   expect(f.reads()).toBe(beforeRowRefresh)
   await row.getByRole('button', { name: 'Pod 状态', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: /Pod 状态/ })
@@ -756,4 +756,27 @@ test('窄屏新开发导航、Session 表单与 SQL 结果保持可读', async (
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true)
   await page.screenshot({ path: 'test-results/sql-verification-mobile.png', fullPage: true })
+})
+
+
+test('Session 完整 JSON 错误浮层可悬浮、点击和键盘查看，刷新位于列表右上角',async({page})=>{
+  await fixture(page)
+  const message=JSON.stringify({type:'DeploymentFailedException',message:'完整错误原因：'+ 'Operator 校验失败；'.repeat(120)+'错误尾部标记'})
+  await page.route('**/api/sessions',route=>route.fulfill({json:{data:[{id:'sql-validation',name:'validation',validation:true,runtime,state:'ERROR',message,queriedAt:new Date().toISOString()}]}}))
+  await page.goto('/#/sessions')
+  const row=page.getByRole('row').filter({hasText:'validation'}),trigger=row.locator('.session-state-trigger')
+  await trigger.hover()
+  const popup=page.getByRole('tooltip')
+  await expect(popup).toContainText('错误尾部标记')
+  expect(await popup.locator('pre').textContent()).toBe(JSON.stringify(JSON.parse(message),null,2))
+  const rect=await popup.boundingBox()
+  expect(rect!.x).toBeGreaterThanOrEqual(0);expect(rect!.x+rect!.width).toBeLessThanOrEqual(1920)
+  await trigger.press('Escape')
+  await expect(popup).toHaveCount(0)
+  await trigger.click()
+  await expect(popup).toBeVisible()
+  const refresh=page.locator('.panel > .filter-bar').getByRole('button',{name:'刷新',exact:true})
+  const a=await refresh.boundingBox(),b=await row.boundingBox()
+  expect(a!.y).toBeLessThan(b!.y);expect(a!.x).toBeGreaterThan(b!.x+b!.width*.7)
+  await page.screenshot({path:'../.tools/session-ui-model-wizard/session-error.png',fullPage:true,animations:'disabled'})
 })

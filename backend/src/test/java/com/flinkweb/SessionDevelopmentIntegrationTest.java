@@ -210,6 +210,7 @@ class SessionDevelopmentIntegrationTest {
         .putObject("logConfiguration")
         .put("log4j-console.properties", "rootLogger.level=INFO");
     source.withObject("/spec/taskManager/resource").put("ephemeralStorage", "2G");
+    source.withObject("/spec/flinkConfiguration").put("web.submit.enable", "true");
     options.put("deploymentYaml", yaml.dump(source));
     var converted =
         sessions.configuration(new SessionRequest("yaml-session", "", false, options, 0));
@@ -223,6 +224,8 @@ class SessionDevelopmentIntegrationTest {
     assertThat(cluster.get().at("/spec/logConfiguration/log4j-console.properties").asText())
         .contains("INFO");
     assertThat(cluster.get().at("/spec/job").isMissingNode()).isTrue();
+    assertThat(cluster.get().at("/spec/flinkConfiguration/web.submit.enable").asText())
+        .isEqualTo("false");
     when(rest.call(anyString(), eq("GET"), eq("/overview"), isNull()))
         .thenReturn(mapper.createObjectNode().put("taskmanagers", 2));
     var observed = sessions.status("yaml-session");
@@ -475,6 +478,8 @@ class SessionDevelopmentIntegrationTest {
   @Test
   void uniqueSessionMountsRunnerAndChecksResourceIdentity() {
     var started = startCluster();
+    assertThat(cluster.get().at("/spec/flinkConfiguration/web.submit.enable").asText())
+        .isEqualTo("true");
     assertThat(started.path("state").asText()).isEqualTo("STARTING");
     assertThat(cluster.get().path("spec").has("job")).isFalse();
     assertThat(cluster.get().at("/spec/flinkConfiguration/taskmanager.system-out.mode").asText())

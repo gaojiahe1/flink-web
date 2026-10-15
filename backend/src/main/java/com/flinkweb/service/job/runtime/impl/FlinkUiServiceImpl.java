@@ -81,6 +81,9 @@ public class FlinkUiServiceImpl implements FlinkUiService {
     String path = request.getRequestURI().substring(prefix.length());
     if (!path.matches("[a-zA-Z0-9_./-]*") || path.contains("..") || path.contains("//"))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PROXY_PATH", "代理路径无效");
+    if (id.startsWith("session:") && path.matches("(?i)(v[0-9]+/)?jars(/.*)?"))
+      throw new BusinessException(
+          HttpStatus.FORBIDDEN, "SESSION_SUBMIT_DISABLED", "Session Flink UI 不开放上传和提交作业，请通过平台提交");
     if (path.matches(
         "(?i).*(^|/)(environment|logs|log|stdout|yarn-cancel|yarn-stop|cancel|stop|run|rescaling)(/|$).*"))
       throw new BusinessException(
@@ -156,7 +159,20 @@ public class FlinkUiServiceImpl implements FlinkUiService {
           response.getOutputStream().write(bytes);
           return;
         }
-        if (path.endsWith("/config")
+        if (id.startsWith("session:")
+            && path.matches("(v[0-9]+/)?config")
+            && upstream.statusCode() == 200) {
+          byte[] bytes = body.readNBytes(2 * 1024 * 1024 + 1);
+          if (bytes.length > 2 * 1024 * 1024) throw new IOException("Config too large");
+          var config = mapper.readTree(bytes);
+          if (config instanceof com.fasterxml.jackson.databind.node.ObjectNode object)
+            object
+                .withObject("/features")
+                .put("web-submit", false)
+                .put("web-cancel", false)
+                .put("web-rescale", false);
+          mapper.writeValue(response.getOutputStream(), config);
+        } else if (path.endsWith("/config")
             && !path.matches("(v[0-9]+/)?config")
             && upstream.statusCode() == 200) {
           byte[] bytes = body.readNBytes(2 * 1024 * 1024 + 1);

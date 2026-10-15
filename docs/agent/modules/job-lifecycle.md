@@ -1,6 +1,6 @@
 # 作业生命周期
 
-更新：2026-10-13。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-15。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：作业查询/纳管、身份绑定、启动停止、快照、诊断和只读 Flink UI。调用链由 controller → query/management/operation/stop 服务 → repository/collector/KubernetesClient；前端 JobsView/工作台按需发起。
 
@@ -38,3 +38,5 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 定位：[YAML快照](../../../backend/src/main/java/com/flinkweb/collector/job/DeploymentYamlSnapshot.java)、[启动脚本](../../../frontend/docker-entrypoint.sh)、[Nginx](../../../frontend/nginx.conf)、[代理容器回归](../../../scripts/check_web_proxy.py)、[运行补丁](../../../deploy/kubernetes/frontend-runtime-patch.yaml)。更新工作负载使用部署指南的当前资源类型，并另有对应授权。
 
 本 SQL/Session 聊天的生产403补核（2026-10-13）：用户明确同 namespace、复用 Operator SA，并反馈平台可读取 Operator Pod。该证据仅证明相应请求可用，不能证明所有资源获准；自动挂载不创建 RBAC。历史“快照403会导致整个列表失败”描述的是当时代码，现行 collectSnapshots 已隔离缺失CRD/403/网络失败，保留部署结果并返回 snapshotQuery 警告；[KubernetesClientTest](../../../backend/src/test/java/com/flinkweb/KubernetesClientTest.java) 已有对应定义。本聊天没有被拒绝的准确请求/资源与最终恢复反馈，不把缺少快照或 StatefulSet 读取权限断言为已确认现场根因。
+
+2026-10-15：Session入口新增UI features改写与JAR路径限制，作业Flink UI行为不改；普通Session关闭运行时Web提交，专用验证保留内部REST。具体代码、真实Flink验证及最新统一刷新/错误浮层见 [SQL/Session模块](sql-session.md)。

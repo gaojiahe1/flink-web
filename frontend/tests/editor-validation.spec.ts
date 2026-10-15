@@ -1,7 +1,8 @@
+import {syntaxTree} from '@codemirror/language'
 import {test,expect} from '@playwright/test'
 import {EditorState} from '@codemirror/state'
 import {CompletionContext} from '@codemirror/autocomplete'
-import {connectorCompletion} from '../src/shared/utils/sqlEditing'
+import {connectorCompletion,flinkSqlSupport} from '../src/shared/utils/sqlEditing'
 import {parseDeploymentYaml} from '../src/shared/utils/deploymentYaml'
 
 test('部署 spec 拒绝标量及数组，合法对象保留原文',()=>{
@@ -20,4 +21,27 @@ test('Connector 和已用键忽略注释，保留字符串中的注释符号',()
   const doc="CREATE TABLE t (id STRING) WITH ('connector'='kafka','topic'='--real/*value*/','"
   const result=connectorCompletion(new CompletionContext(EditorState.create({doc}),doc.length,true))
   expect(result!.options.map(option=>option.label)).not.toContain('topic')
+})
+
+
+test('各 Connector 仅建议对应配置，选项含说明，已使用键不会重复',()=>{
+  for(const [connector,key] of [['kafka','properties.bootstrap.servers'],['jdbc','url'],['filesystem','path'],['hbase-2.2','zookeeper.quorum'],['mongodb','uri'],['opensearch','hosts']]){
+    const doc="CREATE TABLE t (id STRING) WITH ('connector'='"+connector+"', '"
+    const result=connectorCompletion(new CompletionContext(EditorState.create({doc}),doc.length,true))!
+    expect(result.options.map(o=>o.label)).toContain(key)
+    expect(result.options.every(o=>!!o.info)).toBeTruthy()
+    expect(result.options.map(o=>o.label)).not.toContain('connector')
+    if(connector!=='kafka')expect(result.options.map(o=>o.label)).not.toContain('properties.bootstrap.servers')
+  }
+})
+
+
+test('SQL 基础关键字及 Flink 数据类型实际解析为高亮节点',()=>{
+ const doc="CREATE TABLE t(id STRING, value TIMESTAMP_LTZ(3)) WITH ('connector'='kafka'); SELECT * FROM t;"
+ const state=EditorState.create({doc,extensions:flinkSqlSupport()})
+ const tree=syntaxTree(state)
+ expect(tree.resolveInner(doc.indexOf('CREATE')+1).name).toBe('Keyword')
+ expect(tree.resolveInner(doc.indexOf('STRING')+1).name).toBe('Type')
+ expect(tree.resolveInner(doc.indexOf('TIMESTAMP_LTZ')+1).name).toBe('Type')
+ expect(tree.resolveInner(doc.indexOf('SELECT')+1).name).toBe('Keyword')
 })

@@ -56,3 +56,9 @@ SQL 侧栏包含选模型/登记数据源、轻量需求确认、生成/解释/�
 SQL、JAR、Session 共用登记的 Flink 镜像，以挂载 Runner JAR 运行，不新增默认 SQL Runner 镜像。原始“默认按版本挂载”已被后续 10-10 的手动选择具体 Runner 规则替代，仍保留同镜像/挂载约束。用户明确要求可行时实现动态 Connector 依赖；现行验证包合并 JAR 和服务发现，原 Sink 替换 Print，最多100条/两分钟截止清理；环境、Secret、非 JAR 文件与插件需预配，不能等同所有依赖均可热加载。
 
 三页历史正文与当前实现已交叉核对；其他聊天和全部运行组合未因此完成验收。日期、140/7/52项历史测试及隔离 Flink1.20.5 Session 范围见 [本聊天核对](../validation.md#sql-与-session-开发聊天归档核对2026-10-13)。
+
+## 最新界面与接入补充（2026-10-15）
+
+用户要求 Session 完整错误悬浮、刷新移到列表工具栏右上角、关闭 Flink UI 的 Submit New Job；模型服务重新设计并实际测试指定 ModelScope/Qwen 模型；SQL 按官方2.3资料补 Connector/类型提示和高亮；AI 按四步需求向导原型实现并增加模型选择。现已实现的边界及测试分别见 [SQL/Session模块](../modules/sql-session.md)、[AI模块](../modules/ai-assistant.md) 与 [本次验收](../validation.md#session-界面与模型需求向导2026-10-15)。
+
+用户先指定 BES11.5.0.x，随后明确“暂时先不管BES，还是用Tomcat”，本轮保留 Spring Boot3.5/Tomcat；待用户找到授权 JAR 后另行适配，没有加入猜测的依赖。真实 ModelScope 测试被账号邮箱验证要求阻止，不标成功。

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
+import SessionStateDetail from '../components/SessionStateDetail.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
@@ -130,10 +131,14 @@ async function refreshCluster(item: SessionCluster) {
     item.message = (e as Error).message
   }
 }
+async function refreshAll() {
+  await run(async () => {
+    await Promise.all(clusters.value.map(refreshCluster))
+  })
+}
 function stateDescription(item: SessionCluster) {
   return [
     labels[item.state || ''] || item.state || '尚未查询',
-    item.message,
     item.taskManagerMessage,
     item.queriedAt ? '查询时间：' + new Date(item.queriedAt).toLocaleString() : '尚未查询',
   ]
@@ -276,10 +281,11 @@ onMounted(async () => {
   <p v-if="error" class="notice error">{{ error }}</p>
   <p v-if="message" class="notice">{{ message }}</p>
   <section v-if="!editing" class="panel">
-    <div class="filter-bar">
+    <div class="filter-bar" style="justify-content: space-between">
       <span class="muted">{{
         hasValidation ? 'SQL 验证集群已登记' : '尚未创建 SQL 验证集群'
       }}</span>
+      <ManualRefreshButton :action="refreshAll" :disabled="busy || loading" />
     </div>
     <p v-if="loading" class="empty-state">正在加载…</p>
     <div v-else-if="clusters.length" class="table-wrap">
@@ -314,33 +320,33 @@ onMounted(async () => {
               }}
             </td>
             <td>
-              <span
-                class="badge"
-                :title="stateDescription(item)"
-                :class="{ running: item.state === 'READY', failed: item.state === 'ERROR' }"
-                >{{ labels[item.state || ''] || item.state || '尚未查询' }}</span
-              ><small v-if="item.message" class="table-description">{{ item.message }}</small>
-              <small
-                v-if="
-                  item.configuredTaskManagers !== undefined ||
-                  item.registeredTaskManagers !== undefined
-                "
-                class="table-description"
+              <SessionStateDetail
+                :state="labels[item.state || ''] || item.state || '尚未查询'"
+                :message="item.message"
+                :detail="stateDescription(item)"
               >
-                TaskManager：{{
-                  item.registeredTaskManagers !== undefined
-                    ? `已注册 ${item.registeredTaskManagers}`
-                    : '尚未查询注册数量'
-                }}
-                {{
-                  item.configuredTaskManagers !== undefined
-                    ? ` · 配置 ${item.configuredTaskManagers}`
-                    : ' · 按需分配'
-                }}
-              </small>
-              <small v-if="item.taskManagerMessage" class="table-description">{{
-                item.taskManagerMessage
-              }}</small>
+                <small
+                  v-if="
+                    item.configuredTaskManagers !== undefined ||
+                    item.registeredTaskManagers !== undefined
+                  "
+                  class="table-description"
+                >
+                  TaskManager：{{
+                    item.registeredTaskManagers !== undefined
+                      ? `已注册 ${item.registeredTaskManagers}`
+                      : '尚未查询注册数量'
+                  }}
+                  {{
+                    item.configuredTaskManagers !== undefined
+                      ? ` · 配置 ${item.configuredTaskManagers}`
+                      : ' · 按需分配'
+                  }}
+                </small>
+                <small v-if="item.taskManagerMessage" class="table-description">{{
+                  item.taskManagerMessage
+                }}</small>
+              </SessionStateDetail>
             </td>
             <td>
               <div class="row-actions">
@@ -395,7 +401,6 @@ onMounted(async () => {
                   rel="noopener"
                   >Flink UI ↗</a
                 >
-                <ManualRefreshButton :action="() => refreshCluster(item)" :disabled="busy" />
               </div>
             </td>
           </tr>

@@ -497,3 +497,115 @@
 .verification-table td {
   vertical-align: top;
 }
+/* 需求向导：确认面板在左，保留现有 SQL 编辑/检查/保存流程在右。 */
+.sql-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 12px 16px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.sql-wizard-steps button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: none;
+  color: #7f91a9;
+  text-align: left;
+  font-size: 12px;
+}
+.sql-wizard-steps button span {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+}
+.sql-wizard-steps button.active {
+  color: #2869db;
+}
+.sql-wizard-steps button.active span {
+  background: #2869ed;
+  color: white;
+  border-color: #2869ed;
+}
+.sql-workbench.with-inspector.ai-guided {
+  grid-template-columns: minmax(300px, var(--inspector-width)) 8px minmax(0, 1fr) 42px;
+  height: calc(100vh - 248px);
+  min-height: 620px;
+}
+.ai-guided > .sql-explorer {
+  display: none;
+}
+.ai-guided > .ai-sql-panel {
+  grid-column: 1;
+  grid-row: 1;
+  border-right: 1px solid var(--line);
+  padding: 22px;
+}
+.ai-guided > .sql-center {
+  grid-column: 3;
+  grid-row: 1;
+}
+.ai-guided > .sql-inspector-resizer {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ai-guided > .studio-rail {
+  grid-column: 4;
+  grid-row: 1;
+}
+@media (max-width: 1000px) {
+  .sql-workbench.with-inspector.ai-guided {
+    grid-template-columns: minmax(0, 1fr) 42px;
+    height: auto;
+    min-height: 0;
+  }
+  .ai-guided > .ai-sql-panel {
+    grid-column: 1;
+    grid-row: 1;
+    max-height: none;
+  }
+  .ai-guided > .sql-center {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 600px;
+  }
+  .ai-guided > .studio-rail {
+    grid-column: 2;
+    grid-row: 1/3;
+  }
+  .sql-wizard-steps {
+    gap: 4px;
+    padding: 10px;
+  }
+  .sql-wizard-steps button {
+    gap: 5px;
+    font-size: 11px;
+  }
+}
+@media (max-width: 600px) {
+  .sql-wizard-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 10px;
+  }
+  .ai-guided > .ai-sql-panel {
+    padding: 14px;
+  }
+  .sql-workbench.with-inspector.ai-guided {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ai-guided > .studio-rail {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .ai-guided > .sql-center {
+    grid-row: 2;
+  }
+}

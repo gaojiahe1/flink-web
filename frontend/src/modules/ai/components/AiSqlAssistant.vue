@@ -14,9 +14,35 @@ const props = defineProps<{
   flinkVersion: string
   contextKey: number
   editable: boolean
+  checkSummary?: string
+  dirty?: boolean
   sources: { id: string; name: string; connectorType: string }[]
 }>()
-const emit = defineEmits<{ close: []; apply: [AiResult, number] }>()
+const emit = defineEmits<{ close: []; apply: [AiResult, number]; check: []; save: [] }>()
+const step = defineModel<number>('step', { default: 1 })
+const followup = ref('')
+const selectedTables = computed(() => props.sources.filter((s) => sourceIds.value.includes(s.id)))
+function nextStep(value: number) {
+  step.value = value
+  tab.value = 'conversation'
+}
+function chooseMode(value: string) {
+  mode.value = value
+  nextStep(2)
+}
+function applySql() {
+  if (result.value && canApply.value) {
+    emit('apply', result.value, base.value)
+    nextStep(4)
+  }
+}
+async function refine() {
+  if (!followup.value.trim()) return
+  instruction.value += '\n补充需求：' + followup.value
+  followup.value = ''
+  nextStep(2)
+  await send()
+}
 const modelId = ref(''),
   selectedModel = ref<AiModel>(),
   allowExternal = ref(false)
@@ -47,6 +73,12 @@ let contextVersion = 0,
   historyRequest = 0,
   disposed = false
 const result = computed(() => (task.value?.state === 'SUCCEEDED' ? task.value.result : undefined))
+watch(result, (value) => {
+  if (value) {
+    step.value = 3
+    tab.value = 'conversation'
+  }
+})
 const purpose = computed(() => (mode.value === 'definition' ? 'definition' : 'sql'))
 const canApply = computed(
   () =>
@@ -202,12 +234,18 @@ onBeforeUnmount(() => {
 <template>
   <aside class="sql-runtime ai-sql-panel">
     <div class="field-heading">
-      <h3><Sparkles :size="17" />AI 助手</h3>
+      <div>
+        <h3>
+          <Sparkles :size="17" />{{
+            ['选择数据', '需求确认', '查看 SQL 建议', '检查与保存'][step - 1]
+          }}
+        </h3>
+        <small class="muted">已选数据 · 语义确认 · SQL 建议</small>
+      </div>
       <button class="text-button" aria-label="收起 AI 助手" @click="emit('close')">
         <X :size="16" />
       </button>
     </div>
-    <p class="muted ai-intro">当前 SQL · 已选数据 · 建议经确认后应用</p>
     <AiModelSelect
       :key="purpose"
       v-model="modelId"
@@ -231,7 +269,7 @@ onBeforeUnmount(() => {
         class="button"
         :class="{ active: mode === item.id }"
         :disabled="busy"
-        @click="mode = item.id"
+        @click="chooseMode(item.id)"
       >
         {{ item.label }}
       </button>
@@ -251,128 +289,221 @@ onBeforeUnmount(() => {
         数据定义</button
       ><button class="text-button" @click="showHistory">生成记录</button>
     </nav>
-    <div v-show="tab === 'conversation'">
-      <details :open="mode === 'generate' && !result" class="ai-spec">
-        <summary>需求确认单与数据选择</summary>
-        <p v-if="!sources.length" class="muted">
-          暂无登记数据源，可在“数据定义”中补充当前作业的表。
+    <div v-show="tab === 'conversation'" class="wizard-conversation">
+      <section v-show="step === 1" class="wizard-data">
+        <p class="muted">选择已登记的数据，或在“数据定义”中补充当前作业的输入、输出表。</p>
+        <p v-if="!sources.length" class="empty-state">
+          暂无登记数据源，可先添加当前作业的数据定义。
         </p>
-        <label v-for="source in sources" :key="source.id" class="ai-check"
-          ><input v-model="sourceIds" :value="source.id" type="checkbox" :disabled="busy" />{{
-            source.name
-          }}
-          <small>{{ source.connectorType }}</small></label
+        <label v-for="source in sources" :key="source.id" class="wizard-source"
+          ><input v-model="sourceIds" :value="source.id" type="checkbox" :disabled="busy" /><span
+            ><strong>{{ source.name }}</strong
+            ><small>{{ source.connectorType }} · {{ source.id }}</small></span
+          ></label
         >
-        <div class="ai-spec-grid">
-          <label
-            >事件时间字段<input
+        <button class="text-button" @click="tab = 'definitions'">补充当前作业的数据定义</button>
+        <div class="wizard-actions">
+          <button class="button primary" :disabled="busy" @click="nextStep(2)">
+            下一步：确认需求
+          </button>
+        </div>
+      </section>
+      <section v-show="step === 2" class="wizard-confirm">
+        <div v-if="selectedTables.length" class="wizard-source-tags">
+          <span v-for="source in selectedTables" :key="source.id"
+            >{{ source.connectorType }} · {{ source.name }}</span
+          >
+        </div>
+        <label class="ai-prompt"
+          >{{
+            mode === 'explain'
+              ? '想了解什么'
+              : mode === 'repair'
+                ? '错误与修复目标'
+                : mode === 'definition'
+                  ? '描述输入、输出及字段'
+                  : '描述业务需求'
+          }}<textarea
+            v-model="instruction"
+            :disabled="busy"
+            maxlength="8000"
+            rows="3"
+            placeholder="描述统计口径、输入输出和时间要求，未知连接参数可后续补全。"
+          />
+        </label>
+        <p class="muted">先确认统计方式，再生成转换逻辑。连接参数与密钥引用沿用所选定义。</p>
+        <section v-show="mode !== 'explain' && mode !== 'definition'" class="wizard-contract">
+          <header>
+            <strong>需求确认单</strong
+            ><span class="badge" :class="{ running: !!dedup }">{{
+              dedup ? '已确认处理方式' : '待确认'
+            }}</span>
+          </header>
+          <div class="wizard-contract-row">
+            <span>输入</span
+            ><span>{{ selectedTables.map((s) => s.name).join('、') || '当前作业的数据定义' }}</span
+            ><small>已选数据</small>
+          </div>
+          <div class="wizard-contract-row">
+            <label for="wizard-time">事件时间</label
+            ><input
+              id="wizard-time"
               v-model="eventTime"
               :disabled="busy"
-              placeholder="例如 pay_time" /></label
-          ><label
-            >窗口（分钟）<input
+              placeholder="例如 pay_time；留空由 SQL 定义"
+              aria-label="事件时间字段"
+            /><small>字段定义</small>
+          </div>
+          <div class="wizard-contract-row">
+            <label for="wizard-window">窗口</label
+            ><input
+              id="wizard-window"
               v-model.number="windowMinutes"
               :disabled="busy"
               type="number"
               min="1"
               max="1440"
-          /></label>
-        </div>
-        <label
-          >重复数据<select v-model="dedup" :disabled="busy" aria-label="重复数据">
-            <option value="">请确认处理方式</option>
-            <option value="upstream">用户确认上游已去重</option>
-            <option value="keep">每条消息均计入</option>
-          </select></label
-        >
-        <label
-          >消费起始位置<select v-model="startPosition" :disabled="busy" aria-label="消费起始位置">
-            <option value="latest-offset">从最新消息</option>
-            <option value="earliest-offset">从最早消息</option>
-            <option value="group-offsets">沿用消费组位点</option>
-          </select></label
-        >
-        <p class="muted">
-          事件时间、水位线、主键和连接器仍以所选数据定义为准；起始位置仅对新启动生效。
-        </p>
-      </details>
-      <label class="ai-prompt"
-        >{{
-          mode === 'explain'
-            ? '想了解什么'
-            : mode === 'repair'
-              ? '错误与修复目标'
-              : mode === 'definition'
-                ? '描述输入、输出及字段'
-                : '描述业务需求'
-        }}<textarea
-          v-model="instruction"
-          :disabled="busy"
-          maxlength="8000"
-          rows="4"
-          :placeholder="
-            mode === 'definition'
-              ? '例如：Kafka 支付订单包含订单号、支付金额和支付时间。未知地址可先留空，之后手动补充。'
-              : '例如：按类目每 5 分钟汇总支付金额，窗口结束后写入目标表。'
-          "
-        />
-      </label>
-      <div class="toolbar-actions">
-        <button
-          class="button primary"
-          :disabled="busy || !modelId || !editable || (selectedModel?.external && !allowExternal)"
-          @click="send"
-        >
-          {{
-            busy
-              ? '正在分析…'
-              : mode === 'definition'
-                ? '起草 / 继续补充定义'
-                : mode === 'generate'
-                  ? '确认并生成 SQL'
-                  : '发送'
-          }}</button
-        ><button v-if="uncertain" class="button" @click="retry">核对原任务并重试</button
-        ><button v-if="busy" class="button" @click="cancel">取消任务</button>
-      </div>
-      <p v-if="task" class="muted" role="status">
-        {{ statusLabels[task.state] }} · {{ task.model }}
-      </p>
-      <p v-if="stale && result" class="notice">上下文或需求已改变，旧建议不可应用，请重新生成。</p>
-      <AiResultReport v-if="result" :result="result" />
-      <template v-if="result?.sql">
-        <details class="ai-suggestion" open>
-          <summary>SQL 修改对比</summary>
-          <div class="ai-diff" aria-label="AI SQL 修改对比">
-            <template v-for="line in differences" :key="line.n">
-              <pre v-if="line.changed && line.old" class="removed">− {{ line.old }}</pre>
-              <pre :class="{ added: line.changed }"
-                >{{ line.changed ? '+' : ' ' }} {{ line.next }}</pre>
-            </template>
+              aria-label="窗口（分钟）"
+            /><small>分钟</small>
           </div>
-        </details>
-        <button class="button primary" :disabled="!canApply" @click="emit('apply', result, base)">
-          应用到编辑器
-        </button>
-        <p class="muted">
-          应用会替换当前 SQL，并合入所需密钥引用；请先检查对比，随后重新检查和验证。
+          <div class="wizard-contract-row">
+            <span>迟到</span><span>沿用表定义的水位线</span><small>水位线</small>
+          </div>
+          <div class="wizard-contract-row">
+            <span>输出</span><span>由需求与目标表约束决定</span><small>输出定义</small>
+          </div>
+          <div class="wizard-contract-row">
+            <label for="wizard-start">起始位置</label
+            ><select
+              id="wizard-start"
+              v-model="startPosition"
+              :disabled="busy"
+              aria-label="消费起始位置"
+            >
+              <option value="latest-offset">从最新消息</option>
+              <option value="earliest-offset">从最早消息</option>
+              <option value="group-offsets">沿用消费组位点</option></select
+            ><small>新启动生效</small>
+          </div>
+          <div class="wizard-contract-row">
+            <label for="wizard-dedup">重复数据</label
+            ><select id="wizard-dedup" v-model="dedup" :disabled="busy" aria-label="重复数据">
+              <option value="">请确认处理方式</option>
+              <option value="upstream">用户确认上游已去重</option>
+              <option value="keep">每条消息均计入</option></select
+            ><small>需确认</small>
+          </div>
+          <p v-if="!dedup" class="wizard-pending">请确认重复数据如何处理，避免重复累计。</p>
+        </section>
+        <div class="wizard-actions">
+          <button class="button" :disabled="busy" @click="nextStep(1)">上一步</button
+          ><button
+            class="button primary"
+            :disabled="
+              busy ||
+              !modelId ||
+              !editable ||
+              !instruction.trim() ||
+              (mode === 'generate' && !dedup) ||
+              (selectedModel?.external && !allowExternal)
+            "
+            @click="send"
+          >
+            {{
+              busy
+                ? '正在分析…'
+                : mode === 'definition'
+                  ? '起草 / 继续补充定义'
+                  : mode === 'generate'
+                    ? '确认并生成 SQL'
+                    : '发送'
+            }}
+          </button>
+        </div>
+      </section>
+      <section v-show="step === 3" class="wizard-suggestion">
+        <p v-if="!result" class="empty-state">确认需求后，SQL 建议和修改对比将在这里展示。</p>
+        <p v-if="stale && result" class="notice">
+          上下文或需求已改变，旧建议不可应用，请重新生成。
         </p>
-      </template>
-      <template v-if="result?.definitions"
-        ><details>
-          <summary>查看数据定义建议</summary>
-          <pre class="ai-json">{{ JSON.stringify(result.definitions, null, 2) }}</pre>
-        </details>
-        <button class="button" :disabled="stale || busy" @click="applyDefinitions">
-          应用数据定义建议
-        </button></template
-      >
+        <AiResultReport v-if="result" :result="result" />
+        <template v-if="result?.sql"
+          ><details class="ai-suggestion" open>
+            <summary>SQL 修改对比</summary>
+            <div class="ai-diff" aria-label="AI SQL 修改对比">
+              <template v-for="line in differences" :key="line.n">
+                <pre v-if="line.changed && line.old" class="removed">− {{ line.old }}</pre>
+                <pre :class="{ added: line.changed }"
+                  >{{ line.changed ? '+' : ' ' }} {{ line.next }}</pre>
+              </template>
+            </div>
+          </details>
+          <button class="button primary" :disabled="!canApply" @click="applySql">
+            应用到编辑器
+          </button>
+          <p class="muted">先检查差异，再显式应用；应用后重新检查和验证。</p></template
+        >
+        <template v-if="result?.definitions"
+          ><details>
+            <summary>查看数据定义建议</summary>
+            <pre class="ai-json">{{ JSON.stringify(result.definitions, null, 2) }}</pre>
+          </details>
+          <button class="button" :disabled="stale || busy" @click="applyDefinitions">
+            应用数据定义建议
+          </button></template
+        >
+        <div class="wizard-actions">
+          <button class="button" :disabled="busy" @click="nextStep(2)">返回需求确认</button
+          ><button class="button" @click="nextStep(4)">下一步：检查与保存</button>
+        </div>
+      </section>
+      <section v-show="step === 4" class="wizard-save">
+        <h4>检查当前 SQL 草稿</h4>
+        <p class="muted">
+          {{ checkSummary || '当前 SQL 尚未检查。应用 AI 建议后需要重新检查 SQL 和运行配置。' }}
+        </p>
+        <div class="wizard-actions">
+          <button class="button" :disabled="!editable || busy" @click="emit('check')">
+            检查当前 SQL</button
+          ><button class="button primary" :disabled="!editable || busy" @click="emit('save')">
+            保存当前草稿
+          </button>
+        </div>
+        <p class="muted">
+          {{ dirty ? '当前有未保存的编辑。' : '已保存后可返回 SQL 开发继续编辑。' }} SQL
+          检查不等于运行验证。
+        </p>
+        <button class="text-button" @click="nextStep(3)">返回查看 SQL 建议</button>
+      </section>
+      <div v-if="step === 2 || step === 3" class="wizard-followup">
+        <label
+          >继续补充需求<textarea
+            v-model="followup"
+            :disabled="busy"
+            rows="3"
+            placeholder="例如：只统计支付成功的订单…"
+          />
+        </label>
+        <div>
+          <small>仅使用已选表与字段</small
+          ><button
+            class="button primary"
+            :disabled="
+              busy ||
+              !editable ||
+              !followup.trim() ||
+              !modelId ||
+              (selectedModel?.external && !allowExternal)
+            "
+            @click="refine"
+          >
+            发送补充
+          </button>
+        </div>
+      </div>
     </div>
     <div v-show="tab === 'definitions'">
-      <p class="muted">
-        这些定义仅属于当前作业。支持字段名、类型、主键、水位线和 Connector
-        参数编辑；共享数据源仍由管理员维护。
-      </p>
+      <p class="muted">这些定义仅属于当前作业，可补充字段、主键、水位线和 Connector 参数。</p>
       <div class="toolbar-actions">
         <button class="button" :disabled="busy" @click="addDefinition(false)">添加输入表</button
         ><button class="button" :disabled="busy" @click="addDefinition(true)">添加输出表</button>
@@ -392,6 +523,7 @@ onBeforeUnmount(() => {
       </details>
       <button class="button" :disabled="busy" @click="compile">编译定义并检查待补项</button>
       <p v-if="compiledMessage" class="notice ai-prewrap" role="status">{{ compiledMessage }}</p>
+      <button class="button primary" :disabled="busy" @click="nextStep(2)">继续确认需求</button>
     </div>
     <div v-show="tab === 'history'">
       <p v-if="!history.length" class="empty-state">暂无生成记录</p>
@@ -407,8 +539,19 @@ onBeforeUnmount(() => {
         />
       </details>
     </div>
-    <p v-if="error || localError" class="notice error" role="alert">{{ error || localError }}</p>
-    <p class="ai-boundary">AI 建议不会自动保存、运行或部署。修改内容后需重新检查 SQL。</p>
+    <div v-if="busy || task || uncertain" class="wizard-task-status">
+      <p v-if="task" class="muted" role="status">
+        {{ statusLabels[task.state] }} · {{ task.model }}
+      </p>
+      <button v-if="uncertain" class="button" @click="retry">核对原任务并重试</button
+      ><button v-if="busy" class="button" @click="cancel">取消任务</button>
+    </div>
+    <p v-if="localError || error" class="notice error ai-prewrap" role="alert">
+      {{ localError || error }}
+    </p>
+    <p class="ai-boundary">
+      每一步都可返回修改 · 保存后继续在 SQL 开发编辑。建议不会自动保存、发布或执行。
+    </p>
   </aside>
 </template>
 <style scoped>
@@ -538,5 +681,152 @@ onBeforeUnmount(() => {
 }
 .ai-prewrap {
   white-space: pre-wrap;
+}
+
+.wizard-data,
+.wizard-confirm,
+.wizard-suggestion,
+.wizard-save {
+  padding-top: 14px;
+}
+.wizard-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 10px 0;
+}
+.wizard-source input {
+  width: auto;
+}
+.wizard-source strong,
+.wizard-source small {
+  display: block;
+}
+.wizard-source small {
+  margin-top: 5px;
+  color: var(--color-muted);
+}
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.wizard-source-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.wizard-source-tags span {
+  border: 1px solid #dbe5f4;
+  background: #f7faff;
+  color: #56739c;
+  border-radius: 4px;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+.wizard-contract {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 18px;
+  overflow: hidden;
+}
+.wizard-contract header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.wizard-contract-row {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 70px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 14px;
+  font-size: 12px;
+}
+.wizard-contract-row label {
+  margin: 0;
+  color: var(--color-muted);
+}
+.wizard-contract-row small {
+  color: #7b92b4;
+  text-align: right;
+  font-size: 11px;
+}
+.wizard-contract-row input,
+.wizard-contract-row select {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
+.wizard-pending {
+  padding: 11px 14px;
+  background: #fff8e9;
+  color: #9a6717;
+  font-size: 12px;
+  margin: 5px 0 0;
+}
+.wizard-followup {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  padding: 14px;
+  border-radius: 8px;
+}
+.wizard-followup textarea {
+  width: 100%;
+  resize: vertical;
+}
+.wizard-followup > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.wizard-followup small {
+  color: #7790b2;
+  font-size: 11px;
+}
+.wizard-task-status {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.wizard-task-status p {
+  flex: 1;
+  min-width: 140px;
+}
+.ai-sql-panel .ai-modes .button {
+  border: 0;
+  background: transparent;
+  color: #7690b1;
+}
+.ai-sql-panel .ai-modes .button.active {
+  background: #edf4ff;
+  color: #2866d8;
+}
+.ai-sql-panel .ai-intro {
+  margin: 8px 0 14px;
+}
+@media (max-width: 600px) {
+  .wizard-contract-row {
+    grid-template-columns: 60px minmax(0, 1fr);
+    padding: 9px 10px;
+  }
+  .wizard-contract-row small {
+    display: none;
+  }
+  .wizard-source-tags span {
+    overflow-wrap: anywhere;
+  }
 }
 </style>

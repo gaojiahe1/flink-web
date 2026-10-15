@@ -1,10 +1,10 @@
 # AI 助手与模型服务
 
-更新：2026-10-15。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。用户接受侧栏设计，并明确要求作业报错分析和模型添加；本模块为第一阶段实现，不包含自动执行、生产审批或完整 Planner。
+更新：2026-10-15。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。用户最新要求采用需求向导原型并保留任务模型选择；本模块复用既有任务协议，不包含自动执行、生产审批或完整 Planner。
 
 ## 入口与代码
 
-- SQL 开发右侧「AI 助手」：生成、解释、修复、数据定义；选登记数据源或编辑当前作业字段/Connector 草稿，确认需求后调用。建议先看差异再显式应用，重新检查/验证；原有保存、发布流程保留。
+- SQL 开发「AI 助手」：四步需求向导（选择数据、确认需求、查看 SQL、检查与保存），左侧需求与模型选择、右侧原 SQL 编辑器；生成、解释、修复、数据定义；选登记数据源或编辑当前作业字段/Connector 草稿，确认需求后调用。建议先看差异再显式应用，重新检查/验证；原有保存、发布流程保留。
 - 作业列表：本次观测状态含错误/FAILED 时显示「AI 分析」，主动读取有权访问的诊断及可选脱敏日志，展示原因、证据、未知项和解决步骤；不执行运行操作。
 - 系统设置 → 模型服务：仅管理员增删改、测试；按用途选模型，外部发送须每次明确允许。支持兼容 Chat Completions 的非流式 JSON 响应；Base URL 填到 `/v1` 等接口前缀，程序追加 `/chat/completions`。未配置真实模型时不能生成。
 - [模型客户端](../../../backend/src/main/java/com/flinkweb/client/ai/AiModelClient.java)、[模型服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiModelServiceImpl.java)、[任务服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiTaskServiceImpl.java)、[内容防护](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiContentGuard.java)。
@@ -39,3 +39,11 @@ useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原
 [后端集成](../../../backend/src/test/java/com/flinkweb/AiAssistantIntegrationTest.java)、[页面回归](../../../frontend/tests/ai-assistant.spec.ts)。本地协议替身用于验证模型链路、权限、加密、取消和诊断；不能据此宣称某个真实模型厂商或生产 Kubernetes 已认证。实际结果见 [验收记录](../validation.md)。
 
 [快照计数回归](../../../backend/src/test/java/com/flinkweb/service/AiContentGuardTest.java) 验证多叶子仅解密各密钥一次、结果等价及后续轮换可见；异常定义、断响应恢复、同号重试、取消失败及旧异步回填由上述用例覆盖。
+
+## 需求向导与模型诊断（2026-10-15）
+
+向导复用原任务/同号核对/取消、上下文版本、数据定义和差异应用；确认需求含事件时间、窗口、消费起点及重复处理。生成不直接改编辑器，显式应用后进入检查与保存；仍由原 Parser、草稿保存和独立运行验证处理。桌面可拖动分栏，1000px 以下上下布局，390px 可操作。参考用户指定原型聊天 01a13a0d-fe51-74a1-8d56-881f8eb7570b；未发送消息或发布原型站点。
+
+模型服务改为列表筛选、启用概览、配置表单与逐项测试结果；ModelScope 预设仅填写地址/模型，不包含密钥。客户端接受根地址并补 `/v1`，Qwen3 系列非流式请求显式关闭 thinking；401/403/404/429/400 返回脱敏分类，不能回显厂商正文。保留 HTTPS/内网授权、禁重定向和有界响应。
+
+本次用用户指定的 Qwen/Qwen3.5-27B 发起真实认证调用，返回 HTTP403，服务明确要求完成账号邮箱验证；没有成功生成结果，不能标记真实模型可用。处理入口：[ModelScope 账号设置](https://modelscope.cn/my/settings/account)。本库不保存该密钥，功能链路另用隔离协议替身验证。[客户端回归](../../../backend/src/test/java/com/flinkweb/client/ai/AiModelClientTest.java) 覆盖根地址、非流式参数、错误分类及正文不回显。

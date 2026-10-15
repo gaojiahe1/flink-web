@@ -26,6 +26,23 @@ const defaults = () => ({
   maxTokens: 4096,
 })
 const form = reactive(defaults())
+const query = ref('')
+const filtered = computed(() =>
+  models.value.filter((m) =>
+    (m.name + ' ' + m.model + ' ' + m.baseUrl).toLowerCase().includes(query.value.toLowerCase()),
+  ),
+)
+const tests = reactive<Record<string, { state: string; message: string }>>({})
+function modelScope() {
+  Object.assign(form, {
+    id: selected.value || form.id || 'modelscope-qwen',
+    name: form.name || 'Qwen3.5 27B',
+    model: 'Qwen/Qwen3.5-27B',
+    baseUrl: 'https://api-inference.modelscope.cn/v1',
+    privateNetwork: false,
+    external: true,
+  })
+}
 async function load() {
   if (!admin.value) return
   try {
@@ -46,6 +63,7 @@ async function save() {
   message.value = ''
   try {
     const saved = await aiApi.saveModel(form.id, { ...form })
+    delete tests[saved.id]
     await load()
     edit(saved)
     message.value = '模型配置已保存，密钥不会返回页面。'
@@ -57,13 +75,16 @@ async function save() {
   }
 }
 async function test(model: AiModel) {
+  tests[model.id] = { state: 'checking', message: '正在验证地址、鉴权和 JSON 响应…' }
   busy.value = true
   error.value = ''
   message.value = ''
   try {
     message.value = (await aiApi.testModel(model.id)).message
+    tests[model.id] = { state: 'success', message: message.value }
   } catch (cause) {
     error.value = (cause as Error).message
+    tests[model.id] = { state: 'failed', message: error.value }
   } finally {
     busy.value = false
   }
@@ -96,21 +117,40 @@ onMounted(load)
   <template v-else>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
+    <div class="model-overview">
+      <div>
+        <span class="eyebrow">MODEL CONNECTIONS</span>
+        <h2>为 SQL 与运维选择合适的模型</h2>
+        <p>统一管理服务连接，先测试，再在需求向导中选择。</p>
+      </div>
+      <div class="model-metrics">
+        <strong>{{ models.length }}<small>已添加</small></strong
+        ><strong>{{ models.filter((m) => m.enabled).length }}<small>已启用</small></strong>
+      </div>
+    </div>
     <div class="models-layout">
       <section class="panel model-list">
         <div class="panel-toolbar">
           <h3>已添加模型</h3>
           <button class="button primary" :disabled="busy" @click="edit()">添加模型</button>
         </div>
+        <label class="model-search"
+          >查找模型<input v-model="query" placeholder="按名称、模型或地址筛选"
+        /></label>
         <p v-if="!models.length" class="empty-state">
           尚未添加模型。先填写服务地址和实际模型标识。
         </p>
-        <article v-for="model in models" :key="model.id" :class="{ active: selected === model.id }">
+        <article
+          v-for="model in filtered"
+          :key="model.id"
+          :class="{ active: selected === model.id }"
+        >
           <button class="model-name text-button" :disabled="busy" @click="edit(model)">
             {{ model.name }}
           </button>
           <span class="badge">{{ model.enabled ? '启用' : '停用' }}</span>
           <p>{{ model.model }} · {{ model.external ? '外部服务' : '私有服务' }}</p>
+          <p class="model-endpoint">{{ model.baseUrl }}</p>
           <small>{{
             model.purposes
               .map(
@@ -124,10 +164,32 @@ onMounted(load)
               删除
             </button>
           </div>
+          <p
+            v-if="tests[model.id]"
+            class="model-test-result"
+            :class="tests[model.id]!.state"
+            role="status"
+          >
+            {{ tests[model.id]!.message }}
+          </p>
         </article>
       </section>
       <form class="panel model-form" @submit.prevent="save">
-        <h3>{{ selected ? '编辑模型' : '添加模型' }}</h3>
+        <div class="model-form-heading">
+          <div>
+            <span class="eyebrow">CONNECTION SETTINGS</span>
+            <h3>{{ selected ? '编辑模型' : '添加模型' }}</h3>
+          </div>
+          <span class="badge">{{ selected ? '已登记' : '新连接' }}</span>
+        </div>
+        <div class="provider-preset">
+          <div>
+            <strong>ModelScope · 魔搭</strong><small>快速填写 Qwen 服务地址与模型标识</small>
+          </div>
+          <button type="button" class="button" :disabled="busy" @click="modelScope">
+            使用 ModelScope 配置
+          </button>
+        </div>
         <div class="model-grid">
           <label
             >配置标识<input
@@ -163,6 +225,7 @@ onMounted(load)
         <label
           >API Key<input
             v-model="form.apiKey"
+            aria-label="API Key"
             :disabled="busy"
             type="password"
             autocomplete="new-password"
@@ -227,6 +290,16 @@ onMounted(load)
         <button class="button primary" :disabled="busy || !form.purposes.length">
           {{ busy ? '正在处理…' : '保存模型' }}
         </button>
+        <button
+          v-if="selected"
+          type="button"
+          class="button model-test-button"
+          :disabled="busy"
+          @click="test(models.find((m) => m.id === selected)!)"
+        >
+          测试已保存配置
+        </button>
+        <p class="muted">测试只发送固定连接检查消息，不携带 SQL、表定义或作业日志。</p>
       </form>
     </div>
   </template>
@@ -234,8 +307,8 @@ onMounted(load)
 <style scoped>
 .models-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
-  gap: 18px;
+  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
+  gap: 24px;
   align-items: start;
 }
 .model-list,
@@ -244,9 +317,129 @@ onMounted(load)
   min-width: 0;
 }
 .model-list article {
-  padding: 16px 10px;
-  border-bottom: 1px solid var(--line);
+  padding: 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-top: 14px;
   overflow-wrap: anywhere;
+}
+.model-overview {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin: 8px 0 24px;
+  padding: 24px 28px;
+  background: linear-gradient(110deg, #edf4ff, #f7faff);
+  border: 1px solid #dce8fb;
+  border-radius: 12px;
+}
+.model-overview h2 {
+  font-size: 21px;
+  margin: 8px 0;
+}
+.model-overview p {
+  color: var(--color-muted);
+  margin: 0;
+  font-size: 13px;
+}
+.model-metrics {
+  display: flex;
+  gap: 32px;
+}
+.model-metrics strong {
+  font-size: 28px;
+  color: var(--color-primary);
+  text-align: center;
+}
+.model-metrics small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-muted);
+}
+.model-form-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.model-form-heading h3 {
+  font-size: 19px;
+  margin: 7px 0 0;
+}
+.provider-preset {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dbe6f7;
+  border-radius: 8px;
+  background: #f8faff;
+  padding: 14px;
+  margin-bottom: 20px;
+}
+.provider-preset small {
+  display: block;
+  color: var(--color-muted);
+  margin-top: 4px;
+}
+.model-endpoint {
+  font:
+    12px/1.7 Consolas,
+    monospace;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.model-form label {
+  margin-bottom: 16px;
+}
+.model-search {
+  margin: 10px 0;
+}
+.model-test-button {
+  margin-left: 10px;
+}
+.model-test-result {
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.model-test-result.success {
+  background: #edf9f1;
+  color: #17764c;
+}
+.model-test-result.failed {
+  background: #fff1f0;
+  color: #a73b3b;
+}
+.model-test-result.checking {
+  background: #eef4ff;
+  color: #2467c5;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: #6c89b3;
+  font-weight: 600;
+}
+@media (max-width: 600px) {
+  .model-overview {
+    padding: 18px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .model-metrics {
+    gap: 28px;
+  }
+  .provider-preset {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .models-layout {
+    gap: 14px;
+  }
 }
 .model-list article.active {
   background: #edf3ff;

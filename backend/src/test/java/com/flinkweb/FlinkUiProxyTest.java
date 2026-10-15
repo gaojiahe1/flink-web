@@ -137,4 +137,48 @@ class FlinkUiProxyTest {
     assertThat(output.getContentAsString())
         .contains("jobmanager.memory.jvm-metaspace.size", "512m", "2048m");
   }
+
+  /** 已启动的 Session 也隐藏提交入口，禁止通过代理探查 JAR，作业代理配置不改写。 */
+  @Test
+  void sessionDisablesSubmissionInConfigAndJarPaths() throws Exception {
+    var client = mock(HttpClient.class);
+    var service = service(client);
+    for (String path : List.of("config", "v1/config")) {
+      var configResponse =
+          upstream(
+              200,
+              "application/json",
+              "{\"features\":{\"web-submit\":true,\"web-cancel\":true,\"web-history\":true},\"flink-version\":\"1.20.5\"}");
+      when(client.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(configResponse);
+      var output = new MockHttpServletResponse();
+      service.sessionProxy(
+          "sql-validation",
+          new MockHttpServletRequest("GET", "/flink-ui/sessions/sql-validation/" + path),
+          output);
+      var result =
+          new com.fasterxml.jackson.databind.ObjectMapper()
+              .readTree(output.getContentAsByteArray());
+      assertThat(result.at("/features/web-submit").asBoolean()).isFalse();
+      assertThat(result.at("/features/web-cancel").asBoolean()).isFalse();
+      assertThat(result.at("/features/web-submit").isBoolean()).isTrue();
+      assertThat(result.at("/features/web-history").asBoolean()).isTrue();
+      assertThat(result.path("flink-version").asText()).isEqualTo("1.20.5");
+    }
+    for (String path : List.of("jars", "jars/test.jar", "v1/jars")) {
+      assertThatThrownBy(
+              () ->
+                  service.sessionProxy(
+                      "sql-validation",
+                      new MockHttpServletRequest(
+                          "GET", "/flink-ui/sessions/sql-validation/" + path),
+                      new MockHttpServletResponse()))
+          .isInstanceOf(com.flinkweb.exception.common.BusinessException.class)
+          .hasMessageContaining("提交");
+    }
+    var applicationConfig = upstream(200, "application/json", "{\"web-submit\":true}");
+    when(client.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(applicationConfig);
+    var output = new MockHttpServletResponse();
+    service.proxy("job-id", new MockHttpServletRequest("GET", "/flink-ui/job-id/config"), output);
+    assertThat(output.getContentAsString()).contains("true");
+  }
 }

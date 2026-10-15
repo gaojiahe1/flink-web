@@ -121,6 +121,9 @@ public class SessionClusterServiceImpl implements SessionClusterService {
     node.withObject("/metadata/labels").put("flink-web/session-id", id);
     node.withObject("/metadata/labels").remove("flink-web/editor");
     node.withObject("/spec").remove("job");
+    // 专用验证仍需内部 JAR REST；用户 UI 的提交能力由只读代理统一关闭。
+    node.withObject("/spec/flinkConfiguration")
+        .put("web.submit.enable", record.path("validation").asBoolean() ? "true" : "false");
     if (record.path("validation").asBoolean()) {
       com.flinkweb.config.sql.SqlValidationLog.configure(node);
     }
