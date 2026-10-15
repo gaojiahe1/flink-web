@@ -1,5 +1,19 @@
 # 治理与记忆系统验收
 
+## 需求向导约束与验证最终结果（2026-10-15）
+
+- 起点：干净本地 master `4d55bd4`，工作分支 `codex/ai-requirements-workflow`。用户要求按需求向导重新定义 AI，并追加结果表格遮挡、只展示 Sink 字段/最终结果、随时停止、自动 Print 与源表加 SELECT 验证。本轮未新增生产操作授权。
+- AI：v2 角色/场景契约、时区/窗口水位线校验和写入目标约束；步骤就绪、补充后重新确认、生成快照和成功应用回执，关闭重开保留状态。原同号任务恢复、取消、版本保护和显式保存继续有效。
+- SQL：Runner 在变量展开前剥离 INSERT 目标的连接选项，保留字段与主键，生成 JSON Print；SELECT/CTE 可直接验证，禁止验证 CTAS，Application 仍 INSERT-only。表格移出编辑器裁剪容器，单一滚动/固定表头，多输出切换；按主键或多重集处理 +I/-U/+U/-D，仅显示输出字段和采集范围内最终结果，工具栏/结果区均可停止。
+- 完整后端232项：229通过、3跳过（2项实际Parser未传路径、1可选MinIO）；随后6项Parser定向全部通过，补足两项实际进程用例。唯一未执行为可选MinIO。首轮隔离JUnit临时目录ACL错误在宿主回归消除，业务断言无失败。
+- Runner10项全部通过，包含无效Kafka选项/缺失Sink密钥、NULL、逗号/多行、大整数、字段映射、CTE SELECT及Application拒绝SELECT。真实隔离Flink1.20.5/JDK17 Session通过原Sink选项跳过、结构化主键/字段、四种RowKind及中文多行、源表SELECT两行输出和1000条取消确认；脚本直接REST取消边界，后台自动截止/取消由后端集成用例覆盖。
+- JDK8u361/17.0.10：新版Runner及镜像实际分发的两份精确Parser字节码不高于major52，32次Parser输入/语法协议检查、Application各3行运行通过；新版Runner验证模式另各3行JSON真实MiniCluster运行通过。本机旧sql-validators安装包与新版协议不一致，未覆盖该共享安装目录；交付验证使用最终镜像提取的实际Parser，未重建或修改它们。
+- 最终41项相关前端测试全部通过；另检查1440/900/390px的80行最终结果滚动，表头/最后一行均在可见容器内，已目视桌面/窄屏截图。Vue类型与生产构建、本次受影响源码Prettier、191类/1069方法构造器中文注释与后端分层、补丁空白检查通过。全源Prettier另有5个基线文件警告（SessionStateDetail、SessionsView、studio.css、ModelsView、sqlEditing）；它们无本轮Git差异，保留原文，不将全源格式写成通过。
+- 最终app/web以UID10001/只读根文件系统运行，临时/tmp显式允许JNI执行；真实加密登录、SELECT-only精确Parser、新Runner下载SHA-256、真实任务API的v2角色/场景提示、生成→审阅应用→检查→保存及配置回读通过，模型协议替身仅调用一次，无页面异常。Web代理/DNS恢复四类检查通过；模型服务和Kubernetes为隔离协议替身，不能据此认证真实厂商或现场。
+- 发布：app/web0.0.4 manifest分别为 `sha256:90b0664a788a1ff8edf82825053b73f9ec32ccbe6281e0ee779fa3cc74429793`、`sha256:4218ac82232c991f91b63ffd66b90a251ec2bff4b2a7a3605c49520a1ae9a4e6`，指定仓库config及全部23/21层内容一致。Runner SHA-256为 `42e17ae9807c5e048c8df112f735fbb8677b8520ceda3f1c72ce7b8eba3164a5`。未更新latest/downloader或现场工作负载；旧Runner须按部署指南重新选择。
+
+临时容器/网络及本轮Vite已退出，检查/localhost标签和本轮中间镜像已清理，构建缓存按构建前后核实ID删除；最终发布镜像、已有registry、共享依赖/历史资源和原数据库保留。独占打包/日志/脚本目录及已核实截图输出清理，交付预览另存可视化目录。提交与本地master合并结果在完成后补录；本轮没有推送源码Git。
+
 初始治理记录日期：2026-10-12。基线 `2e21351`；治理分支 `codex/project-governance-20261012`。之后的验证按各小节日期、基线和环境范围理解，不提升旧聊天报告为本轮结果。
 
 ## AI 健壮性与按需日志缓冲（2026-10-15）

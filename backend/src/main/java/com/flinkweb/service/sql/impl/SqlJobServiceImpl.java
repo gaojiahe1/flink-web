@@ -174,9 +174,13 @@ public class SqlJobServiceImpl implements SqlJobService {
               runtime,
               0));
     }
-    return parser.check(
-        validation.validate(catalogs.prepare(runtime.deepCopy()) + script),
+    var checked = parser.check(
+        validation.validateVerification(catalogs.prepare(runtime.deepCopy()) + script),
         runtime.path("imageId").asText());
+    if (checked.insertCount() == 0)
+      return new com.flinkweb.dto.sql.SqlCheckResult(checked.valid(), checked.level(), checked.statementCount(), 0,
+          checked.message() + " 当前为只读验证查询；发布 Application 需要 INSERT 写入语句。", checked.statements());
+    return checked;
   }
 
   /** 校验 SQL 并生成 YAML 预览；不保存部署草稿，也不访问 Kubernetes。 */

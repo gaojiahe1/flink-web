@@ -8,6 +8,14 @@ import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import { aiApi, type AiModel, type AiResult, type AiTask } from '../api/ai'
 import { useAiTask } from '../composables/useAiTask'
 import { mergeDefinitions, validateDefinitions } from '../utils/definitions'
+import {
+  initialRole,
+  roleLabel,
+  wizardDataIssues,
+  type TableRole,
+  type WizardPattern,
+  type WizardTable,
+} from '../utils/wizard'
 const props = defineProps<{
   sql: string
   sqlId: string
@@ -16,24 +24,52 @@ const props = defineProps<{
   editable: boolean
   checkSummary?: string
   dirty?: boolean
-  sources: { id: string; name: string; connectorType: string }[]
+  active?: boolean
+  canVerify?: boolean
+  sources: (WizardTable & { id: string; name: string })[]
 }>()
-const emit = defineEmits<{ close: []; apply: [AiResult, number]; check: []; save: [] }>()
+const emit = defineEmits<{
+  close: []
+  apply: [AiResult, number, (success: boolean) => void]
+  check: []
+  save: []
+  run: []
+  navigation: [boolean[]]
+}>()
 const step = defineModel<number>('step', { default: 1 })
 const followup = ref('')
 const selectedTables = computed(() => props.sources.filter((s) => sourceIds.value.includes(s.id)))
 function nextStep(value: number) {
+  if (
+    value === 2 &&
+    mode.value !== 'explain' &&
+    mode.value !== 'definition' &&
+    dataIssues.value.length
+  ) {
+    localError.value = dataIssues.value.join('；')
+    return
+  }
+  if (value === 3 && !result.value) return
+  if (value === 4 && !applied.value) return
   step.value = value
   tab.value = 'conversation'
 }
+defineExpose({ nextStep })
 function chooseMode(value: string) {
   mode.value = value
   nextStep(2)
 }
 function applySql() {
   if (result.value && canApply.value) {
-    emit('apply', result.value, base.value)
-    nextStep(4)
+    applying.value = true
+    emit('apply', result.value, base.value, (success) => {
+      applying.value = false
+      if (success) {
+        appliedTask.value = task.value?.id || ''
+        appliedVersion.value = props.contextKey
+        nextStep(4)
+      }
+    })
   }
 }
 async function refine() {
@@ -41,7 +77,7 @@ async function refine() {
   instruction.value += '\n补充需求：' + followup.value
   followup.value = ''
   nextStep(2)
-  await send()
+  compiledMessage.value = '补充已加入需求，请重新确认后生成；当前 SQL 保持不变。'
 }
 const modelId = ref(''),
   selectedModel = ref<AiModel>(),
@@ -56,6 +92,56 @@ const windowMinutes = ref(5),
   eventTime = ref(''),
   dedup = ref(''),
   startPosition = ref('latest-offset')
+const pattern = ref<WizardPattern>('transform'),
+  timezone = ref('Asia/Shanghai')
+const roles = ref<Record<string, TableRole>>({})
+const applying = ref(false),
+  appliedTask = ref(''),
+  appliedVersion = ref(-1)
+const applied = computed(() => !!appliedTask.value && appliedVersion.value === props.contextKey)
+const localTables = computed(() => {
+  try {
+    return definitions() as unknown as WizardTable[]
+  } catch {
+    return []
+  }
+})
+const allTables = computed(() => [...selectedTables.value, ...localTables.value])
+const tableRole = (table: WizardTable) =>
+  roles.value[table.tableName] ?? initialRole(table.connectorType)
+const dataIssues = computed(() => {
+  try {
+    definitions()
+  } catch (cause) {
+    return [(cause as Error).message]
+  }
+  return wizardDataIssues(allTables.value, roles.value)
+})
+const timeChoices = computed(() =>
+  allTables.value.filter((table) => tableRole(table) === 'source' && table.watermarkColumn),
+)
+const specIssues = computed(() => {
+  const issues = [...dataIssues.value]
+  if (!dedup.value) issues.push('请确认重复数据处理方式')
+  if (pattern.value === 'lookup' && !allTables.value.some((table) => tableRole(table) === 'lookup'))
+    issues.push('维表打宽需要选择一张 JDBC 维表')
+  if (pattern.value === 'window') {
+    if (
+      !Number.isInteger(windowMinutes.value) ||
+      windowMinutes.value < 1 ||
+      windowMinutes.value > 1440
+    )
+      issues.push('窗口应为1–1440分钟的整数')
+    if (
+      !eventTime.value ||
+      !timeChoices.value.some(
+        (table) => table.tableName + '.' + table.watermarkColumn === eventTime.value,
+      )
+    )
+      issues.push('请选择输入表中已定义水位线的事件时间字段')
+  }
+  return issues
+})
 const { task, busy, error, uncertain, retry, start, cancel } = useAiTask()
 const history = ref<AiTask[]>([]),
   base = ref(-1),
@@ -74,7 +160,7 @@ let contextVersion = 0,
   disposed = false
 const result = computed(() => (task.value?.state === 'SUCCEEDED' ? task.value.result : undefined))
 watch(result, (value) => {
-  if (value) {
+  if (value && !stale.value && base.value === props.contextKey) {
     step.value = 3
     tab.value = 'conversation'
   }
@@ -86,7 +172,25 @@ const canApply = computed(
     !stale.value &&
     base.value === props.contextKey &&
     props.editable &&
-    !busy.value,
+    !busy.value &&
+    !applying.value,
+)
+watch(
+  [dataIssues, result, applied, mode],
+  () =>
+    emit('navigation', [
+      true,
+      !dataIssues.value.length || ['explain', 'definition'].includes(mode.value),
+      !!result.value,
+      applied.value,
+    ]),
+  { immediate: true },
+)
+watch(
+  () => props.active,
+  (active) => {
+    if (active === false && busy.value) invalidate()
+  },
 )
 const differences = computed(() => {
   const old = props.sql.split('\n'),
@@ -107,7 +211,19 @@ function invalidate() {
 watch(() => props.contextKey, invalidate, { flush: 'sync' })
 watch(instruction, invalidate, { flush: 'sync' })
 watch(
-  [sourceIds, definitionsText, windowMinutes, eventTime, dedup, startPosition, modelId, mode],
+  [
+    sourceIds,
+    definitionsText,
+    windowMinutes,
+    eventTime,
+    dedup,
+    startPosition,
+    modelId,
+    mode,
+    roles,
+    pattern,
+    timezone,
+  ],
   invalidate,
   { deep: true, flush: 'sync' },
 )
@@ -127,8 +243,12 @@ function definitions() {
 function addDefinition(sink: boolean) {
   try {
     const value = definitions()
+    let name = sink ? 'sink_events' : 'source_events'
+    let suffix = 2
+    while (allTables.value.some((table) => table.tableName === name))
+      name = (sink ? 'sink_events_' : 'source_events_') + suffix++
     value.push({
-      tableName: sink ? 'sink_events' : 'source_events',
+      tableName: name,
       connectorType: sink ? 'print' : 'kafka',
       columns: [{ name: 'id', type: 'STRING', primaryKey: false, nullable: true }],
       ...(sink
@@ -161,7 +281,8 @@ async function send() {
   localError.value = ''
   try {
     if (!modelId.value || !instruction.value.trim()) throw new Error('请选择模型并填写需求或问题')
-    if (mode.value === 'generate' && !dedup.value) throw new Error('请先确认重复数据处理方式')
+    if (mode.value !== 'explain' && mode.value !== 'definition' && specIssues.value.length)
+      throw new Error(specIssues.value.join('；'))
     const value = definitions()
     base.value = props.contextKey
     stale.value = false
@@ -177,12 +298,28 @@ async function send() {
       sourceIds: sourceIds.value,
       definitions: value,
       flinkVersion: props.flinkVersion,
-      spec: {
-        eventTime: eventTime.value,
-        windowMinutes: windowMinutes.value,
-        dedup: dedup.value,
-        startPosition: startPosition.value,
-      },
+      spec:
+        mode.value === 'generate' || mode.value === 'repair'
+          ? {
+              workflowVersion: 2,
+              pattern: pattern.value,
+              timezone: timezone.value,
+              bindings: allTables.value.map((table) => ({
+                tableName: table.tableName,
+                role: tableRole(table),
+              })),
+              ...(pattern.value === 'window'
+                ? {
+                    eventTable: eventTime.value.split('.')[0],
+                    eventTime: eventTime.value.split('.').slice(1).join('.'),
+                    windowMinutes: windowMinutes.value,
+                    outputMode: 'window-close',
+                  }
+                : {}),
+              dedup: dedup.value,
+              startPosition: startPosition.value,
+            }
+          : {},
     })
   } catch (cause) {
     localError.value = (cause as Error).message
@@ -257,10 +394,13 @@ onBeforeUnmount(() => {
       ><input v-model="allowExternal" type="checkbox" :disabled="busy" />允许将本次脱敏
       SQL、表定义和需求发送到此外部模型</label
     >
-    <div class="ai-modes" aria-label="助手任务">
+    <div class="wizard-function-title">
+      <strong>SQL 需求向导</strong><span>选择数据 → 确认语义 → 审阅建议</span>
+    </div>
+    <div class="ai-modes" aria-label="辅助能力">
       <button
         v-for="item in [
-          { id: 'generate', label: '生成 SQL' },
+          { id: 'generate', label: '需求生成' },
           { id: 'explain', label: '解释' },
           { id: 'repair', label: '修复' },
           { id: 'definition', label: '数据定义' },
@@ -280,7 +420,7 @@ onBeforeUnmount(() => {
         :class="{ active: tab === 'conversation' }"
         @click="tab = 'conversation'"
       >
-        对话与建议</button
+        需求向导</button
       ><button
         class="text-button"
         :class="{ active: tab === 'definitions' }"
@@ -291,19 +431,78 @@ onBeforeUnmount(() => {
     </nav>
     <div v-show="tab === 'conversation'" class="wizard-conversation">
       <section v-show="step === 1" class="wizard-data">
-        <p class="muted">选择已登记的数据，或在“数据定义”中补充当前作业的输入、输出表。</p>
+        <h4>这份作业从哪里读，写到哪里？</h4>
+        <p class="muted">选择数据后明确每张表的用途。角色仅用于本次需求，不修改共享数据源。</p>
         <p v-if="!sources.length" class="empty-state">
           暂无登记数据源，可先添加当前作业的数据定义。
         </p>
-        <label v-for="source in sources" :key="source.id" class="wizard-source"
-          ><input v-model="sourceIds" :value="source.id" type="checkbox" :disabled="busy" /><span
-            ><strong>{{ source.name }}</strong
-            ><small>{{ source.connectorType }} · {{ source.id }}</small></span
-          ></label
+        <div
+          v-for="source in sources"
+          :key="source.id"
+          class="wizard-source"
+          :class="{ selected: sourceIds.includes(source.id) }"
         >
+          <label
+            ><input
+              v-model="sourceIds"
+              :value="source.id"
+              type="checkbox"
+              :disabled="busy || !editable"
+            /><span
+              ><strong>{{ source.name }}</strong
+              ><small>{{ source.connectorType }} · {{ source.tableName }}</small></span
+            ></label
+          >
+          <label v-if="sourceIds.includes(source.id)" class="wizard-role"
+            >用途<select
+              :value="tableRole(source)"
+              :disabled="busy || !editable"
+              :aria-label="source.name + '的数据角色'"
+              @change="
+                roles[source.tableName] = ($event.target as HTMLSelectElement).value as TableRole
+              "
+            >
+              <option value="">请选择</option>
+              <option value="source" :disabled="source.connectorType === 'print'">输入表</option>
+              <option
+                value="lookup"
+                :disabled="!['mysql', 'postgresql'].includes(source.connectorType)"
+              >
+                维表
+              </option>
+              <option value="sink" :disabled="source.connectorType === 'datagen'">输出表</option>
+            </select></label
+          >
+        </div>
+        <div
+          v-for="(table, index) in localTables"
+          :key="'local-' + index"
+          class="wizard-local-table"
+        >
+          <span
+            >{{ table.tableName }}<small>当前作业定义 · {{ table.connectorType }}</small></span
+          ><select
+            :value="tableRole(table)"
+            :disabled="busy"
+            :aria-label="table.tableName + '的数据角色'"
+            @change="
+              roles[table.tableName] = ($event.target as HTMLSelectElement).value as TableRole
+            "
+          >
+            <option value="">请选择用途</option>
+            <option value="source">输入表</option>
+            <option value="lookup">维表</option>
+            <option value="sink">输出表</option>
+          </select>
+        </div>
         <button class="text-button" @click="tab = 'definitions'">补充当前作业的数据定义</button>
+        <p v-if="dataIssues.length" class="wizard-pending">{{ dataIssues.join('；') }}</p>
         <div class="wizard-actions">
-          <button class="button primary" :disabled="busy" @click="nextStep(2)">
+          <button
+            class="button primary"
+            :disabled="busy || !!dataIssues.length"
+            @click="nextStep(2)"
+          >
             下一步：确认需求
           </button>
         </div>
@@ -311,9 +510,17 @@ onBeforeUnmount(() => {
       <section v-show="step === 2" class="wizard-confirm">
         <div v-if="selectedTables.length" class="wizard-source-tags">
           <span v-for="source in selectedTables" :key="source.id"
-            >{{ source.connectorType }} · {{ source.name }}</span
+            >{{ roleLabel[tableRole(source) as keyof typeof roleLabel] || '待选用途' }} ·
+            {{ source.name }}</span
           >
         </div>
+        <label v-if="mode === 'generate' || mode === 'repair'"
+          >处理场景<select v-model="pattern" :disabled="busy" aria-label="处理场景">
+            <option value="transform">清洗转换：筛选、映射与明细同步</option>
+            <option value="lookup">维表打宽：关联 JDBC 维度</option>
+            <option value="window">窗口统计：按事件时间定期汇总</option>
+          </select></label
+        >
         <label class="ai-prompt"
           >{{
             mode === 'explain'
@@ -331,30 +538,53 @@ onBeforeUnmount(() => {
             placeholder="描述统计口径、输入输出和时间要求，未知连接参数可后续补全。"
           />
         </label>
-        <p class="muted">先确认统计方式，再生成转换逻辑。连接参数与密钥引用沿用所选定义。</p>
+        <p class="muted">生成器只编写转换逻辑；表结构、连接参数和密钥引用由已选定义编译。</p>
         <section v-show="mode !== 'explain' && mode !== 'definition'" class="wizard-contract">
           <header>
             <strong>需求确认单</strong
-            ><span class="badge" :class="{ running: !!dedup }">{{
-              dedup ? '已确认处理方式' : '待确认'
+            ><span class="badge" :class="{ running: !specIssues.length }">{{
+              !specIssues.length ? '可确认生成' : '待补充'
             }}</span>
           </header>
           <div class="wizard-contract-row">
             <span>输入</span
-            ><span>{{ selectedTables.map((s) => s.name).join('、') || '当前作业的数据定义' }}</span
+            ><span>{{
+              allTables
+                .filter((t) => tableRole(t) === 'source')
+                .map((t) => t.name || t.tableName)
+                .join('、')
+            }}</span
             ><small>已选数据</small>
           </div>
           <div class="wizard-contract-row">
+            <span>输出表</span
+            ><span>{{
+              allTables
+                .filter((t) => tableRole(t) === 'sink')
+                .map((t) => t.name || t.tableName)
+                .join('、')
+            }}</span
+            ><small>已选目标</small>
+          </div>
+          <div class="wizard-contract-row" v-if="pattern === 'window'">
             <label for="wizard-time">事件时间</label
-            ><input
+            ><select
               id="wizard-time"
               v-model="eventTime"
               :disabled="busy"
-              placeholder="例如 pay_time；留空由 SQL 定义"
               aria-label="事件时间字段"
-            /><small>字段定义</small>
+            >
+              <option value="">请选择已登记水位线字段</option>
+              <option
+                v-for="table in timeChoices"
+                :key="table.tableName"
+                :value="table.tableName + '.' + table.watermarkColumn"
+              >
+                {{ table.tableName }}.{{ table.watermarkColumn }}
+              </option></select
+            ><small>输入定义</small>
           </div>
-          <div class="wizard-contract-row">
+          <div class="wizard-contract-row" v-if="pattern === 'window'">
             <label for="wizard-window">窗口</label
             ><input
               id="wizard-window"
@@ -366,11 +596,27 @@ onBeforeUnmount(() => {
               aria-label="窗口（分钟）"
             /><small>分钟</small>
           </div>
-          <div class="wizard-contract-row">
-            <span>迟到</span><span>沿用表定义的水位线</span><small>水位线</small>
+          <div class="wizard-contract-row" v-if="pattern === 'window'">
+            <span>迟到</span
+            ><span
+              >{{
+                timeChoices.find((t) => t.tableName + '.' + t.watermarkColumn === eventTime)
+                  ?.watermarkDelaySeconds ?? '待选'
+              }}
+              秒；超出可能不计入窗口</span
+            ><small>水位线</small>
           </div>
           <div class="wizard-contract-row">
-            <span>输出</span><span>由需求与目标表约束决定</span><small>输出定义</small>
+            <span>输出方式</span
+            ><span>{{ pattern === 'window' ? '窗口结束后输出' : '持续输出符合需求的明细' }}</span
+            ><small>场景约束</small>
+          </div>
+          <div class="wizard-contract-row">
+            <label for="wizard-zone">时区</label
+            ><select id="wizard-zone" v-model="timezone" :disabled="busy">
+              <option value="Asia/Shanghai">Asia/Shanghai</option>
+              <option value="UTC">UTC</option></select
+            ><small>运行配置</small>
           </div>
           <div class="wizard-contract-row">
             <label for="wizard-start">起始位置</label
@@ -393,8 +639,9 @@ onBeforeUnmount(() => {
               <option value="keep">每条消息均计入</option></select
             ><small>需确认</small>
           </div>
-          <p v-if="!dedup" class="wizard-pending">请确认重复数据如何处理，避免重复累计。</p>
+          <p v-if="specIssues.length" class="wizard-pending">{{ specIssues.join('；') }}</p>
         </section>
+        <p v-if="compiledMessage" class="notice" role="status">{{ compiledMessage }}</p>
         <div class="wizard-actions">
           <button class="button" :disabled="busy" @click="nextStep(1)">上一步</button
           ><button
@@ -404,7 +651,7 @@ onBeforeUnmount(() => {
               !modelId ||
               !editable ||
               !instruction.trim() ||
-              (mode === 'generate' && !dedup) ||
+              (['generate', 'repair'].includes(mode) && !!specIssues.length) ||
               (selectedModel?.external && !allowExternal)
             "
             @click="send"
@@ -427,6 +674,10 @@ onBeforeUnmount(() => {
           上下文或需求已改变，旧建议不可应用，请重新生成。
         </p>
         <AiResultReport v-if="result" :result="result" />
+        <details v-if="result?.spec" class="wizard-confirmed-spec">
+          <summary>查看本次生成使用的需求确认单</summary>
+          <pre class="ai-json">{{ JSON.stringify(result.spec, null, 2) }}</pre>
+        </details>
         <template v-if="result?.sql"
           ><details class="ai-suggestion" open>
             <summary>SQL 修改对比</summary>
@@ -454,7 +705,9 @@ onBeforeUnmount(() => {
         >
         <div class="wizard-actions">
           <button class="button" :disabled="busy" @click="nextStep(2)">返回需求确认</button
-          ><button class="button" @click="nextStep(4)">下一步：检查与保存</button>
+          ><button class="button" :disabled="!applied" @click="nextStep(4)">
+            下一步：检查与保存
+          </button>
         </div>
       </section>
       <section v-show="step === 4" class="wizard-save">
@@ -465,6 +718,8 @@ onBeforeUnmount(() => {
         <div class="wizard-actions">
           <button class="button" :disabled="!editable || busy" @click="emit('check')">
             检查当前 SQL</button
+          ><button class="button" :disabled="!editable || busy || !canVerify" @click="emit('run')">
+            运行验证</button
           ><button class="button primary" :disabled="!editable || busy" @click="emit('save')">
             保存当前草稿
           </button>
@@ -697,6 +952,66 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   padding: 14px;
   margin: 10px 0;
+  flex-wrap: wrap;
+}
+.wizard-source.selected {
+  background: #f7faff;
+  border-color: #bfd3f7;
+}
+.wizard-source > label:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 130px;
+  margin: 0;
+}
+.wizard-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 150px;
+  margin: 0 !important;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.wizard-role select {
+  min-width: 0;
+}
+.wizard-local-table {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.wizard-local-table small {
+  display: block;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+.wizard-local-table select {
+  width: 120px;
+}
+.wizard-function-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 16px;
+}
+.wizard-function-title strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.wizard-function-title span {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+.wizard-data h4 {
+  margin: 0 0 8px;
 }
 .wizard-source input {
   width: auto;

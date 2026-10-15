@@ -18,20 +18,32 @@ public class SqlValidationServiceImpl implements SqlValidationService {
 
   /** 拆分脚本并限制为先建表/视图、后 INSERT 的单 Application 执行序列。 */
   public SqlCheckResult validate(String script) {
+    return validateScript(script, false);
+  }
+
+  /** 只读查询可交给验证 Runner，不能借此发布没有 Sink 的 Application。 */
+  public SqlCheckResult validateVerification(String script) {
+    return validateScript(script, true);
+  }
+
+  /** 共用引号/注释切分、大小和顺序限制，查询只在验证入口开放。 */
+  private SqlCheckResult validateScript(String script, boolean queries) {
     if (script == null || script.isBlank()) fail("请输入 SQL 脚本");
     if (script.getBytes(StandardCharsets.UTF_8).length > 32768) fail("基础版 SQL 脚本不能超过 32 KiB");
     List<String> statements = split(script);
     int inserts = 0;
+    int reads = 0;
     for (String statement : statements) {
       if (INSERT.matcher(statement).matches()) inserts++;
+      else if (queries && statement.matches("(?is)^(SELECT|WITH|VALUES)\\b.*")) reads++;
       else if (DDL.matcher(statement).matches() || statement.matches("(?is)^USE\\s+.*")) {
-        if (inserts > 0) fail("CREATE / USE 必须放在所有 INSERT 之前");
+        if (inserts + reads > 0) fail("CREATE / USE 必须放在所有 INSERT / SELECT 之前");
       } else
         fail(
             "支持 CREATE TABLE/VIEW/CATALOG/DATABASE、USE 和 INSERT INTO/OVERWRITE；SET 请填写到运行配置，暂不支持"
                 + " SELECT 结果预览或 SQL Client 命令");
     }
-    if (inserts == 0) fail("至少需要一条 INSERT 写入语句");
+    if (inserts + reads == 0) fail(queries ? "至少需要一条 INSERT 或 SELECT 查询" : "至少需要一条 INSERT 写入语句");
     if (statements.size() > 100) fail("基础版最多支持 100 条语句");
     return new SqlCheckResult(
         true,

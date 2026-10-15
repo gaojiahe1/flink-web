@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mergeDefinitions, validateDefinitions } from '../src/modules/ai/utils/definitions'
+import { wizardDataIssues } from '../src/modules/ai/utils/wizard'
 const pageErrors = new WeakMap<Page, string[]>()
 test.afterEach(async ({ page }) => {
   expect(pageErrors.get(page) || []).toEqual([])
@@ -117,7 +118,23 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
         },
       ]
     else if (path === '/api/catalog/datasources')
-      data = [{ id: 'source', name: '测试数据', connectorType: 'datagen' }]
+      data = [
+        {
+          id: 'source',
+          name: '测试数据',
+          tableName: 'source_events',
+          connectorType: 'datagen',
+          rowsPerSecond: 1,
+          columns: [{ name: 'id', type: 'STRING' }],
+        },
+        {
+          id: 'sink',
+          name: '测试输出',
+          tableName: 'sink_events',
+          connectorType: 'print',
+          columns: [{ name: 'id', type: 'STRING' }],
+        },
+      ]
     else if (path === '/api/artifacts/defaults')
       data = { bucket: 'files', rootPrefix: 'artifacts/', stateRoot: 's3://state' }
     else if (path === '/api/artifacts/objects')
@@ -207,7 +224,14 @@ test('模型设置可添加模型并明确安全与用途配置', async ({ page 
 
 test('继续补充数据定义保留用户地址与字段，同时合入新字段', () => {
   const value = mergeDefinitions(
-    [{ tableName: 'orders', connectorType: 'kafka', brokers: 'my-broker:9092', columns: [{ name: 'id', type: 'STRING' }] }],
+    [
+      {
+        tableName: 'orders',
+        connectorType: 'kafka',
+        brokers: 'my-broker:9092',
+        columns: [{ name: 'id', type: 'STRING' }],
+      },
+    ],
     [
       {
         tableName: 'orders',
@@ -229,13 +253,24 @@ test('继续补充数据定义保留用户地址与字段，同时合入新字�
   })
 })
 
+async function selectData(page: Page) {
+  const panel = page.locator('.ai-sql-panel')
+  const navigation = page.getByRole('navigation', { name: 'SQL 需求向导' })
+  await navigation.getByRole('button', { name: /选择数据/ }).click()
+  await panel.getByRole('checkbox', { name: /^测试数据/ }).check()
+  await panel.getByRole('checkbox', { name: /^测试输出/ }).check()
+}
+
 test('SQL 助手生成差异、显式应用，随后继续沿用 SQL 检查', async ({ page }) => {
   const f = await fixture(page)
   await page.goto('/#/sql?draft=sql-draft')
   await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
   const panel = page.locator('.ai-sql-panel')
-  await panel.getByLabel('测试数据', { exact: false }).check()
-  await page.getByRole('navigation', { name: 'SQL 需求向导' }).getByRole('button', { name: /确认需求/ }).click()
+  await selectData(page)
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /确认需求/ })
+    .click()
   await panel.getByLabel('重复数据', { exact: true }).selectOption('upstream')
   await panel.getByLabel('描述业务需求', { exact: true }).fill('按类目统计支付金额')
   await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
@@ -246,7 +281,7 @@ test('SQL 助手生成差异、显式应用，随后继续沿用 SQL 检查', as
   expect(f.submissions[0]).toMatchObject({
     kind: 'sql',
     mode: 'generate',
-    sourceIds: ['source'],
+    sourceIds: ['source', 'sink'],
     flinkVersion: '1.20.5',
   })
   expect(f.operations).toEqual([])
@@ -257,7 +292,11 @@ test('SQL 编辑后旧建议禁止应用；数据定义缺参数明确提示', a
   await page.goto('/#/sql?draft=sql-draft')
   await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
   const panel = page.locator('.ai-sql-panel')
-  await page.getByRole('navigation', { name: 'SQL 需求向导' }).getByRole('button', { name: /确认需求/ }).click()
+  await selectData(page)
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /确认需求/ })
+    .click()
   await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
   await panel.getByLabel('描述业务需求', { exact: true }).fill('原需求')
   await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
@@ -279,9 +318,18 @@ test('SQL 编辑后旧建议禁止应用；数据定义缺参数明确提示', a
 })
 
 test('异常定义及列结构均拒绝，合入失败保留原草稿', () => {
-  const current = [{ tableName: 'orders', connectorType: 'kafka', columns: [{ name: 'id', type: 'STRING' }] }]
+  const current = [
+    { tableName: 'orders', connectorType: 'kafka', columns: [{ name: 'id', type: 'STRING' }] },
+  ]
   const source = JSON.stringify(current)
-  for (const value of [[null], [1], ['text'], [{tableName:'t',connectorType:'kafka',columns:null}], [{tableName:'t',connectorType:'kafka',columns:[null]}], [{tableName:'t',connectorType:'kafka',columns:[{name:'x',type:1}]}]]) {
+  for (const value of [
+    [null],
+    [1],
+    ['text'],
+    [{ tableName: 't', connectorType: 'kafka', columns: null }],
+    [{ tableName: 't', connectorType: 'kafka', columns: [null] }],
+    [{ tableName: 't', connectorType: 'kafka', columns: [{ name: 'x', type: 1 }] }],
+  ]) {
     expect(() => validateDefinitions(value)).toThrow('数据定义')
     expect(() => mergeDefinitions(current, value as any)).toThrow('数据定义')
     expect(JSON.stringify(current)).toBe(source)
@@ -290,117 +338,226 @@ test('异常定义及列结构均拒绝，合入失败保留原草稿', () => {
 
 async function generate(page: Page) {
   await page.goto('/#/sql?draft=sql-draft')
-  await page.getByRole('button',{name:'AI 助手',exact:true}).click()
-  const panel=page.locator('.ai-sql-panel')
-  await page.getByRole('navigation', { name: 'SQL 需求向导' }).getByRole('button', { name: /确认需求/ }).click()
-  await panel.getByLabel('重复数据',{exact:true}).selectOption('keep')
-  await panel.getByLabel('描述业务需求',{exact:true}).fill('测试请求可靠性')
-  await panel.getByRole('button',{name:'确认并生成 SQL',exact:true}).click()
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const panel = page.locator('.ai-sql-panel')
+  await selectData(page)
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /确认需求/ })
+    .click()
+  await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
+  await panel.getByLabel('描述业务需求', { exact: true }).fill('测试请求可靠性')
+  await panel.getByRole('button', { name: '确认并生成 SQL', exact: true }).click()
   return panel
 }
 
-test('生成成功后切换解释或修复使旧建议失效', async ({page}) => {
+test('生成成功后切换解释或修复使旧建议失效', async ({ page }) => {
   await fixture(page)
-  const panel=await generate(page)
-  const apply=panel.getByRole('button',{name:'应用到编辑器',exact:true})
+  const panel = await generate(page)
+  const apply = panel.getByRole('button', { name: '应用到编辑器', exact: true })
   await expect(apply).toBeEnabled()
-  await panel.getByRole('button',{name:'解释',exact:true}).click()
-  await page.getByRole('navigation',{name:'SQL 需求向导'}).getByRole('button',{name:/查看 SQL/}).click()
+  await panel.getByRole('button', { name: '解释', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /查看 SQL/ })
+    .click()
   await expect(apply).toBeDisabled()
-  await panel.getByRole('button',{name:'修复',exact:true}).click()
-  await page.getByRole('navigation',{name:'SQL 需求向导'}).getByRole('button',{name:/查看 SQL/}).click()
+  await panel.getByRole('button', { name: '修复', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /查看 SQL/ })
+    .click()
   await expect(apply).toBeDisabled()
 })
 
-test('服务端接受后创建响应断开，按原编号查询且不重复提交', async ({page}) => {
-  const f=await fixture(page)
-  let id='',posts=0,lookups:string[]=[]
-  await page.route('**/api/ai/tasks',async route=>{
-    if(route.request().method()!=='POST')return route.fallback()
-    id=route.request().postDataJSON().requestId
+test('服务端接受后创建响应断开，按原编号查询且不重复提交', async ({ page }) => {
+  const f = await fixture(page)
+  let id = '',
+    posts = 0,
+    lookups: string[] = []
+  await page.route('**/api/ai/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    id = route.request().postDataJSON().requestId
     posts++
     await route.abort('failed')
   })
-  await page.route('**/api/ai/tasks/*',route=>{
+  await page.route('**/api/ai/tasks/*', (route) => {
     lookups.push(new URL(route.request().url()).pathname.split('/').at(-1)!)
-    return route.fulfill({json:{data:{id,state:'SUCCEEDED',model:'test-model',result:{summary:'已接受',sql:sql+'\n-- recovered'}},error:null}})
+    return route.fulfill({
+      json: {
+        data: {
+          id,
+          state: 'SUCCEEDED',
+          model: 'test-model',
+          result: { summary: '已接受', sql: sql + '\n-- recovered' },
+        },
+        error: null,
+      },
+    })
   })
-  const panel=await generate(page)
+  const panel = await generate(page)
   await expect(panel).toContainText('已接受')
-  expect(lookups).toEqual([id]);expect(posts).toBe(1);expect(f.submissions).toHaveLength(0)
-  await expect(panel.getByRole('button',{name:'应用到编辑器',exact:true})).toBeEnabled()
+  expect(lookups).toEqual([id])
+  expect(posts).toBe(1)
+  expect(f.submissions).toHaveLength(0)
+  await expect(panel.getByRole('button', { name: '应用到编辑器', exact: true })).toBeEnabled()
 })
 
-test('未知提交主动重试前先核对，确认不存在后仍使用原编号与快照', async ({page}) => {
+test('未知提交主动重试前先核对，确认不存在后仍使用原编号与快照', async ({ page }) => {
   await fixture(page)
-  const ids:string[]=[],order:string[]=[];let found=false
-  await page.route('**/api/ai/tasks',async route=>{
-    if(route.request().method()!=='POST')return route.fallback()
-    ids.push(route.request().postDataJSON().requestId);order.push('POST')
-    if(ids.length===1)return route.abort('failed')
-    found=true;return route.fulfill({json:{data:{id:ids[0],state:'SUCCEEDED',model:'test-model',result:{summary:'重试已核对'}},error:null}})
+  const ids: string[] = [],
+    order: string[] = []
+  let found = false
+  await page.route('**/api/ai/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    ids.push(route.request().postDataJSON().requestId)
+    order.push('POST')
+    if (ids.length === 1) return route.abort('failed')
+    found = true
+    return route.fulfill({
+      json: {
+        data: {
+          id: ids[0],
+          state: 'SUCCEEDED',
+          model: 'test-model',
+          result: { summary: '重试已核对' },
+        },
+        error: null,
+      },
+    })
   })
-  await page.route('**/api/ai/tasks/*',route=>{
+  await page.route('**/api/ai/tasks/*', (route) => {
     order.push('GET')
-    return route.fulfill({status:found?200:404,json:found?{data:{id:ids[0],state:'SUCCEEDED'}}:{error:{code:'NOT_FOUND',message:'未找到任务'}}})
+    return route.fulfill({
+      status: found ? 200 : 404,
+      json: found
+        ? { data: { id: ids[0], state: 'SUCCEEDED' } }
+        : { error: { code: 'NOT_FOUND', message: '未找到任务' } },
+    })
   })
-  const panel=await generate(page)
-  await expect(panel.getByRole('button',{name:'核对原任务并重试'})).toBeVisible()
+  const panel = await generate(page)
+  await expect(panel.getByRole('button', { name: '核对原任务并重试' })).toBeVisible()
   expect(ids).toHaveLength(1)
-  await panel.getByRole('button',{name:'核对原任务并重试'}).click()
+  await panel.getByRole('button', { name: '核对原任务并重试' }).click()
   await expect(panel).toContainText('重试已核对')
-  expect(ids[0]).toBe(ids[1]);expect(order).toEqual(['POST','GET','GET','POST'])
+  expect(ids[0]).toBe(ids[1])
+  expect(order).toEqual(['POST', 'GET', 'GET', 'POST'])
 })
 
-test('编译和历史的旧响应不覆盖修改后的上下文', async ({page}) => {
+test('编译和历史的旧响应不覆盖修改后的上下文', async ({ page }) => {
   await fixture(page)
-  let releaseCompile!:()=>void,releaseHistory!:()=>void
-  const compileGate=new Promise<void>(resolve=>{releaseCompile=resolve}),historyGate=new Promise<void>(resolve=>{releaseHistory=resolve})
-  await page.route('**/api/ai/definitions/compile',async route=>{await compileGate;await route.fulfill({json:{data:{valid:true,pending:[],sql:'',env:[]}}})})
-  await page.route('**/api/ai/tasks?*',async route=>{await historyGate;await route.fulfill({json:{data:[{id:'old',state:'FAILED',createdAt:new Date().toISOString(),model:'旧历史',message:'旧错误'}]}})})
-  await page.goto('/#/sql?draft=sql-draft');await page.getByRole('button',{name:'AI 助手',exact:true}).click()
-  const panel=page.locator('.ai-sql-panel')
-  await panel.getByRole('navigation',{name:'AI 产物'}).getByRole('button',{name:'数据定义',exact:true}).click()
-  const compileSent=page.waitForRequest('**/api/ai/definitions/compile')
-  await panel.getByRole('button',{name:'编译定义并检查待补项'}).click();await compileSent
-  await panel.getByRole('button',{name:'添加输入表'}).click()
-  const compiled=page.waitForResponse('**/api/ai/definitions/compile'),historied=page.waitForResponse('**/api/ai/tasks?*')
-  releaseCompile();releaseHistory();await Promise.all([compiled,historied])
+  let releaseCompile!: () => void, releaseHistory!: () => void
+  const compileGate = new Promise<void>((resolve) => {
+      releaseCompile = resolve
+    }),
+    historyGate = new Promise<void>((resolve) => {
+      releaseHistory = resolve
+    })
+  await page.route('**/api/ai/definitions/compile', async (route) => {
+    await compileGate
+    await route.fulfill({ json: { data: { valid: true, pending: [], sql: '', env: [] } } })
+  })
+  await page.route('**/api/ai/tasks?*', async (route) => {
+    await historyGate
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: 'old',
+            state: 'FAILED',
+            createdAt: new Date().toISOString(),
+            model: '旧历史',
+            message: '旧错误',
+          },
+        ],
+      },
+    })
+  })
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const panel = page.locator('.ai-sql-panel')
+  await panel
+    .getByRole('navigation', { name: 'AI 产物' })
+    .getByRole('button', { name: '数据定义', exact: true })
+    .click()
+  const compileSent = page.waitForRequest('**/api/ai/definitions/compile')
+  await panel.getByRole('button', { name: '编译定义并检查待补项' }).click()
+  await compileSent
+  await panel.getByRole('button', { name: '添加输入表' }).click()
+  const compiled = page.waitForResponse('**/api/ai/definitions/compile'),
+    historied = page.waitForResponse('**/api/ai/tasks?*')
+  releaseCompile()
+  releaseHistory()
+  await Promise.all([compiled, historied])
   await expect(panel).not.toContainText('数据定义编译通过')
   await expect(panel).not.toContainText('旧错误')
 })
 
-test('提交不明时取消失败保留原编号，重试取消不重发模型请求',async({page})=>{
+test('提交不明时取消失败保留原编号，重试取消不重发模型请求', async ({ page }) => {
   await fixture(page)
-  let id='',posts=0,cancels=0
-  await page.route('**/api/ai/tasks',route=>{
-    if(route.request().method()!=='POST')return route.fallback()
-    id=route.request().postDataJSON().requestId;posts++;return route.abort('failed')
+  let id = '',
+    posts = 0,
+    cancels = 0
+  await page.route('**/api/ai/tasks', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    id = route.request().postDataJSON().requestId
+    posts++
+    return route.abort('failed')
   })
-  await page.route('**/api/ai/tasks/*',route=>route.fulfill({status:404,json:{error:{code:'NOT_FOUND',message:'尚未找到'}}}))
-  await page.route('**/api/ai/tasks/*/cancel',route=>{
-    expect(new URL(route.request().url()).pathname).toBe('/api/ai/tasks/'+id+'/cancel');cancels++
-    return route.fulfill({status:cancels===1?503:200,json:cancels===1?{error:{code:'UNAVAILABLE',message:'暂时失败'}}:{data:{id,state:'CANCELED',model:'test-model'}}})
+  await page.route('**/api/ai/tasks/*', (route) =>
+    route.fulfill({ status: 404, json: { error: { code: 'NOT_FOUND', message: '尚未找到' } } }),
+  )
+  await page.route('**/api/ai/tasks/*/cancel', (route) => {
+    expect(new URL(route.request().url()).pathname).toBe('/api/ai/tasks/' + id + '/cancel')
+    cancels++
+    return route.fulfill({
+      status: cancels === 1 ? 503 : 200,
+      json:
+        cancels === 1
+          ? { error: { code: 'UNAVAILABLE', message: '暂时失败' } }
+          : { data: { id, state: 'CANCELED', model: 'test-model' } },
+    })
   })
-  const panel=await generate(page)
-  await expect(panel.getByRole('button',{name:'核对原任务并重试'})).toBeVisible()
-  await panel.getByRole('button',{name:'取消任务'}).click()
+  const panel = await generate(page)
+  await expect(panel.getByRole('button', { name: '核对原任务并重试' })).toBeVisible()
+  await panel.getByRole('button', { name: '取消任务' }).click()
   await expect(panel).toContainText('取消尚未确认')
-  await panel.getByRole('button',{name:'核对原任务并重试'}).click()
-  await expect(panel).toContainText('已取消');expect(posts).toBe(1);expect(cancels).toBe(2)
+  await panel.getByRole('button', { name: '核对原任务并重试' }).click()
+  await expect(panel).toContainText('已取消')
+  expect(posts).toBe(1)
+  expect(cancels).toBe(2)
 })
 
-test('编译失败响应晚于 SQL 上下文变化时不回填旧错误',async({page})=>{
+test('编译失败响应晚于 SQL 上下文变化时不回填旧错误', async ({ page }) => {
   await fixture(page)
-  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve})
-  await page.route('**/api/ai/definitions/compile',async route=>{await gate;await route.fulfill({status:400,json:{error:{code:'INVALID',message:'过期编译错误'}}})})
-  await page.goto('/#/sql?draft=sql-draft');await page.getByRole('button',{name:'AI 助手',exact:true}).click()
-  const panel=page.locator('.ai-sql-panel')
-  await panel.getByRole('navigation',{name:'AI 产物'}).getByRole('button',{name:'数据定义',exact:true}).click()
-  const sent=page.waitForRequest('**/api/ai/definitions/compile')
-  await panel.getByRole('button',{name:'编译定义并检查待补项'}).click();await sent
-  await page.locator('.sql-center .cm-content').first().fill(sql+'\n-- changed')
-  const response=page.waitForResponse('**/api/ai/definitions/compile');release();await response
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/ai/definitions/compile', async (route) => {
+    await gate
+    await route.fulfill({
+      status: 400,
+      json: { error: { code: 'INVALID', message: '过期编译错误' } },
+    })
+  })
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const panel = page.locator('.ai-sql-panel')
+  await panel
+    .getByRole('navigation', { name: 'AI 产物' })
+    .getByRole('button', { name: '数据定义', exact: true })
+    .click()
+  const sent = page.waitForRequest('**/api/ai/definitions/compile')
+  await panel.getByRole('button', { name: '编译定义并检查待补项' }).click()
+  await sent
+  await page
+    .locator('.sql-center .cm-content')
+    .first()
+    .fill(sql + '\n-- changed')
+  const response = page.waitForResponse('**/api/ai/definitions/compile')
+  release()
+  await response
   await expect(panel).not.toContainText('过期编译错误')
 })
 
@@ -425,7 +582,11 @@ test('外部模型必须明确同意，任务取消后不接受旧完成结果',
   await page.goto('/#/sql?draft=sql-draft')
   await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
   const panel = page.locator('.ai-sql-panel')
-  await page.getByRole('navigation', { name: 'SQL 需求向导' }).getByRole('button', { name: /确认需求/ }).click()
+  await selectData(page)
+  await page
+    .getByRole('navigation', { name: 'SQL 需求向导' })
+    .getByRole('button', { name: /确认需求/ })
+    .click()
   await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
   await panel.getByLabel('描述业务需求', { exact: true }).fill('测试取消')
   await expect(panel.getByRole('button', { name: '确认并生成 SQL' })).toBeDisabled()
@@ -457,50 +618,216 @@ test('只读角色不能显示 SQL 助手或管理模型', async ({ page }) => {
   await expect(page.getByText('仅管理员可维护模型服务。', { exact: true })).toBeVisible()
 })
 
-
-test('需求向导选择模型后按四步生成、检查和保存，不自动发布或运行', async ({page}) => {
-  const f=await fixture(page)
-  f.setModels([model,{...model,id:'second',name:'第二个模型'}])
+test('需求向导选择模型后按四步生成、检查和保存，不自动发布或运行', async ({ page }) => {
+  const f = await fixture(page)
+  f.setModels([model, { ...model, id: 'second', name: '第二个模型' }])
   await page.goto('/#/sql?draft=sql-draft')
-  await page.getByRole('button',{name:'AI 助手',exact:true}).click()
-  const panel=page.locator('.ai-sql-panel'),steps=page.getByRole('navigation',{name:'SQL 需求向导'})
-  await panel.getByLabel('测试数据',{exact:false}).check()
-  await panel.getByLabel('任务模型',{exact:true}).selectOption('second')
-  await panel.getByRole('button',{name:'下一步：确认需求'}).click()
-  await panel.getByLabel('描述业务需求',{exact:true}).fill('按类目统计支付金额')
-  await expect(panel.getByRole('button',{name:'确认并生成 SQL'})).toBeDisabled()
-  await panel.getByLabel('重复数据',{exact:true}).selectOption('keep')
-  await page.screenshot({path:'../.tools/session-ui-model-wizard/wizard-desktop.png',fullPage:true,animations:'disabled'})
-  const box=await panel.boundingBox(),editor=await page.locator('.sql-center').boundingBox()
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const panel = page.locator('.ai-sql-panel'),
+    steps = page.getByRole('navigation', { name: 'SQL 需求向导' })
+  await selectData(page)
+  await panel.getByLabel('任务模型', { exact: true }).selectOption('second')
+  await panel.getByRole('button', { name: '下一步：确认需求' }).click()
+  await panel.getByLabel('描述业务需求', { exact: true }).fill('按类目统计支付金额')
+  await expect(panel.getByRole('button', { name: '确认并生成 SQL' })).toBeDisabled()
+  await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
+  await page.screenshot({
+    path: test.info().outputPath('wizard-desktop.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  const box = await panel.boundingBox(),
+    editor = await page.locator('.sql-center').boundingBox()
   expect(box!.x).toBeLessThan(editor!.x)
-  await panel.getByRole('button',{name:'确认并生成 SQL'}).click()
+  await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
   await expect(panel.locator('.ai-diff')).toContainText('AI 建议')
   expect(f.submissions[0].modelId).toBe('second')
   await expect(page.locator('.sql-center .cm-content').first()).not.toContainText('AI 建议')
-  await panel.getByRole('button',{name:'应用到编辑器'}).click()
-  await expect(steps.getByRole('button',{name:/检查与保存/})).toHaveAttribute('aria-current','step')
-  await panel.getByRole('button',{name:'检查当前 SQL',exact:true}).click()
+  await panel.getByRole('button', { name: '应用到编辑器' }).click()
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toHaveAttribute(
+    'aria-current',
+    'step',
+  )
+  await panel.getByRole('button', { name: '检查当前 SQL', exact: true }).click()
   await expect(panel).toContainText('检查通过')
   expect(f.operations).toEqual([])
-  await page.setViewportSize({width:390,height:844})
-  await steps.getByRole('button',{name:/确认需求/}).click()
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
-  await page.screenshot({path:'../.tools/session-ui-model-wizard/wizard-mobile.png',fullPage:true,animations:'disabled'})
+  await page.setViewportSize({ width: 390, height: 844 })
+  await steps.getByRole('button', { name: /确认需求/ }).click()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({
+    path: test.info().outputPath('wizard-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
 })
 
-test('模型服务预设不带密钥，连接失败明确展示账号邮箱验证原因',async({page})=>{
+test('模型服务预设不带密钥，连接失败明确展示账号邮箱验证原因', async ({ page }) => {
   await fixture(page)
-  await page.route('**/api/ai/models/*/test',route=>route.fulfill({status:502,json:{data:null,error:{code:'AI_MODEL_ACCOUNT_VERIFICATION_REQUIRED',message:'ModelScope 账号尚未完成邮箱验证，请在账号设置中完成验证后重试（HTTP 403）'}}}))
+  await page.route('**/api/ai/models/*/test', (route) =>
+    route.fulfill({
+      status: 502,
+      json: {
+        data: null,
+        error: {
+          code: 'AI_MODEL_ACCOUNT_VERIFICATION_REQUIRED',
+          message: 'ModelScope 账号尚未完成邮箱验证，请在账号设置中完成验证后重试（HTTP 403）',
+        },
+      },
+    }),
+  )
   await page.goto('/#/settings/models')
-  await page.getByRole('button',{name:/ModelScope/}).click()
-  await expect(page.getByLabel('Base URL',{exact:false})).toHaveValue('https://api-inference.modelscope.cn/v1')
-  await expect(page.getByLabel('实际模型标识',{exact:true})).toHaveValue('Qwen/Qwen3.5-27B')
-  await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('')
-  await page.getByRole('button',{name:'测试连接',exact:true}).first().click()
+  await page.getByRole('button', { name: /ModelScope/ }).click()
+  await expect(page.getByLabel('Base URL', { exact: false })).toHaveValue(
+    'https://api-inference.modelscope.cn/v1',
+  )
+  await expect(page.getByLabel('实际模型标识', { exact: true })).toHaveValue('Qwen/Qwen3.5-27B')
+  await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('')
+  await page.getByRole('button', { name: '测试连接', exact: true }).first().click()
   await expect(page.getByRole('alert')).toContainText('邮箱验证')
   await expect(page.locator('.model-test-result.failed')).toContainText('HTTP 403')
-  await page.screenshot({path:'../.tools/session-ui-model-wizard/models-desktop.png',fullPage:true,animations:'disabled'})
-  await page.setViewportSize({width:390,height:844})
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
-  await page.screenshot({path:'../.tools/session-ui-model-wizard/models-mobile.png',fullPage:true,animations:'disabled'})
+  await page.screenshot({
+    path: test.info().outputPath('models-desktop.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({
+    path: test.info().outputPath('models-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+})
+
+test('向导先明确输入输出，清洗场景不携带隐藏窗口，补充和收起均保留草稿', async ({ page }) => {
+  const f = await fixture(page)
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const panel = page.locator('.ai-sql-panel'),
+    steps = page.getByRole('navigation', { name: 'SQL 需求向导' })
+  await expect(steps.getByRole('button', { name: /确认需求/ })).toBeDisabled()
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toBeDisabled()
+  await selectData(page)
+  await panel.getByRole('button', { name: '下一步：确认需求' }).click()
+  await expect(panel.getByLabel('窗口（分钟）', { exact: true })).toBeHidden()
+  await panel.getByLabel('描述业务需求', { exact: true }).fill('筛选有效订单并同步明细')
+  await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
+  await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
+  await expect(panel.getByRole('button', { name: '应用到编辑器' })).toBeEnabled()
+  expect(f.submissions[0].spec).toMatchObject({
+    workflowVersion: 2,
+    pattern: 'transform',
+    bindings: [
+      { tableName: 'source_events', role: 'source' },
+      { tableName: 'sink_events', role: 'sink' },
+    ],
+  })
+  expect(f.submissions[0].spec).not.toHaveProperty('windowMinutes')
+  await panel.getByRole('button', { name: '应用到编辑器' }).click()
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toHaveAttribute(
+    'aria-current',
+    'step',
+  )
+  await panel.getByRole('button', { name: '返回查看 SQL 建议' }).click()
+  await panel.getByLabel('继续补充需求', { exact: true }).fill('过滤掉金额为零的订单')
+  await panel.getByRole('button', { name: '发送补充' }).click()
+  expect(f.submissions).toHaveLength(1)
+  await expect(panel.getByLabel('描述业务需求', { exact: true })).toHaveValue(/过滤掉金额为零/)
+  await expect(page.locator('.sql-center .cm-content').first()).toContainText('AI 建议')
+  await panel.getByRole('button', { name: '收起 AI 助手' }).click()
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  await expect(panel.getByLabel('描述业务需求', { exact: true })).toHaveValue(/过滤掉金额为零/)
+})
+
+test('窗口场景缺少输入水位线时不能生成，应用配置冲突不越过审阅步骤', async ({ page }) => {
+  const f = await fixture(page)
+  await page.route('**/api/sql/jobs/sql-draft', (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          ...draft,
+          runtime: { ...runtime, flinkConfiguration: { 'table.local-time-zone': 'UTC' } },
+        },
+        error: null,
+      },
+    }),
+  )
+  await page.route('**/api/sql/jobs', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            ...draft,
+            runtime: { ...runtime, flinkConfiguration: { 'table.local-time-zone': 'UTC' } },
+          },
+        ],
+        error: null,
+      },
+    }),
+  )
+  await page.route('**/api/ai/tasks/*', (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          id: 'conflicting',
+          state: 'SUCCEEDED',
+          model: 'test-model',
+          result: {
+            summary: '转换建议',
+            sql: sql + '\n-- 配置冲突建议',
+            env: [],
+            flinkConfiguration: { 'table.local-time-zone': 'Asia/Shanghai' },
+          },
+        },
+        error: null,
+      },
+    }),
+  )
+  await selectDataAfterOpen()
+  async function selectDataAfterOpen() {
+    await page.goto('/#/sql?draft=sql-draft')
+    await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+    await selectData(page)
+    await page.locator('.ai-sql-panel').getByRole('button', { name: '下一步：确认需求' }).click()
+  }
+  const panel = page.locator('.ai-sql-panel')
+  await panel.getByLabel('处理场景', { exact: true }).selectOption('window')
+  await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
+  await panel.getByLabel('描述业务需求', { exact: true }).fill('每五分钟统计金额')
+  await expect(panel).toContainText('请选择输入表中已定义水位线的事件时间字段')
+  await expect(panel.getByRole('button', { name: '确认并生成 SQL' })).toBeDisabled()
+  expect(f.submissions).toHaveLength(0)
+  await panel.getByLabel('处理场景', { exact: true }).selectOption('transform')
+  await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
+  await expect(panel.getByRole('button', { name: '应用到编辑器' })).toBeEnabled()
+  await panel.getByRole('button', { name: '应用到编辑器' }).click()
+  await expect(page.getByRole('alert')).toContainText('运行配置与当前值冲突')
+  await expect(panel.getByRole('button', { name: '应用到编辑器' })).toBeEnabled()
+  await expect(
+    page
+      .getByRole('navigation', { name: 'SQL 需求向导' })
+      .getByRole('button', { name: /检查与保存/ }),
+  ).toBeDisabled()
+  await expect(page.locator('.sql-center .cm-content').first()).not.toContainText('配置冲突建议')
+})
+
+test('本地定义角色限制与大小写重复表名能解释原因', () => {
+  expect(
+    wizardDataIssues(
+      [
+        { tableName: 'SRC', connectorType: 'datagen' },
+        { tableName: 'src', connectorType: 'print' },
+      ],
+      {},
+    ),
+  ).toContain('请补全表名并移除重复表定义')
+  expect(
+    wizardDataIssues(
+      [
+        { tableName: 'src', connectorType: 'datagen' },
+        { tableName: 'dst', connectorType: 'print' },
+      ],
+      { src: 'sink', dst: 'source' },
+    ),
+  ).toEqual(expect.arrayContaining(['Print 只能作为输出表', 'DataGen 只能作为输入表']))
 })

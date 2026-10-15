@@ -676,6 +676,28 @@ class SessionDevelopmentIntegrationTest {
     assertThat(executions.status(id).path("rows").size()).isEqualTo(3);
   }
 
+  /** 字段协议穿过日志采集保留空值与大整数；只读查询不能发布为 Application。 */
+  @Test
+  void verificationExposesSinkColumnsAndAllowsSelectOnly() {
+    startCluster();
+    var draft = draft();
+    var checked = sql.check("CREATE TABLE s(id BIGINT) WITH ('connector'='datagen'); SELECT id FROM s;", runtime());
+    assertThat(checked.insertCount()).isZero();
+    assertThat(checked.message()).contains("只读验证");
+    assertThatThrownBy(() -> sql.preview(new SqlDraftRequest("select-query", "", "SELECT 1", runtime(), 0)))
+        .hasMessageContaining("INSERT");
+    String id = executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()).path("id").asText();
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log"))).thenReturn(validationEvent(id, 1, 0, "+I",
+        "{\"columns\":[\"id\",\"payload\"],\"cells\":[\"9007199254740993\",null],\"keys\":[\"id\"],\"target\":\"sink_events\"}"));
+    var row = executions.status(id).path("rows").get(0);
+    assertThat(row.path("columns").get(0).asText()).isEqualTo("id");
+    assertThat(row.path("cells").get(0).asText()).isEqualTo("9007199254740993");
+    assertThat(row.path("cells").get(1).isNull()).isTrue();
+  }
+
   /** 构造与 Log4j2 JSON 转义布局一致的完整日志事件。 */
   String validationEvent(String id, long sequence, int sink, String kind, String value) {
     String encoded =

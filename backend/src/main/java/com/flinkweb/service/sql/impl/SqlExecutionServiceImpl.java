@@ -366,13 +366,28 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
   private void append(ObjectNode run, String key, List<SqlValidationLogReader.Event> page) {
     var prepared = new ArrayList<ObjectNode>();
     var knownSecrets = secrets.secrets();
-    for (var event : page)
-      prepared.add(
-          mapper
+    for (var event : page) {
+      var row = mapper
               .createObjectNode()
               .put("sink", event.sink())
               .put("kind", event.kind())
-              .put("value", redact(event.value(), knownSecrets)));
+              .put("value", redact(event.value(), knownSecrets));
+      try {
+        var payload = mapper.readTree(row.path("value").asText());
+        if (payload.isObject() && payload.path("columns").isArray()
+            && payload.path("cells").isArray() && payload.path("keys").isArray()
+            && payload.path("columns").size() <= 100
+            && payload.path("columns").size() == payload.path("cells").size()) {
+          row.set("columns", payload.path("columns"));
+          row.set("cells", payload.path("cells"));
+          row.set("keys", payload.path("keys"));
+          row.put("target", payload.path("target").asText("查询结果"));
+        }
+      } catch (Exception ignored) {
+        // 旧 Runner 或截断输出不能可靠拆列，界面提示升级，不猜测含逗号的业务值。
+      }
+      prepared.add(row);
+    }
     synchronized (this) {
       if (!currentObservation(run)) return;
       String id = run.path("id").asText();

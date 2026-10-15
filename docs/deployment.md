@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:b34f4caa63841e9e20a3694f2fb2bbfe3c40d075cf89e42c75fbe955b5b8aaf8 |
+| 192.168.68.1:5000/flink-web/app | sha256:90b0664a788a1ff8edf82825053b73f9ec32ccbe6281e0ee779fa3cc74429793 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:5f47d45da2b92c27b9c78c65f5b47a3f95baca6e143e0b39d61e0d6ad0e9e20f |
+| 192.168.68.1:5000/flink-web/web | sha256:4218ac82232c991f91b63ffd66b90a251ec2bff4b2a7a3605c49520a1ae9a4e6 |
 
 2026-10-15 AI 健壮性/日志缓冲发布：app/web:0.0.4 已覆盖推送，不更新 latest/downloader。复用已发布 Kylin/JRE/Nginx 层，仅替换本轮完整验证的后端 JAR 和前端 dist；无数据库迁移或新增密钥。最终 app config 为 sha256:2de2377bbea1c4e631b3a5576ec219ea88b143d858e0f1489023944f64ff4248，web config 为 sha256:a773b337bb5ebdcf54d6520ba8189ef61a5343c2a26834cd542070726b5c7d48。经现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要/config ID；远端 app20层/web18层的大小、压缩摘要和解压 diff ID 均与最终已测试镜像一致。
 
@@ -592,3 +592,11 @@ app/web 的0.0.4已覆盖发布至192.168.68.1:5000/flink-web，摘要以上表�
 Session代理按嵌套features关闭Web提交/取消/缩放，并拦截JAR路径，已有运行集群在平台升级后也隐藏Submit New Job。新建/显式重启的普通Session强制web.submit.enable=false；专用SQL验证Session保留true以便内部JAR REST，不允许用户从平台代理上传。真实Flink1.20.5已验证这一差异，不能把该开关设为false后仍声称后台提交可用。运行配置变更须在用户授权下显式停止/启动，平台不自动重启现场资源。
 
 其余界面、SQL提示、高亮及验证范围见 [本轮验收](agent/validation.md#session-界面与模型需求向导2026-10-15)。Flink2.3资料仅作编辑提示依据，不增加运行版本认证。
+
+### 2026-10-15 需求向导约束与验证最终结果发布
+
+app/web:0.0.4 已覆盖发布，上表为本轮最新摘要；latest/downloader 和实际 Kubernetes 工作负载未改。沿用已验证 Kylin/JRE/Nginx 运行层，替换后端、新 Runner 和前端产物，无依赖升级/数据库迁移。app config `sha256:154d66b0fc8c90356ab12f512ec186cd9a18687db1701718310b7eea8cc5690c`，web config `sha256:475e4588da1957619f732739a3155dcb96d0cb78ac052c972479922dfefca99a`；经同一 registry 的 localhost:15000 推送后，从指定192.168.68.1:5000核对 manifest 正文/响应摘要、config及全部23/21层的大小、压缩SHA-256和解压diff_id一致。
+
+使用前需重新拉取平台镜像，并通过“下载 SQL Runner”取得新包（SHA-256 `42e17ae9807c5e048c8df112f735fbb8677b8520ceda3f1c72ce7b8eba3164a5`），上传后在既有 SQL 草稿及验证 Session 中显式重新选择；验证 Session 的运行中配置须按授权停止、修改、重新启动。平台不会覆盖已选旧文件。新 Runner 跳过原 Sink 的连接选项，按字段/主键生成 Print JSON 输出；支持源表加 SELECT，Application 仍须 INSERT。旧 Runner 缺少结构化字段时页面明确提示升级，不猜测旧文本；原固定日志配置不变。
+
+完整后端、Runner、相关页面、JDK8/17、实际 Flink1.20.5及最终只读非root镜像闭环范围见 [本轮验收](agent/validation.md#需求向导约束与验证最终结果2026-10-15)。真实模型厂商与生产 Kubernetes 未新增认证；临时验证资源及已核实的本轮构建缓存按ID清理，保留发布镜像、已有registry和共享资源。

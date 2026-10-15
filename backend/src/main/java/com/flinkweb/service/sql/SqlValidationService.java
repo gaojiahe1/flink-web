@@ -7,4 +7,6 @@ import java.util.*;
 public interface SqlValidationService {
   /** 拆分脚本并限制为先建表/视图、后 INSERT 的单 Application 执行序列。 */
   SqlCheckResult validate(String script);
+  /** 验证入口另外允许只读 SELECT/CTE；Application 发布仍要求 INSERT。 */
+  SqlCheckResult validateVerification(String script);
 }

@@ -28,7 +28,9 @@ Session 行末刷新独立冷却，复用 PodStatusDrawer 与 DiagnosticService 
 
 普通 Session 可多个，验证 Session 仅一个；运行中不得改配置。管理员配置、管理员/运维启停；开发者需 SQL 编辑权限。Runner 必须手动选具体 JAR，验证和 Application 必须选；运行 Session 镜像须与 SQL 相同。动态用户 bundle 合并服务发现、拒绝冲突类，不能删除看似重复的 META-INF 服务内容。
 
-SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink 配置区域。删除部署草稿需清关联并迁移仍被 SQL 草稿引用的专属文件。Catalog 删除有引用保护。
+SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 发布仍要求 INSERT；无 SQL Gateway。SQL SET 填 Flink 配置区域。删除部署草稿需清关联并迁移仍被 SQL 草稿引用的专属文件。Catalog 删除有引用保护。
+
+2026-10-15：验证结果面板移出 workbench 的裁剪容器，单表滚动/固定表头、多 Sink 切换及工具栏/结果区停止。Runner 在展开变量前剥离显式 INSERT 目标表的连接选项，保留字段/主键作映射，再生成单 STRING 字段 Print 表；JSON 携带 columns/cells/keys/target，保留 RowKind、NULL 和大整数精度。源表加 SELECT 无需 Sink，CTAS 不执行；Application 普通 prepare 不变。后端只扩展内存事件结构，原1000条/两分钟、取消/UID/游标保护保留。前端按主键 upsert 或无主键多重集合并撤回，仅显示最终输出字段；未匹配撤回及旧 Runner 结构缺失明确提示，不猜测旧文本。新版 Runner 须下载、上传并重新选择，旧选择不自动覆盖。
 
 已知边界：实际 Planner/Connector 语义由 Flink 执行；普通 Session 停止可能等待其任务结束；本轮 Parser1.20.3/1.20.5、Runner1.20.3 API、Flink1.20.5/JDK17 Application/Session 实测不代表其他版本、生产集群或所有连接器已验证。
 
@@ -44,6 +46,7 @@ SQL 限32 KiB/100语句，无交互式 SELECT/SQL Gateway；SQL SET 填 Flink �
 - [Application 回归](../../../scripts/check_sql_application.py)、[JDK/JAR 回归](../../../scripts/check_sql_jars.py)
 - [ParserMain.java](../../../sql-validator/src/main/java/com/flinkweb/validation/ParserMain.java)
 - [SqlStudioView.vue](../../../frontend/src/modules/sql/pages/SqlStudioView.vue)
+- [最终结果面板](../../../frontend/src/modules/sql/components/SqlVerificationResults.vue)、[变更流合并](../../../frontend/src/modules/sql/utils/verificationResults.ts)、[结果回归](../../../frontend/tests/verification-results.spec.ts)
 - [SessionsView.vue](../../../frontend/src/modules/session/pages/SessionsView.vue)
 - [共享配置编辑器](../../../frontend/src/shared/composables/useDeploymentConfigurationEditor.ts)、[转换版本回归](../../../frontend/tests/configuration-editor.spec.ts)、[正文预算回归](../../../backend/src/test/java/com/flinkweb/client/flink/SessionRestClientTest.java)
 - [SessionDevelopmentIntegrationTest.java](../../../backend/src/test/java/com/flinkweb/SessionDevelopmentIntegrationTest.java)

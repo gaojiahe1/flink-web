@@ -1,4 +1,5 @@
 import { request, jsonBody } from '../../../shared/api/http'
+import type { VerificationEvent } from '../utils/verificationResults'
 export interface SqlVerification {
   id: string
   sqlId: string
@@ -8,7 +9,7 @@ export interface SqlVerification {
   message: string
   limit: number
   deadline: string
-  rows: { sink: number; kind: string; value: string }[]
+  rows: VerificationEvent[]
 }
 export const verificationTerminal = (state: string) =>
   ['COMPLETED', 'FINISHED', 'FAILED', 'CANCELED', 'TIMED_OUT', 'ABORTED'].includes(state)

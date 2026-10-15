@@ -416,6 +416,65 @@ class AiAssistantIntegrationTest {
         .isTrue();
   }
 
+  /** 新向导绑定数据角色与场景，确认单作为产物证据保留，仍不执行 SQL。 */
+  @Test
+  void wizardCompilesConfirmedRolesAndTimezone() throws Exception {
+    var input = wizardRequest();
+    var result = await(tasks.create(input).path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(result.at("/result/spec/pattern").asText()).isEqualTo("transform");
+    assertThat(result.at("/result/flinkConfiguration/table.local-time-zone").asText()).isEqualTo("UTC");
+    assertThat(result.path("promptVersion").asText()).isEqualTo("flink-wizard-v2");
+    assertThat(received.get()).contains("workflowVersion", "bindings", "source_events");
+  }
+
+  /** 不完整角色或偷偷附带窗口参数的确认单在调用模型前终止。 */
+  @Test
+  void wizardRejectsIncompleteOrConflictingContractBeforeModelCall() throws Exception {
+    int before = calls.get();
+    var invalid = wizardRequest();
+    ((ObjectNode) invalid.at("/spec/bindings/1")).put("role", "source");
+    assertThat(await(tasks.create(invalid).path("id").asText()).path("state").asText()).isEqualTo("FAILED");
+    var hiddenWindow = wizardRequest();
+    hiddenWindow.withObject("/spec").put("windowMinutes", 5);
+    assertThat(await(tasks.create(hiddenWindow).path("id").asText()).path("state").asText()).isEqualTo("FAILED");
+    assertThat(calls.get()).isEqualTo(before);
+  }
+
+  /** 模型不能把已选输入表当作写入目标，即使基础语法合法。 */
+  @Test
+  void wizardRejectsModelWritingToInputTable() throws Exception {
+    answer.set("{\"summary\":\"错误写入目标\",\"dml\":\"INSERT INTO source_events SELECT id FROM source_events;\"}");
+    var result = await(tasks.create(wizardRequest()).path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("FAILED");
+    assertThat(result.path("message").asText()).contains("输出表");
+    assertThat(result.has("result")).isFalse();
+  }
+
+  /** 事件时间必须属于输入表；没有水位线时不能让模型自行推测。 */
+  @Test
+  void wizardWindowRequiresAnInputWatermark() throws Exception {
+    var input = wizardRequest();
+    input.withObject("/spec").put("pattern", "window").put("windowMinutes", 5)
+        .put("eventTime", "ts").put("eventTable", "source_events").put("outputMode", "window-close");
+    assertThat(await(tasks.create(input).path("id").asText()).path("state").asText()).isEqualTo("FAILED");
+    input.put("requestId", UUID.randomUUID().toString());
+    var source = (ObjectNode) input.withArray("definitions").get(0);
+    source.put("watermarkColumn", "ts").put("watermarkDelaySeconds", 60);
+    source.withArray("columns").addObject().put("name", "ts").put("type", "TIMESTAMP(3)");
+    assertThat(await(tasks.create(input).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+  }
+
+  /** 生成不含窗口的新版最小确认单，保留旧协议测试独立覆盖。 */
+  private ObjectNode wizardRequest() throws Exception {
+    var input = request();
+    var spec = input.withObject("/spec");
+    spec.put("workflowVersion", 2).put("pattern", "transform").put("timezone", "UTC");
+    spec.putArray("bindings").addObject().put("tableName", "source_events").put("role", "source");
+    spec.withArray("bindings").addObject().put("tableName", "sink_events").put("role", "sink");
+    return input;
+  }
+
   /** 已确认的起始位点落实到本作业 DDL，未修改共享数据源。 */
   @Test
   void confirmedStartupIsCompiledAndUnknownTimeIsRejected() throws Exception {

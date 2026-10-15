@@ -15,6 +15,8 @@ import {
 } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
 import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
+import SqlVerificationResults from '../components/SqlVerificationResults.vue'
+import type { WizardTable } from '../../ai/utils/wizard'
 import type { AiResult } from '../../ai/api/ai'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
@@ -156,7 +158,7 @@ const canBrowse = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
 )
 const sideTab = ref(''),
-  sources = ref<{ id: string; name: string; connectorType: string }[]>([]),
+  sources = ref<(WizardTable & { id: string; name: string })[]>([]),
   sourceQuery = ref('')
 const workbench = ref<HTMLElement>()
 const inspectorWidth = ref(Math.min(380, Math.max(300, window.innerWidth * 0.26)))
@@ -279,9 +281,14 @@ const check = ref<{
 } | null>(null)
 const verification = ref<SqlVerification | null>(null)
 const sqlEditor = ref<InstanceType<typeof CodeEditor>>()
-const resultTab = ref('status')
 const aiContextVersion = ref(0)
 const aiStep = ref(1)
+const aiAssistant = ref<InstanceType<typeof AiSqlAssistant>>()
+const aiOpened = ref(false)
+const aiNavigation = ref([true, false, false, false])
+watch(sideTab, (value) => {
+  if (value === 'ai') aiOpened.value = true
+})
 watch(
   () => snapshot(),
   () => {
@@ -291,8 +298,13 @@ watch(
 )
 
 /** 应用前核对上下文，先准备完整配置再一次提交，避免覆盖新编辑或产生半份建议。 */
-function applyAiSuggestion(suggestion: AiResult, version: number) {
-  return run(async () => {
+async function applyAiSuggestion(
+  suggestion: AiResult,
+  version: number,
+  completed: (success: boolean) => void,
+) {
+  let applied = false
+  await run(async () => {
     if (!editable.value) throw new Error('当前不可应用 AI 建议')
     if (version !== aiContextVersion.value) throw new Error('SQL 或配置已修改，请重新生成建议')
     configurationEditor.validate()
@@ -338,7 +350,9 @@ function applyAiSuggestion(suggestion: AiResult, version: number) {
     check.value = null
     await nextTick()
     message.value = 'AI 建议已应用到编辑器。尚未保存或执行，请重新检查和验证。'
+    applied = true
   })
+  completed(applied)
 }
 const needsSession = ref(false)
 const verifying = computed(
@@ -368,23 +382,7 @@ async function listen() {
   if (version === pollVersion && verifying.value) pollTimer = setTimeout(listen, 2000)
 }
 onUnmounted(stopListening)
-const verificationLabels: Record<string, string> = {
-  ACCEPTED: '已受理',
-  SUBMITTING: '提交中',
-  RUNNING: '验证中',
-  CREATED: '创建中',
-  RESTARTING: '恢复中',
-  FINISHED: '已完成',
-  DRAINING: '正在读取结果',
-  COMPLETED: '已达到结果上限',
-  FAILED: '验证失败',
-  CANCELED: '已取消',
-  TIMED_OUT: '已超时',
-  ABORTED: '集群已停止',
-  UNKNOWN: '结果待确认',
-  CANCEL_PENDING: '正在取消',
-  CANCELING: '正在取消',
-}
+
 watch(
   [
     () => form.sql,
@@ -627,6 +625,7 @@ function validate() {
 }
 function verifySql() {
   if (!check.value || verifying.value) return
+  maximized.value = false
   clearValidationErrors()
   return run(async () => {
     needsSession.value = false
@@ -638,7 +637,6 @@ function verifySql() {
       }
       await persist()
       verification.value = await verificationApi.submit(selected.value, form.revision, requestId())
-      resultTab.value = 'status'
       stopListening()
       void listen()
     } catch (e) {
@@ -846,7 +844,8 @@ watch(
       :key="label"
       :class="{ active: aiStep === index + 1 }"
       :aria-current="aiStep === index + 1 ? 'step' : undefined"
-      @click="aiStep = index + 1"
+      :disabled="!aiNavigation[index]"
+      @click="aiAssistant?.nextStep(index + 1)"
     >
       <span>{{ index + 1 }}</span
       >{{ label }}
@@ -876,7 +875,7 @@ watch(
         <div class="explorer-title">
           <strong>SQL 草稿</strong
           ><HelpTip
-            text="支持 CREATE CATALOG / DATABASE、CREATE TABLE / VIEW、USE CATALOG / DATABASE、INSERT INTO / OVERWRITE；多个 INSERT 合并为一个作业。保存草稿不会执行 SQL。"
+            text="支持 CREATE CATALOG / DATABASE、CREATE TABLE / VIEW、USE CATALOG / DATABASE、INSERT INTO / OVERWRITE；Session 验证也支持源表加 SELECT。Application 发布需要 INSERT，多个 INSERT 合并为一个作业。"
           /><span class="count">{{ records.length }}</span>
         </div>
         <button
@@ -949,6 +948,13 @@ watch(
           >
             保存 SQL</button
           ><button
+            v-if="verifying"
+            class="button danger"
+            :disabled="busy"
+            @click="cancelVerification"
+          >
+            停止验证</button
+          ><button
             v-if="editable"
             class="button"
             :disabled="busy || artifactUploading || stateConfigBusy || loading"
@@ -963,7 +969,7 @@ watch(
             "
             :title="
               check
-                ? '提交到 SQL 验证 Session，最多展示 1000 条变更数据'
+                ? '提交到 SQL 验证 Session，最多采集 1000 条变更并合并最终结果'
                 : '请先通过 SQL 检查；修改 SQL 或配置后需重新检查'
             "
             @click="verifySql"
@@ -1071,76 +1077,6 @@ watch(
         <summary>FlinkDeployment YAML 预览</summary>
         <CodeEditor :model-value="preview" readonly label="SQL 部署 YAML" />
       </details>
-      <section v-if="verification" class="sql-diagnostics verification-results">
-        <div class="tab-bar" role="tablist" aria-label="SQL 验证结果">
-          <button
-            class="text-button"
-            role="tab"
-            :aria-selected="resultTab === 'status'"
-            @click="resultTab = 'status'"
-          >
-            作业状态
-          </button>
-          <button
-            class="text-button"
-            role="tab"
-            :aria-selected="resultTab === 'data'"
-            @click="resultTab = 'data'"
-          >
-            作业数据 · {{ verification.rows.length }} / {{ verification.limit }}
-          </button>
-          <button v-if="verifying" class="text-button danger" @click="cancelVerification">
-            取消验证
-          </button>
-        </div>
-        <div v-if="resultTab === 'status'" role="tabpanel">
-          <p>
-            <span
-              class="badge"
-              :class="{ running: verifying, failed: verification.state === 'FAILED' }"
-              >{{ verificationLabels[verification.state] || verification.state }}</span
-            >
-            · SQL 修订 {{ verification.sqlRevision }}
-          </p>
-          <p class="verification-message">{{ verification.message }}</p>
-          <small class="muted"
-            >Flink Job ID：{{ verification.jobId }} · 达到 1000
-            条或两分钟后自动取消；平台同时仅验证一个 SQL。</small
-          >
-        </div>
-        <div v-else role="tabpanel" class="table-wrap verification-table">
-          <table v-if="verification.rows.length">
-            <thead>
-              <tr>
-                <th>序号</th>
-                <th>输出</th>
-                <th>变更</th>
-                <th>数据</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, index) in verification.rows" :key="index">
-                <td>{{ index + 1 }}</td>
-                <td>Sink {{ row.sink }}</td>
-                <td>
-                  <code>{{ row.kind }}</code>
-                  {{
-                    { '+I': '新增', '-U': '更新前', '+U': '更新后', '-D': '删除' }[
-                      row.kind as '+I' | '-U' | '+U' | '-D'
-                    ] || ''
-                  }}
-                </td>
-                <td class="verification-value">{{ row.value }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="muted">
-            {{
-              verifying ? '等待 TaskManager 输出数据…' : '本次验证没有输出数据，请查看作业状态。'
-            }}
-          </p>
-        </div>
-      </section>
     </div>
     <div
       v-if="sideTab"
@@ -1439,7 +1375,11 @@ watch(
       />
     </aside>
     <AiSqlAssistant
-      v-if="sideTab === 'ai'"
+      v-if="aiOpened"
+      v-show="sideTab === 'ai'"
+      :key="selected"
+      ref="aiAssistant"
+      :active="sideTab === 'ai'"
       v-model:step="aiStep"
       :check-summary="check?.message"
       :dirty="dirty"
@@ -1453,6 +1393,9 @@ watch(
       @apply="applyAiSuggestion"
       @check="validate"
       @save="save"
+      @run="verifySql"
+      :can-verify="!!check && !verifying && !artifactUploading && !stateConfigBusy"
+      @navigation="aiNavigation = $event"
     />
     <nav class="studio-rail" aria-label="SQL 辅助面板">
       <button
@@ -1490,4 +1433,11 @@ watch(
       </button>
     </nav>
   </section>
+  <SqlVerificationResults
+    v-if="verification"
+    :key="verification.id"
+    :verification="verification"
+    :busy="busy"
+    @stop="cancelVerification"
+  />
 </template>

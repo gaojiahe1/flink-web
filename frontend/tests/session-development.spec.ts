@@ -182,8 +182,8 @@ async function fixture(page: Page, roles = ['ROLE_ADMIN']) {
         state: 'FINISHED',
         message: '有界 SQL 验证完成',
         rows: [
-          { sink: 1, kind: '+I', value: '1' },
-          { sink: 1, kind: '+I', value: '1' },
+          { sink: 1, kind: '+I', columns: ['id'], cells: ['1'], keys: [], target: 'sink_events' },
+          { sink: 1, kind: '+I', columns: ['id'], cells: ['1'], keys: [], target: 'sink_events' },
         ],
       }
     } else if (path === '/api/sessions') {
@@ -512,10 +512,10 @@ test('SQL 检查约束、Session 引导、结果页签与停止监听', async ({
   expect(f.submits()).toBe(0)
   f.ready()
   await verify.click()
-  await expect(page.getByRole('tab', { name: '作业状态', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '运行状态', exact: true }).click()
   await expect(page.getByRole('tabpanel')).toContainText('有界 SQL 验证完成')
-  await page.getByRole('tab', { name: '作业数据 · 2 / 1000', exact: true }).click()
-  await expect(page.locator('.verification-table tbody tr')).toHaveCount(2)
+  await page.getByRole('tab', { name: '最终结果', exact: true }).click()
+  await expect(page.locator('.verification-final-table tbody tr')).toHaveCount(2)
   await page.screenshot({ path: 'test-results/sql-verification.png', fullPage: true })
   const reads = f.verificationReads()
   await page.waitForTimeout(2300)
@@ -576,7 +576,10 @@ test('Session 创建入口与配置、启动和唯一用途提示', async ({ pag
   await row.locator('.session-state-trigger').press('Escape')
   const beforeRowRefresh = f.reads()
   await expect(row.getByRole('button', { name: '刷新', exact: true })).toHaveCount(0)
-  await page.locator('.panel > .filter-bar').getByRole('button', { name: '刷新', exact: true }).click()
+  await page
+    .locator('.panel > .filter-bar')
+    .getByRole('button', { name: '刷新', exact: true })
+    .click()
   await expect(page.getByRole('button', { name: /秒后刷新|正在查询/ })).toBeDisabled()
   expect(f.reads()).toBe(beforeRowRefresh)
   await row.getByRole('button', { name: 'Pod 状态', exact: true }).click()
@@ -751,32 +754,62 @@ test('窄屏新开发导航、Session 表单与 SQL 结果保持可读', async (
   await page.goto('/#/sql?draft=sql-draft')
   await page.getByRole('button', { name: 'SQL 检查', exact: true }).click()
   await page.getByRole('button', { name: 'SQL 验证', exact: true }).click()
-  await expect(page.getByRole('tab', { name: '作业状态', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: '运行状态', exact: true })).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true)
   await page.screenshot({ path: 'test-results/sql-verification-mobile.png', fullPage: true })
 })
 
-
-test('Session 完整 JSON 错误浮层可悬浮、点击和键盘查看，刷新位于列表右上角',async({page})=>{
+test('Session 完整 JSON 错误浮层可悬浮、点击和键盘查看，刷新位于列表右上角', async ({ page }) => {
   await fixture(page)
-  const message=JSON.stringify({type:'DeploymentFailedException',message:'完整错误原因：'+ 'Operator 校验失败；'.repeat(120)+'错误尾部标记'})
-  await page.route('**/api/sessions',route=>route.fulfill({json:{data:[{id:'sql-validation',name:'validation',validation:true,runtime,state:'ERROR',message,queriedAt:new Date().toISOString()}]}}))
+  const message = JSON.stringify({
+    type: 'DeploymentFailedException',
+    message: '完整错误原因：' + 'Operator 校验失败；'.repeat(120) + '错误尾部标记',
+  })
+  await page.route('**/api/sessions', (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            id: 'sql-validation',
+            name: 'validation',
+            validation: true,
+            runtime,
+            state: 'ERROR',
+            message,
+            queriedAt: new Date().toISOString(),
+          },
+        ],
+      },
+    }),
+  )
   await page.goto('/#/sessions')
-  const row=page.getByRole('row').filter({hasText:'validation'}),trigger=row.locator('.session-state-trigger')
+  const row = page.getByRole('row').filter({ hasText: 'validation' }),
+    trigger = row.locator('.session-state-trigger')
   await trigger.hover()
-  const popup=page.getByRole('tooltip')
+  const popup = page.getByRole('tooltip')
   await expect(popup).toContainText('错误尾部标记')
-  expect(await popup.locator('pre').textContent()).toBe(JSON.stringify(JSON.parse(message),null,2))
-  const rect=await popup.boundingBox()
-  expect(rect!.x).toBeGreaterThanOrEqual(0);expect(rect!.x+rect!.width).toBeLessThanOrEqual(1920)
+  expect(await popup.locator('pre').textContent()).toBe(
+    JSON.stringify(JSON.parse(message), null, 2),
+  )
+  const rect = await popup.boundingBox()
+  expect(rect!.x).toBeGreaterThanOrEqual(0)
+  expect(rect!.x + rect!.width).toBeLessThanOrEqual(1920)
   await trigger.press('Escape')
   await expect(popup).toHaveCount(0)
   await trigger.click()
   await expect(popup).toBeVisible()
-  const refresh=page.locator('.panel > .filter-bar').getByRole('button',{name:'刷新',exact:true})
-  const a=await refresh.boundingBox(),b=await row.boundingBox()
-  expect(a!.y).toBeLessThan(b!.y);expect(a!.x).toBeGreaterThan(b!.x+b!.width*.7)
-  await page.screenshot({path:'../.tools/session-ui-model-wizard/session-error.png',fullPage:true,animations:'disabled'})
+  const refresh = page
+    .locator('.panel > .filter-bar')
+    .getByRole('button', { name: '刷新', exact: true })
+  const a = await refresh.boundingBox(),
+    b = await row.boundingBox()
+  expect(a!.y).toBeLessThan(b!.y)
+  expect(a!.x).toBeGreaterThan(b!.x + b!.width * 0.7)
+  await page.screenshot({
+    path: '../.tools/session-ui-model-wizard/session-error.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
 })

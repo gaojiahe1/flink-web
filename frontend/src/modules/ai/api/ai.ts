@@ -25,6 +25,7 @@ export interface AiResult {
   env?: { name: string; value: string }[]
   flinkConfiguration?: Record<string, string>
   validationLevel?: string
+  spec?: Record<string, unknown>
 }
 export interface AiTask {
   id: string

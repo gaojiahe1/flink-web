@@ -44,6 +44,10 @@ useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原
 
 向导复用原任务/同号核对/取消、上下文版本、数据定义和差异应用；确认需求含事件时间、窗口、消费起点及重复处理。生成不直接改编辑器，显式应用后进入检查与保存；仍由原 Parser、草稿保存和独立运行验证处理。桌面可拖动分栏，1000px 以下上下布局，390px 可操作。参考用户指定原型聊天 01a13a0d-fe51-74a1-8d56-881f8eb7570b；未发送消息或发布原型站点。
 
+本聊天2026-10-15将向导升级为实际约束流程：先明确登记/本地表的输入、维表、输出角色，再确认清洗转换、JDBC维表打宽或事件时间窗口场景。transform 不携带隐藏窗口；window 仅可选输入表已登记水位线，确认1–1440分钟和窗口结束输出。DataGen仅输入、Print仅输出、JDBC MySQL/PostgreSQL可作维表，重复表名/角色缺失拦截。需求补充只更新确认单，不自动请求模型；生成保留确认单快照，应用成功回执后才进第四步，配置冲突留在审阅。关闭/重开保持向导内容，活动任务取消及同号核对规则保留。
+
+任务使用可选 spec.workflowVersion=2，含 bindings/pattern/timezone 及场景参数；后端 [AiWizardContract](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiWizardContract.java) 在调用模型前校验，并限制生成 INSERT 只写已确认的输出表。旧任务未带版本时兼容原规则。Kafka起始位点只作用输入，时区按确认单编译；[前端契约](../../../frontend/src/modules/ai/utils/wizard.ts) 与集成/页面用例覆盖输入、失效和步骤保护。仍不等于 Planner 或业务语义认证。
+
 模型服务改为列表筛选、启用概览、配置表单与逐项测试结果；ModelScope 预设仅填写地址/模型，不包含密钥。客户端接受根地址并补 `/v1`，Qwen3 系列非流式请求显式关闭 thinking；401/403/404/429/400 返回脱敏分类，不能回显厂商正文。保留 HTTPS/内网授权、禁重定向和有界响应。
 
 本次用用户指定的 Qwen/Qwen3.5-27B 发起真实认证调用，返回 HTTP403，服务明确要求完成账号邮箱验证；没有成功生成结果，不能标记真实模型可用。处理入口：[ModelScope 账号设置](https://modelscope.cn/my/settings/account)。本库不保存该密钥，功能链路另用隔离协议替身验证。[客户端回归](../../../backend/src/test/java/com/flinkweb/client/ai/AiModelClientTest.java) 覆盖根地址、非流式参数、错误分类及正文不回显。

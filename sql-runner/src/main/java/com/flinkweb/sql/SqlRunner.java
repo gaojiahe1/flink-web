@@ -53,45 +53,114 @@ public final class SqlRunner {
             "(?is)^INSERT\\s+(?:INTO|OVERWRITE)\\s+("
                 + identifier
                 + ")(\\s*\\([^)]*\\))?\\s+(.+)$");
+    List<String> targets = new ArrayList<>();
+    for (String raw : statements) {
+      Matcher target = insert.matcher(raw);
+      if (target.matches()) targets.add(target.group(1));
+    }
     int count = 0;
     for (String raw : statements) {
-      String sql = substitute(raw, variables);
+      if (raw.matches("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
+        throw new IllegalArgumentException("验证不执行 CREATE TABLE AS 查询，请改为源表定义加 SELECT");
+      // 先剥离目标表连接参数，再展开变量；验证不要求原 Sink 的地址、驱动或凭据。
+      String sql = substitute(validationDeclaration(raw, targets, environment), variables);
       Matcher match = insert.matcher(sql);
-      if (match.matches()) {
-        String target = match.group(1);
-        org.apache.flink.table.catalog.ResolvedSchema schema =
-            environment.from(target).getResolvedSchema();
-        Schema.Builder printSchema = Schema.newBuilder();
-        schema.getColumns().stream()
-            .filter(c -> c.isPhysical())
-            .forEach(c -> printSchema.column(c.getName(), c.getDataType()));
+      boolean writing = match.matches();
+      if (writing || sql.matches("(?is)^(SELECT|WITH|VALUES)\\b.*")) {
+        String target = writing ? match.group(1) : "查询结果 " + (count + 1);
+        Table query = environment.sqlQuery(writing ? match.group(3) : sql);
+        org.apache.flink.table.catalog.ResolvedSchema schema = writing
+            ? environment.from(target).getResolvedSchema() : query.getResolvedSchema();
+        List<org.apache.flink.table.catalog.Column> physical = new ArrayList<>();
+        for (org.apache.flink.table.catalog.Column column : schema.getColumns())
+          if (column.isPhysical()) physical.add(column);
+        List<String> mapping = new ArrayList<>();
+        if (writing && match.group(2) != null) {
+          Matcher columns = Pattern.compile("`((?:``|[^`])+)`|([A-Za-z_][A-Za-z0-9_$]*)").matcher(match.group(2));
+          while (columns.find()) mapping.add(columns.group(1) != null ? columns.group(1).replace("``", "`") : columns.group(2));
+        } else for (org.apache.flink.table.catalog.Column column : physical) mapping.add(column.getName());
+        if (mapping.size() != query.getResolvedSchema().getColumnCount())
+          throw new IllegalArgumentException("输出字段数量与查询不一致");
+        if (new HashSet<>(mapping).size() != mapping.size()) throw new IllegalArgumentException("输出字段重复");
+        for (String column : mapping)
+          if (!schema.getColumn(column).isPresent()) throw new IllegalArgumentException("输出字段不存在：" + column);
+        String[] aliases = new String[mapping.size()];
+        for (int i = 0; i < aliases.length; i++) aliases[i] = "fw_column_" + i;
+        query = query.as(aliases[0], Arrays.copyOfRange(aliases, 1, aliases.length));
+        String view = "fw_query_" + validation + "_" + count;
+        environment.createTemporaryView(view, query);
+        List<String> names = new ArrayList<>(), values = new ArrayList<>();
+        for (org.apache.flink.table.catalog.Column column : physical) {
+          names.add(literal(column.getName()));
+          int index = mapping.indexOf(column.getName());
+          String field = index < 0 ? "NULL" : "`" + aliases[index] + "`";
+          String type = column.getDataType().getLogicalType().copy(true).asSerializableString();
+          values.add("CAST(CAST(" + field + " AS " + type + ") AS STRING)");
+        }
+        List<String> keys = new ArrayList<>();
+        if (schema.getPrimaryKey().isPresent())
+          for (String key : schema.getPrimaryKey().get().getColumns()) keys.add(literal(key));
+        String payload = "JSON_OBJECT('columns' VALUE JSON_ARRAY(" + String.join(",", names)
+            + "), 'cells' VALUE JSON_ARRAY(" + String.join(",", values)
+            + " NULL ON NULL), 'keys' VALUE JSON_ARRAY(" + String.join(",", keys)
+            + "), 'target' VALUE " + literal(target) + ")";
         String sink = "fw_validation_" + validation + "_" + count;
         environment.createTemporaryTable(
             sink,
             TableDescriptor.forConnector("print")
-                .schema(printSchema.build())
+                .schema(Schema.newBuilder().column("fw_data", DataTypes.STRING()).build())
                 .option("print-identifier", "FWV_" + validation + "_" + count)
                 .build());
-        // INSERT OVERWRITE 在验证中变为 INTO；临时表不继承原 Sink 的连接参数与主键约束。
-        String columns = match.group(2) == null ? "" : match.group(2);
-        Table query = environment.sqlQuery(match.group(3));
-        String view = "fw_query_" + validation + "_" + count;
-        environment.createTemporaryView(view, query);
-        String fields =
-            query.getResolvedSchema().getColumnNames().stream()
-                .map(name -> "`" + name.replace("`", "``") + "`")
-                .collect(java.util.stream.Collectors.joining(", "));
-        set.addInsertSql(
-            "INSERT INTO `" + sink + "`" + columns + " SELECT " + fields + " FROM `" + view + "`");
+        set.addInsertSql("INSERT INTO `" + sink + "` SELECT " + payload + " FROM `" + view + "`");
         count++;
       } else if (count == 0
           && (sql.matches("(?is)^CREATE\\s+(TEMPORARY\\s+)?(TABLE|VIEW|CATALOG|DATABASE)\\b.*")
               || sql.matches("(?is)^USE\\s+.*"))) {
         environment.executeSql(sql);
-      } else throw new IllegalArgumentException("验证仅支持先 CREATE/USE，再 INSERT；请检查写入目标语法");
+      } else throw new IllegalArgumentException("验证仅支持先 CREATE/USE，再 INSERT 或 SELECT");
     }
-    if (count == 0) throw new IllegalArgumentException("至少需要一条 INSERT");
+    if (count == 0) throw new IllegalArgumentException("至少需要一条 INSERT 或 SELECT");
     return set;
+  }
+
+  /** 只替换显式写入目标的顶层 WITH 选项，字段和主键保留，不解析原 Sink 的连接器。 */
+  static String validationDeclaration(String sql, List<String> targets, TableEnvironment environment) {
+    String identifier = "(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*)(?:\\s*\\.\\s*(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*))*";
+    Matcher table = Pattern.compile("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(" + identifier + ")\\s*\\(").matcher(sql);
+    if (!table.find()) return sql;
+    boolean sink = false;
+    for (String target : targets)
+      if (qualified(target, environment).equals(qualified(table.group(1), environment))) sink = true;
+    if (!sink) return sql;
+    int depth = 1;
+    char quote = 0;
+    for (int i = table.end(); i < sql.length(); i++) {
+      char c = sql.charAt(i);
+      if (quote != 0) {
+        if (c == quote) {
+          if (i + 1 < sql.length() && sql.charAt(i + 1) == quote) i++;
+          else quote = 0;
+        }
+      } else if (c == '\'' || c == '"' || c == '`') quote = c;
+      else if (c == '(') depth++;
+      else if (c == ')' && --depth == 0) return sql.substring(0, i + 1) + " WITH ('connector'='blackhole')";
+    }
+    throw new IllegalArgumentException("验证输出表结构不完整");
+  }
+
+  /** 按当前目录解析限定名，反引号内的点仍属于单个名称。 */
+  private static List<String> qualified(String text, TableEnvironment environment) {
+    List<String> parts = new ArrayList<>();
+    Matcher matcher = Pattern.compile("`((?:``|[^`])+)`|([A-Za-z_][A-Za-z0-9_$]*)").matcher(text);
+    while (matcher.find()) parts.add(matcher.group(1) == null ? matcher.group(2) : matcher.group(1).replace("``", "`"));
+    if (parts.size() == 1) parts.add(0, environment.getCurrentDatabase());
+    if (parts.size() == 2) parts.add(0, environment.getCurrentCatalog());
+    return parts;
+  }
+
+  /** 将元数据名称编码为 SQL 字符串常量，不允许字段名改变查询结构。 */
+  private static String literal(String value) {
+    return "'" + value.replace("'", "''") + "'";
   }
 
   /** 先执行 DDL，再添加 INSERT；此方法仅构建执行计划，不提交运行作业。 */

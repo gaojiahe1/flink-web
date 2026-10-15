@@ -7,6 +7,7 @@ import com.flinkweb.exception.common.BusinessException;
 import com.flinkweb.repository.metadata.RecordRepository;
 import com.flinkweb.service.ai.*;
 import com.flinkweb.service.ai.support.AiContentGuard;
+import com.flinkweb.service.ai.support.AiWizardContract;
 import com.flinkweb.service.audit.AuditService;
 import com.flinkweb.service.datasource.DataSourceService;
 import com.flinkweb.service.job.creation.JobService;
@@ -120,6 +121,7 @@ public class AiTaskServiceImpl implements AiTaskService {
               .createObjectNode()
               .put("owner", actor)
               .put("kind", kind)
+              .put("mode", input.path("mode").asText())
               .put("modelId", model.path("id").asText())
               .put("modelRevision", model.path("revision").asLong())
               .put("model", model.path("model").asText())
@@ -127,7 +129,7 @@ public class AiTaskServiceImpl implements AiTaskService {
               .put("jobId", input.path("jobId").asText())
               .put("state", "QUEUED")
               .put("requestHash", fingerprint)
-              .put("promptVersion", "flink-assistant-v1");
+              .put("promptVersion", input.path("spec").has("workflowVersion") ? "flink-wizard-v2" : "flink-assistant-v1");
       records.save("ai_tasks", id, task, 0);
       ObjectNode request = input.deepCopy();
       var future =
@@ -263,7 +265,9 @@ public class AiTaskServiceImpl implements AiTaskService {
                           + " passwordRef。保留用户已有非空参数。"
                       : "增加 dml:string。generate/repair时只写 CREATE TEMPORARY VIEW 和 INSERT"
                           + " INTO，禁止生成其他 DDL、SET、Catalog、函数注册或外部地址。多路输出直接多条 INSERT，平台 Runner"
-                          + " 统一合并。explain时dml为空。不可改变已确认时间、窗口、输出和重复处理语义。");
+                          + " 统一合并。explain时dml为空。不可改变已确认时间、窗口、输出和重复处理语义。"
+                          + " spec.bindings明确source/lookup/sink角色，只能写入sink。pattern=transform不添加窗口，lookup按需求关联维表，window使用确认的事件时间和滚动窗口。"
+                          + " upstream仅是用户确认的去重保证，keep不增加去重逻辑。未知业务口径列入unknowns。");
       var result = client.complete(model, models.key(model), system, context.toString());
       if (result.toString().getBytes(StandardCharsets.UTF_8).length > 65536)
         fail("AI_RESULT_TOO_LARGE", "模型输出过长，请缩小范围");
@@ -288,6 +292,7 @@ public class AiTaskServiceImpl implements AiTaskService {
         String dml = result.path("dml").asText();
         if (dml.isBlank()) fail("AI_INVALID_OUTPUT", "模型没有返回 SQL 转换逻辑");
         var checked = validation.validate(dml);
+        AiWizardContract.validateTargets(context.path("spec"), checked.statements());
         for (String statement : checked.statements())
           if (!statement.matches("(?is)^(CREATE\\s+TEMPORARY\\s+VIEW\\b|INSERT\\s+INTO\\b).*"))
             fail("AI_INVALID_OUTPUT", "模型输出包含不允许的语句");
@@ -306,6 +311,7 @@ public class AiTaskServiceImpl implements AiTaskService {
         warnings.add("未执行 Planner、原 Sink 写入或业务结果校验；应用后请运行 SQL 检查及验证");
       }
       safe.put("contextSha256", sha(context.toString()));
+      if (context.path("spec").has("workflowVersion")) safe.set("spec", context.path("spec").deepCopy());
       finish(id, "SUCCEEDED", "分析完成，建议尚未应用", safe);
     } catch (Exception error) {
       if (error instanceof InterruptedException) Thread.currentThread().interrupt();
@@ -404,6 +410,7 @@ public class AiTaskServiceImpl implements AiTaskService {
         if (definitions.isEmpty() && !input.path("mode").asText().equals("explain"))
           fail("AI_METADATA_REQUIRED", "请选择数据源或补充当前作业的数据定义");
         var spec = input.path("spec");
+        var roles = AiWizardContract.validate(spec, definitions);
         if (!input.path("mode").asText().equals("explain")) {
           if (!Set.of("keep", "upstream").contains(spec.path("dedup").asText()))
             fail("AI_SPEC_REQUIRED", "请先确认重复数据处理方式");
@@ -415,7 +422,8 @@ public class AiTaskServiceImpl implements AiTaskService {
           boolean timeMatches = spec.path("eventTime").asText().isBlank();
           for (var definition : definitions) {
             if (definition instanceof ObjectNode node) {
-              if (node.path("connectorType").asText().equals("kafka")) {
+              if (node.path("connectorType").asText().equals("kafka")
+                  && (roles.isEmpty() || "source".equals(roles.get(node.path("tableName").asText().toLowerCase(Locale.ROOT))))) {
                 node.put("startupMode", startup);
                 node.remove("startupTimestamp");
               }
@@ -435,7 +443,7 @@ public class AiTaskServiceImpl implements AiTaskService {
         if (!input.path("mode").asText().equals("explain")) {
           if (spec.path("dedup").asText().equals("upstream"))
             context.put("upstreamGuarantee", "用户确认上游已去重");
-          config.put("table.local-time-zone", "Asia/Shanghai");
+          config.put("table.local-time-zone", spec.path("timezone").asText("Asia/Shanghai"));
         }
       }
     }

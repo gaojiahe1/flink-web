@@ -113,7 +113,7 @@ try:
     jar = json.loads(uploaded)['filename'].split('/')[-1]
     validation = submit([
         "CREATE TABLE source_cdc (id INT, payload STRING) WITH ('connector'='filesystem', 'path'='file:///data/cdc.json', 'format'='debezium-json')",
-        "CREATE TABLE original_sink (id INT, payload STRING) WITH ('connector'='unavailable-original-sink')",
+        "CREATE TABLE original_sink (id INT, payload STRING, PRIMARY KEY(id) NOT ENFORCED) WITH ('connector'='kafka','print-identifier'='MY_PRINT','password'='{{env:UNAVAILABLE}}')",
         'INSERT INTO original_sink SELECT * FROM source_cdc',
     ])
     for attempt in range(45):
@@ -123,11 +123,27 @@ try:
         rows = events(validation)
         if len(rows) == 4:
             assert [r[1] for r in rows] == ['+I', '-U', '+U', '-D'], rows
-            assert '中文\n一' in rows[0][2], rows
+            first = json.loads(rows[0][2])
+            assert first['columns'] == ['id', 'payload'] and first['keys'] == ['id'], first
+            assert first['cells'] == ['1', '中文\n一'], first
             break
         time.sleep(1)
     else:
         raise RuntimeError('固定文件未读取到四种变更：' + str(rows))
+    query = submit([
+        "CREATE TABLE source_only (id BIGINT) WITH ('connector'='datagen','number-of-rows'='2')",
+        'SELECT id AS order_id FROM source_only',
+    ])
+    for attempt in range(45):
+        query_rows = events(query)
+        if len(query_rows) == 2:
+            assert json.loads(query_rows[0][2])['columns'] == ['order_id'], query_rows
+            break
+        if call('GET', '/jobs/' + query)['state'] == 'FAILED':
+            raise RuntimeError(call('GET', '/jobs/' + query + '/exceptions'))
+        time.sleep(1)
+    else:
+        raise RuntimeError('源表加SELECT未返回结构化结果')
     validation = submit([
         "CREATE TABLE source_events (id BIGINT) WITH ('connector'='datagen','rows-per-second'='100','fields.id.kind'='sequence','fields.id.start'='1','fields.id.end'='100000')",
         "CREATE TABLE original_sink (id BIGINT) WITH ('connector'='unavailable-original-sink')",
@@ -151,7 +167,7 @@ try:
         time.sleep(1)
     else:
         raise RuntimeError('取消未完成')
-    print(json.dumps({'flinkImage': args.image, 'fixedLog': True, 'rowKinds': ['+I', '-U', '+U', '-D'], 'multiline': True, 'displayed': 1000, 'state': 'CANCELED'}))
+    print(json.dumps({'flinkImage': args.image, 'fixedLog': True, 'rowKinds': ['+I', '-U', '+U', '-D'], 'multiline': True, 'originalSinkOptionsIgnored': True, 'sourceOnlySelectRows': len(query_rows), 'displayed': 1000, 'state': 'CANCELED'}))
 finally:
     for name in reversed(containers):
         docker('rm', '-f', name)

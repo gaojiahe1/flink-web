@@ -9,6 +9,54 @@ import org.junit.jupiter.api.Test;
 
 /** 使用真实 Flink Planner 验证 SQL Runner 计划构建，并检查参数和密钥替换。 */
 class SqlRunnerTest {
+  /** 缺失地址、错误选项和未配置密码不参与验证；结构化输出保留列名、空值及大整数。 */
+  @Test
+  @org.junit.jupiter.api.Timeout(45)
+  void validationIgnoresProductionSinkOptionsAndEncodesFields() throws Exception {
+    TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
+    environment.getConfig().getConfiguration().setString("parallelism.default", "1");
+    var plan = SqlRunner.prepareValidation(environment, List.of(
+        "CREATE TEMPORARY TABLE sink_events (id BIGINT, payload STRING, optional STRING, PRIMARY KEY(id) NOT ENFORCED) WITH ('connector'='kafka','print-identifier'='MY_PRINT','password'='{{env:UNAVAILABLE}}')",
+        "INSERT INTO sink_events VALUES (9007199254740993, '中文,值\nnext', CAST(NULL AS STRING))"), key -> null,
+        "0123456789abcdef0123456789abcdef");
+    String output = captured(plan);
+    assertTrue(output.contains("\"columns\":[\"id\",\"payload\",\"optional\"]"), output);
+    assertTrue(output.contains("\"cells\":[\"9007199254740993\",\"中文,值\\nnext\",null]"), output);
+    assertTrue(output.contains("\"keys\":[\"id\"]"), output);
+  }
+
+  /** 只定义源表和 SELECT 即可验证；CTE 与输出别名沿用真实 Planner。 */
+  @Test
+  @org.junit.jupiter.api.Timeout(45)
+  void validationAcceptsSourceAndReadOnlyQuery() throws Exception {
+    TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
+    environment.getConfig().getConfiguration().setString("parallelism.default", "1");
+    var plan = SqlRunner.prepareValidation(environment, List.of(
+        "CREATE TEMPORARY TABLE source_events (id BIGINT, payload STRING) WITH ('connector'='datagen','number-of-rows'='2')",
+        "WITH orders AS (SELECT id,payload FROM source_events) SELECT id AS order_id,payload FROM orders"), key -> null,
+        "0123456789abcdef0123456789abcdef");
+    String output = captured(plan);
+    assertEquals(2, output.lines().filter(line -> line.startsWith("FWV_")).count());
+    assertTrue(output.contains("\"columns\":[\"order_id\",\"payload\"]"), output);
+    assertThrows(IllegalArgumentException.class, () -> SqlRunner.prepare(environment, List.of("SELECT 1"), key -> null));
+    assertThrows(IllegalArgumentException.class, () -> SqlRunner.prepareValidation(environment,
+        List.of("CREATE TABLE forbidden WITH ('connector'='blackhole') AS SELECT 1 AS id"), key -> null,
+        "0123456789abcdef0123456789abcdef"));
+  }
+
+  /** 捕获本地真实运行输出，仅供检查验证协议，不依赖共享日志或集群。 */
+  private String captured(StatementSet plan) throws Exception {
+    java.io.PrintStream original = System.out;
+    var output = new java.io.ByteArrayOutputStream();
+    try (var stream = new java.io.PrintStream(output, true, StandardCharsets.UTF_8.name())) {
+      System.setOut(stream);
+      plan.execute().await();
+    } finally {
+      System.setOut(original);
+    }
+    return output.toString(StandardCharsets.UTF_8.name());
+  }
+
   /** 使用真实提交上下文执行 SQL，磁盘 local 路径不得覆盖上传 JAR，同时保留运行与状态配置。 */
   @Test
   @org.junit.jupiter.api.Timeout(45)
