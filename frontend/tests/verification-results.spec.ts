@@ -48,6 +48,34 @@ test('旧文本不猜测字段，无法匹配的撤回明确提示结果范围',
   ).toContain('未匹配')
 })
 
+test('宽表、旧 Runner 与异常结构提供各自的解决提示', () => {
+  const wide = (count: number): VerificationEvent => ({
+    sink: 1,
+    kind: '+I',
+    columns: Array.from({ length: count }, (_, n) => 'c' + n),
+    cells: Array(count).fill('v'),
+    keys: [],
+  })
+  expect(materializeVerification([wide(100)])[0].rows[0]).toHaveLength(100)
+  expect(materializeVerification([wide(101)])[0].warning).toContain('100 列')
+  for (const [status, message] of [
+    ['TOO_WIDE', '100 列'],
+    ['LEGACY_TEXT', '新版 Runner'],
+    ['INVALID_STRUCTURE', '结构损坏'],
+  ] as const) {
+    const table = materializeVerification([{ sink: 1, kind: '+I', structureStatus: status }])[0]
+    expect(table.warning).toContain(message)
+    expect(table.rows).toEqual([])
+    if (status !== 'LEGACY_TEXT') expect(table.warning).not.toContain('新版 Runner')
+  }
+  for (const event of [
+    { ...wide(1), cells: [] },
+    { ...wide(1), keys: ['missing'] },
+    { ...wide(1), keys: ['c0', 'c0'] },
+  ])
+    expect(materializeVerification([event])[0].warning).toContain('结构损坏')
+})
+
 async function fixture(page: Page) {
   let canceled = false
   const sql = "CREATE TABLE s(id STRING) WITH ('connector'='datagen'); SELECT id FROM s;"

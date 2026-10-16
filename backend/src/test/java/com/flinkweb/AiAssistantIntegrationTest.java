@@ -254,6 +254,22 @@ class AiAssistantIntegrationTest {
     assertThat(records.list("datasources")).isEmpty();
   }
 
+  /** 引用内容中的 WITH 不属于参数覆盖，真正的连接选项即使夹有注释也须拒绝。 */
+  @Test
+  void connectorGuardIgnoresQuotedTextButRejectsOptions() throws Exception {
+    for (String dml : java.util.List.of(
+        "INSERT INTO sink_events SELECT 'WITH (' FROM source_events",
+        "INSERT INTO sink_events SELECT 'it''s WITH (' FROM source_events",
+        "CREATE TEMPORARY VIEW v AS SELECT id AS `WITH (` FROM source_events; INSERT INTO sink_events SELECT * FROM v")) {
+      answer.set(mapper.createObjectNode().put("summary", "合法引用").put("dml", dml).toString());
+      assertThat(await(tasks.create(request()).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+    }
+    answer.set(mapper.createObjectNode().put("dml", "INSERT INTO sink_events /*+ OPTIONS */ SELECT * FROM source_events WITH /* gap */ ('connector'='print')").toString());
+    var failed = await(tasks.create(request()).path("id").asText());
+    assertThat(failed.path("state").asText()).isEqualTo("FAILED");
+    assertThat(failed.toString()).contains("不能覆盖连接器参数");
+  }
+
   /** 外部模型没有逐次授权不能开始任务。 */
   @Test
   void externalContextRequiresConsent() throws Exception {

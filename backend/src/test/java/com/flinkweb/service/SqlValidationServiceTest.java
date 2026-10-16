@@ -55,4 +55,19 @@ class SqlValidationServiceTest {
             () -> validation.validate("INSERT INTO t VALUES ('" + "中".repeat(12000) + "')"))
         .isInstanceOf(BusinessException.class);
   }
+
+  /** 验证提前拦截 CTAS，查询及包含相似字符串的 DDL 正常，Application 保留原范围。 */
+  @Test
+  void verificationRejectsCtasBeforeRunnerAndExplainsQueryScope() {
+    for (String query : java.util.List.of("SELECT 1", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
+      assertThat(validation.validateVerification(query).valid()).isTrue();
+    for (String query : java.util.List.of("SELECT 1", "(SELECT 1)", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
+      assertThatThrownBy(() -> validation.validateVerification("CREATE TEMPORARY TABLE t AS " + query))
+          .hasMessageContaining("验证不执行 CREATE TABLE AS");
+    assertThat(validation.validateVerification("CREATE TABLE t(a STRING) WITH ('comment'='AS SELECT'); SELECT 1").valid()).isTrue();
+    assertThat(validation.validate("CREATE TABLE t AS SELECT 1; INSERT INTO sink SELECT * FROM t").valid()).isTrue();
+    assertThatThrownBy(() -> validation.validate("SELECT 1")).hasMessageContaining("请使用 SQL 验证");
+    assertThatThrownBy(() -> validation.validateVerification("SET 'a'='b'; SELECT 1"))
+        .hasMessageContaining("验证还支持 SELECT / WITH / VALUES").hasMessageNotContaining("暂不支持 SELECT");
+  }
 }

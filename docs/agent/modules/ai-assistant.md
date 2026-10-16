@@ -1,6 +1,6 @@
 # AI 助手与模型服务
 
-更新：2026-10-15。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。用户最新要求采用需求向导原型并保留任务模型选择；本模块复用既有任务协议，不包含自动执行、生产审批或完整 Planner。
+更新：2026-10-16。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。用户最新要求采用需求向导原型并保留任务模型选择；本模块复用既有任务协议，不包含自动执行、生产审批或完整 Planner。
 
 ## 入口与代码
 
@@ -51,3 +51,7 @@ useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原
 模型服务改为列表筛选、启用概览、配置表单与逐项测试结果；ModelScope 预设仅填写地址/模型，不包含密钥。客户端接受根地址并补 `/v1`，Qwen3 系列非流式请求显式关闭 thinking；401/403/404/429/400 返回脱敏分类，不能回显厂商正文。保留 HTTPS/内网授权、禁重定向和有界响应。
 
 本次用用户指定的 Qwen/Qwen3.5-27B 发起真实认证调用，返回 HTTP403，服务明确要求完成账号邮箱验证；没有成功生成结果，不能标记真实模型可用。处理入口：[ModelScope 账号设置](https://modelscope.cn/my/settings/account)。本库不保存该密钥，功能链路另用隔离协议替身验证。[客户端回归](../../../backend/src/test/java/com/flinkweb/client/ai/AiModelClientTest.java) 覆盖根地址、非流式参数、错误分类及正文不回显。
+
+## 五项反馈中的 AI 修复（2026-10-16）
+
+需求、定义、模型等上下文失效同步清除 appliedTask/appliedVersion，正常应用回执仍在父编辑器完成后登记。补充后第四步禁用，重新生成并成功应用后恢复。对比仍展示前1000行，额外统计尾部行数与修改数，并提供当前/建议完整SQL的只读编辑器。后端对已拆分、去注释的语句先用 SqlScriptLexical 遮蔽引用内容，再检查 WITH 参数覆盖，双写引号和引用标识符不误报，实际覆盖仍拒绝。回归范围见 [本轮验收](../validation.md#ai-与-sql-五项修复2026-10-16)。

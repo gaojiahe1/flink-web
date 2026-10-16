@@ -372,19 +372,27 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
               .put("sink", event.sink())
               .put("kind", event.kind())
               .put("value", redact(event.value(), knownSecrets));
+      String value = row.path("value").asText().stripLeading();
+      row.put("structureStatus", value.startsWith("{") || value.startsWith("[")
+          ? "INVALID_STRUCTURE" : "LEGACY_TEXT");
       try {
         var payload = mapper.readTree(row.path("value").asText());
-        if (payload.isObject() && payload.path("columns").isArray()
-            && payload.path("cells").isArray() && payload.path("keys").isArray()
-            && payload.path("columns").size() <= 100
-            && payload.path("columns").size() == payload.path("cells").size()) {
+        if (validResultStructure(payload)) {
+          if (payload.path("columns").size() > 100) {
+            row.put("structureStatus", "TOO_WIDE");
+            prepared.add(row);
+            continue;
+          }
+          row.put("structureStatus", "STRUCTURED");
           row.set("columns", payload.path("columns"));
           row.set("cells", payload.path("cells"));
           row.set("keys", payload.path("keys"));
           row.put("target", payload.path("target").asText("查询结果"));
         }
       } catch (Exception ignored) {
-        // 旧 Runner 或截断输出不能可靠拆列，界面提示升级，不猜测含逗号的业务值。
+        // 旧文本与疑似截断的 JSON 分开提示，不猜测含逗号的业务值。
+        if (!value.startsWith("{") && !value.startsWith("["))
+          row.put("structureStatus", "LEGACY_TEXT");
       }
       prepared.add(row);
     }
@@ -402,6 +410,25 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
         read.put(key, event.sequence());
       }
     }
+  }
+
+  /** 完整核对字段、单元格和主键，再按列数上限决定是否交付结构。 */
+  private boolean validResultStructure(com.fasterxml.jackson.databind.JsonNode payload) {
+    if (payload == null || !payload.isObject()) return false;
+    var columns = payload.path("columns");
+    var cells = payload.path("cells");
+    var keys = payload.path("keys");
+    if (!columns.isArray() || columns.isEmpty() || !cells.isArray() || !keys.isArray()
+        || columns.size() != cells.size()) return false;
+    var names = new HashSet<String>();
+    for (var column : columns)
+      if (!column.isTextual() || !names.add(column.asText())) return false;
+    for (var cell : cells)
+      if (!cell.isNull() && !cell.isTextual()) return false;
+    var keyNames = new HashSet<String>();
+    for (var key : keys)
+      if (!key.isTextual() || !names.contains(key.asText()) || !keyNames.add(key.asText())) return false;
+    return !payload.has("target") || payload.path("target").isTextual();
   }
 
   /** 并发取消和终态更新改变修订，使原观察结果不再有提交资格。 */

@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:90b0664a788a1ff8edf82825053b73f9ec32ccbe6281e0ee779fa3cc74429793 |
+| 192.168.68.1:5000/flink-web/app | sha256:f8f28304936c3315a0f0edd0ff7b205211fc754cd1deeb00d4bef24441e5d424 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:4218ac82232c991f91b63ffd66b90a251ec2bff4b2a7a3605c49520a1ae9a4e6 |
+| 192.168.68.1:5000/flink-web/web | sha256:4b6d6dbd37c31a67ac57b88f92f7c3d5c013e281a81f872ad70cd24a1496eba4 |
 
 2026-10-15 AI 健壮性/日志缓冲发布：app/web:0.0.4 已覆盖推送，不更新 latest/downloader。复用已发布 Kylin/JRE/Nginx 层，仅替换本轮完整验证的后端 JAR 和前端 dist；无数据库迁移或新增密钥。最终 app config 为 sha256:2de2377bbea1c4e631b3a5576ec219ea88b143d858e0f1489023944f64ff4248，web config 为 sha256:a773b337bb5ebdcf54d6520ba8189ef61a5343c2a26834cd542070726b5c7d48。经现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要/config ID；远端 app20层/web18层的大小、压缩摘要和解压 diff ID 均与最终已测试镜像一致。
 
@@ -600,3 +600,9 @@ app/web:0.0.4 已覆盖发布，上表为本轮最新摘要；latest/downloader 
 使用前需重新拉取平台镜像，并通过“下载 SQL Runner”取得新包（SHA-256 `42e17ae9807c5e048c8df112f735fbb8677b8520ceda3f1c72ce7b8eba3164a5`），上传后在既有 SQL 草稿及验证 Session 中显式重新选择；验证 Session 的运行中配置须按授权停止、修改、重新启动。平台不会覆盖已选旧文件。新 Runner 跳过原 Sink 的连接选项，按字段/主键生成 Print JSON 输出；支持源表加 SELECT，Application 仍须 INSERT。旧 Runner 缺少结构化字段时页面明确提示升级，不猜测旧文本；原固定日志配置不变。
 
 完整后端、Runner、相关页面、JDK8/17、实际 Flink1.20.5及最终只读非root镜像闭环范围见 [本轮验收](agent/validation.md#需求向导约束与验证最终结果2026-10-15)。真实模型厂商与生产 Kubernetes 未新增认证；临时验证资源及已核实的本轮构建缓存按ID清理，保留发布镜像、已有registry和共享资源。
+
+## AI 与 SQL 五项修复发布（2026-10-16）
+
+app/web:0.0.4已覆盖发布，上表为最新manifest；通过同一registry的localhost:15000映射推送。复用原Kylin/JRE/Nginx运行层，替换已通过校验的后端JAR和前端产物；app config为 `sha256:2fae755bc534e9fd7a794214ebf7c68515a9d614c0ffd7def345805d9ba92319`，web config为 `sha256:51dfb11c883ab22b16c12f56a5dcb858797d65a80108679d03ff768c63340a18`。从指定192.168.68.1:5000核对manifest正文/响应摘要、config以及全部24/23层大小、压缩SHA-256和解压diff_id一致。本轮不改Runner/Parser、latest、downloader或实际Kubernetes工作负载；已有Pod需按授权流程重新拉取平台镜像，旧Runner升级规则继续适用。
+
+需求变化后第四步重新禁用；长SQL显示截断与完整审阅入口；超100列提示减少字段，旧协议提示重新选择新版Runner，损坏结构提示检查日志；SELECT/CTE/VALUES可验证，CTAS在基础检查提前拒绝。后端235项、最终Web25项及实际镜像/代理校验范围见 [本轮验收](agent/validation.md#ai-与-sql-五项修复2026-10-16)，不代表真实厂商或生产集群新增认证。

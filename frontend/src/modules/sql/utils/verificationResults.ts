@@ -6,6 +6,7 @@ export interface VerificationEvent {
   columns?: string[]
   cells?: (string | null)[]
   keys?: string[]
+  structureStatus?: 'STRUCTURED' | 'TOO_WIDE' | 'LEGACY_TEXT' | 'INVALID_STRUCTURE'
 }
 export interface VerificationTable {
   sink: number
@@ -30,6 +31,20 @@ export function materializeVerification(events: VerificationEvent[]): Verificati
       }
       tables.set(event.sink, table)
     }
+    if (event.structureStatus && event.structureStatus !== 'STRUCTURED') {
+      table.warning =
+        event.structureStatus === 'TOO_WIDE'
+          ? '输出超过 100 列展示上限，请减少查询输出字段后重新验证。'
+          : event.structureStatus === 'LEGACY_TEXT'
+            ? '当前 Runner 未提供字段结构。请下载新版 Runner，重新选择后再验证；不猜测或拆分旧文本。'
+            : '输出字段结构损坏或不完整，请检查验证日志并重新验证。'
+      continue
+    }
+    const legacy =
+      !event.structureStatus &&
+      event.columns === undefined &&
+      event.cells === undefined &&
+      event.keys === undefined
     if (
       !Array.isArray(event.columns) ||
       !event.columns.length ||
@@ -37,10 +52,19 @@ export function materializeVerification(events: VerificationEvent[]): Verificati
       new Set(event.columns).size !== event.columns.length ||
       !Array.isArray(event.cells) ||
       event.cells.length !== event.columns.length ||
-      !event.cells.every((cell) => cell === null || typeof cell === 'string')
+      !event.cells.every((cell) => cell === null || typeof cell === 'string') ||
+      (event.keys !== undefined &&
+        (!Array.isArray(event.keys) ||
+          !event.keys.every((key) => typeof key === 'string' && event.columns!.includes(key)) ||
+          new Set(event.keys).size !== event.keys.length))
     ) {
-      table.warning =
-        '当前 Runner 未提供完整字段结构。请下载新版 Runner，重新选择后再验证；不猜测或拆分旧文本。'
+      table.warning = legacy
+        ? '当前 Runner 未提供字段结构。请下载新版 Runner，重新选择后再验证；不猜测或拆分旧文本。'
+        : '输出字段结构损坏或不完整，请检查验证日志并重新验证。'
+      continue
+    }
+    if (event.columns.length > 100) {
+      table.warning = '输出超过 100 列展示上限，请减少查询输出字段后重新验证。'
       continue
     }
     if (table.columns.length && JSON.stringify(table.columns) !== JSON.stringify(event.columns)) {

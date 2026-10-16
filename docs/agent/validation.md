@@ -1,5 +1,14 @@
 # 治理与记忆系统验收
 
+## AI 与 SQL 五项修复（2026-10-16）
+
+- 起点：干净 master `886e24c`，工作分支 `codex/fix-ai-sql-review`；按用户五项反馈修复已应用资格失效、引用内容误报、结果原因区分、长SQL完整审阅和基础CTAS限制。Runner/Parser代码、数据库迁移及现场工作负载未改。
+- 后端定向65项通过；最终完整package共235项，234通过、1可选MinIO跳过，无失败/错误，含两份实际精确Parser。首轮完整检查的六项错误来自Windows默认JUnit目录清理ACL；用argLine将子进程临时目录改为本任务独占路径后完整重跑通过。
+- 前端类型/生产构建、受影响源码及测试Prettier通过；最终实际Web镜像25项页面/逻辑回归全部通过。覆盖应用→补充→第四步禁用→重新生成应用恢复、只有1001行以后修改的完整只读审阅、100/101列、旧文本、坏结构及主键异常。已有结果滚动/窄屏、取消、配置冲突和异步恢复回归保留。默认Playwright浏览器缺失，改用已安装Edge后运行；长SQL初版测试夹具未覆盖列表及只读编辑器键盘滚动，修正夹具/滚动后通过。
+- 最终app/web为linux/amd64、UID/GID10001，实际只读镜像和临时SQLite通过加密登录、API代理、1.20.5精确SELECT/CTE检查及CTAS早拒绝。已有Web启动参数、无后端启动、上线恢复及IP变化代理回归通过。真实模型厂商、真实Flink运行及现场Kubernetes本轮未新增认证。
+- app/web:0.0.4通过同一registry的localhost:15000映射发布，manifest分别为 `sha256:f8f28304936c3315a0f0edd0ff7b205211fc754cd1deeb00d4bef24441e5d424`、`sha256:4b6d6dbd37c31a67ac57b88f92f7c3d5c013e281a81f872ad70cd24a1496eba4`；指定仓库核对详情见部署指南。latest/downloader和实际工作负载未更新。
+
+
 ## 需求向导约束与验证最终结果（2026-10-15）
 
 - 起点：干净本地 master `4d55bd4`，工作分支 `codex/ai-requirements-workflow`。用户要求按需求向导重新定义 AI，并追加结果表格遮挡、只展示 Sink 字段/最终结果、随时停止、自动 Print 与源表加 SELECT 验证。本轮未新增生产操作授权。

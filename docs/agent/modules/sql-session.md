@@ -1,6 +1,6 @@
 # SQL 与 Session
 
-更新：2026-10-15。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-16。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
@@ -62,3 +62,7 @@ SessionStateDetail 将完整脱敏错误浮层挂到 body，支持悬浮/聚焦/
 Session Flink UI 的 `/config` 改写嵌套 `features.web-submit/web-cancel/web-rescale=false`，禁止代理 JAR 路径；普通 Session 渲染强制 `web.submit.enable=false`。真实 Flink1.20.5 证明此开关也关闭 JAR REST，因此专用验证 Session 固定为 true，保留后台提交，面向用户的代理仍隐藏并拦截。不能把 UI 限制等同于直接暴露 Flink REST 的网络权限控制；按原部署边界通过平台访问。SQL Runner、日志、1000条及截止取消不变。
 
 SQL 提示参考 [Flink2.3 SQL](https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/sql/overview/)、[数据类型](https://nightlies.apache.org/flink/flink-docs-release-2.3/docs/sql/reference/data-types/) 及各官方 Connector 文档，提供 Kafka/Upsert Kafka、JDBC、文件、DataGen、Print、BlackHole、Elasticsearch7、OpenSearch、HBase2.2、Kinesis、MongoDB 选项/值和说明。仅当前 WITH 上下文匹配，排除注释及已用键。修正 StandardSQL.spec 为空及自定义词表大小写造成基础关键词失去解析的问题，关键词/类型/字符串分别高亮。编辑提示不代表 Connector 已安装或新增2.3运行认证；精确 Parser 版本仍为1.20.3/1.20.5。
+
+## 结果原因与验证范围修复（2026-10-16）
+
+事件增加可选 structureStatus=STRUCTURED/TOO_WIDE/LEGACY_TEXT/INVALID_STRUCTURE。后端完整核对列、单元格及主键后保留100列结构上限，超宽仍计入事件数；前端分别引导减少字段、更新旧Runner、排查异常结构，兼容未携带新状态的事件，不猜测旧文本。基础验证遮蔽引用内容后提前拒绝CTAS，SELECT/CTE/VALUES仍可验证，Application规则保留；Runner本轮未改。验证见 [本轮验收](../validation.md#ai-与-sql-五项修复2026-10-16)。

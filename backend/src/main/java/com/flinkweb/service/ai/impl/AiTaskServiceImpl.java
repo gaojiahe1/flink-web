@@ -297,7 +297,8 @@ public class AiTaskServiceImpl implements AiTaskService {
           if (!statement.matches("(?is)^(CREATE\\s+TEMPORARY\\s+VIEW\\b|INSERT\\s+INTO\\b).*"))
             fail("AI_INVALID_OUTPUT", "模型输出包含不允许的语句");
         for (String statement : checked.statements())
-          if (statement.matches("(?is).*\\bWITH\\s*\\(.*"))
+          if (com.flinkweb.service.sql.support.SqlScriptLexical.maskQuoted(statement)
+              .matches("(?is).*\\bWITH\\s*\\(.*"))
             fail("AI_INVALID_OUTPUT", "AI 转换逻辑不能覆盖连接器参数");
         String script = context.path("compiledSql").asText() + "\n" + dml;
         validation.validate(script);

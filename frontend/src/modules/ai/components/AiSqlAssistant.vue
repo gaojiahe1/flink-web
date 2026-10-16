@@ -202,8 +202,19 @@ const differences = computed(() => {
     changed: old[index] !== next[index],
   }))
 })
+const omittedDifferences = computed(() => {
+  const old = props.sql.split('\n'),
+    next = (result.value?.sql || '').split('\n')
+  let changed = 0
+  for (let index = 1000; index < Math.max(old.length, next.length); index++)
+    if (old[index] !== next[index]) changed++
+  return { lines: Math.max(0, Math.max(old.length, next.length) - 1000), changed }
+})
+const fullReview = ref(false)
 function invalidate() {
   contextVersion++
+  appliedTask.value = ''
+  appliedVersion.value = -1
   compiledMessage.value = ''
   stale.value = true
   if (busy.value) void cancel()
@@ -681,6 +692,26 @@ onBeforeUnmount(() => {
         <template v-if="result?.sql"
           ><details class="ai-suggestion" open>
             <summary>SQL 修改对比</summary>
+            <template v-if="omittedDifferences.lines">
+              <p class="notice" role="status">
+                对比仅展示前 1000 行，后续 {{ omittedDifferences.lines }} 行中有
+                {{ omittedDifferences.changed }} 行修改未展示，请完整审阅后再应用。
+              </p>
+              <button class="button" @click="fullReview = !fullReview">
+                {{ fullReview ? '收起完整 SQL' : '审阅完整 SQL' }}
+              </button>
+              <div v-if="fullReview" class="ai-full-review">
+                <h4>当前完整 SQL</h4>
+                <CodeEditor :model-value="sql" language="sql" readonly label="当前完整 SQL" />
+                <h4>建议完整 SQL</h4>
+                <CodeEditor
+                  :model-value="result.sql"
+                  language="sql"
+                  readonly
+                  label="建议完整 SQL"
+                />
+              </div>
+            </template>
             <div class="ai-diff" aria-label="AI SQL 修改对比">
               <template v-for="line in differences" :key="line.n">
                 <pre v-if="line.changed && line.old" class="removed">− {{ line.old }}</pre>

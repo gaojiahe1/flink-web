@@ -732,11 +732,65 @@ test('向导先明确输入输出，清洗场景不携带隐藏窗口，补充�
   await panel.getByLabel('继续补充需求', { exact: true }).fill('过滤掉金额为零的订单')
   await panel.getByRole('button', { name: '发送补充' }).click()
   expect(f.submissions).toHaveLength(1)
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toBeDisabled()
   await expect(panel.getByLabel('描述业务需求', { exact: true })).toHaveValue(/过滤掉金额为零/)
   await expect(page.locator('.sql-center .cm-content').first()).toContainText('AI 建议')
   await panel.getByRole('button', { name: '收起 AI 助手' }).click()
   await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
   await expect(panel.getByLabel('描述业务需求', { exact: true })).toHaveValue(/过滤掉金额为零/)
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toBeDisabled()
+  await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
+  await expect(panel.getByRole('button', { name: '应用到编辑器' })).toBeEnabled()
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toBeDisabled()
+  await panel.getByRole('button', { name: '应用到编辑器' }).click()
+  await expect(steps.getByRole('button', { name: /检查与保存/ })).toHaveAttribute(
+    'aria-current',
+    'step',
+  )
+})
+
+test('长 SQL 对比提示尾部修改并可完整审阅第 1001 行之后的 SQL', async ({ page }) => {
+  await fixture(page)
+  const original = Array.from({ length: 1005 }, (_, n) => '-- line ' + (n + 1)).join('\n')
+  const suggestion = original + '\n-- 尾部独有修改'
+  await page.route('**/api/sql/jobs', (route) =>
+    route.fulfill({ json: { data: [{ ...draft, sql: original }], error: null } }),
+  )
+  await page.route('**/api/sql/jobs/sql-draft', (route) =>
+    route.fulfill({ json: { data: { ...draft, sql: original }, error: null } }),
+  )
+  await page.route('**/api/ai/tasks/*', (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          id: 'long',
+          state: 'SUCCEEDED',
+          result: { summary: '尾部修改', sql: suggestion, env: [], flinkConfiguration: {} },
+        },
+        error: null,
+      },
+    }),
+  )
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  await selectData(page)
+  const panel = page.locator('.ai-sql-panel')
+  await panel.getByRole('button', { name: '下一步：确认需求' }).click()
+  await panel.getByLabel('描述业务需求', { exact: true }).fill('修改尾部')
+  await panel.getByLabel('重复数据', { exact: true }).selectOption('keep')
+  await panel.getByRole('button', { name: '确认并生成 SQL' }).click()
+  await expect(panel).toContainText('1 行修改未展示')
+  await expect(panel.locator('.ai-diff')).not.toContainText('尾部独有修改')
+  await panel.getByRole('button', { name: '审阅完整 SQL', exact: true }).click()
+  const complete = panel.locator('.cm-content[aria-label="建议完整 SQL"]')
+  await complete.locator('..').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(complete).toContainText('尾部独有修改')
+  await expect(complete).toHaveAttribute('contenteditable', 'false')
+  await panel
+    .locator('.ai-full-review')
+    .screenshot({ path: test.info().outputPath('full-review.png') })
 })
 
 test('窗口场景缺少输入水位线时不能生成，应用配置冲突不越过审阅步骤', async ({ page }) => {

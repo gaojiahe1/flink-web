@@ -34,14 +34,18 @@ public class SqlValidationServiceImpl implements SqlValidationService {
     int inserts = 0;
     int reads = 0;
     for (String statement : statements) {
+      if (queries && com.flinkweb.service.sql.support.SqlScriptLexical.maskQuoted(statement)
+          .matches("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
+        fail("验证不执行 CREATE TABLE AS 查询，请改为源表定义加 SELECT");
       if (INSERT.matcher(statement).matches()) inserts++;
       else if (queries && statement.matches("(?is)^(SELECT|WITH|VALUES)\\b.*")) reads++;
       else if (DDL.matcher(statement).matches() || statement.matches("(?is)^USE\\s+.*")) {
         if (inserts + reads > 0) fail("CREATE / USE 必须放在所有 INSERT / SELECT 之前");
       } else
         fail(
-            "支持 CREATE TABLE/VIEW/CATALOG/DATABASE、USE 和 INSERT INTO/OVERWRITE；SET 请填写到运行配置，暂不支持"
-                + " SELECT 结果预览或 SQL Client 命令");
+            "支持 CREATE TABLE/VIEW/CATALOG/DATABASE、USE 和 INSERT INTO/OVERWRITE；"
+                + (queries ? "验证还支持 SELECT / WITH / VALUES 查询；" : "Application 发布必须包含 INSERT，SELECT / WITH / VALUES 查询请使用 SQL 验证；")
+                + "SET 请填写到运行配置，不支持 SQL Client 命令");
     }
     if (inserts + reads == 0) fail(queries ? "至少需要一条 INSERT 或 SELECT 查询" : "至少需要一条 INSERT 写入语句");
     if (statements.size() > 100) fail("基础版最多支持 100 条语句");

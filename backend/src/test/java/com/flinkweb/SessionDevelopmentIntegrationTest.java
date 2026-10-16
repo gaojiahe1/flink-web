@@ -708,6 +708,39 @@ class SessionDevelopmentIntegrationTest {
     return "FWV_EVENT|" + sequence + "|" + encoded.substring(1, encoded.length() - 1) + "\n";
   }
 
+  /** 100列可物化，超宽、旧文本和坏结构分别给出稳定原因且保留事件计数。 */
+  @Test
+  void verificationDistinguishesWideLegacyAndMalformedRows() {
+    startCluster();
+    var draft = draft();
+    String id = executions.submit(draft.path("id").asText(), 1, UUID.randomUUID().toString()).path("id").asText();
+    var managers = mapper.createObjectNode();
+    managers.putArray("taskmanagers").addObject().put("id", "tm-1");
+    when(rest.call(anyString(), eq("GET"), eq("/taskmanagers"), isNull())).thenReturn(managers);
+    var payload = mapper.createObjectNode().put("target", "wide");
+    var columns = payload.putArray("columns");
+    var cells = payload.putArray("cells");
+    payload.putArray("keys");
+    for (int n = 0; n < 100; n++) { columns.add("c" + n); cells.add("v"); }
+    String log = validationEvent(id, 1, 0, "+I", payload.toString());
+    columns.add("c100"); cells.add("v");
+    log += validationEvent(id, 2, 1, "+I", payload.toString());
+    log += validationEvent(id, 3, 2, "+I", "old,text");
+    log += validationEvent(id, 4, 3, "+I", "{\"columns\":[\"id\"],\"cells\":[]}");
+    log += validationEvent(id, 5, 4, "+I", "{broken");
+    payload.withArray("keys").add("missing");
+    log += validationEvent(id, 6, 5, "+I", payload.toString());
+    when(rest.validationLog(anyString(), eq("tm-1"), eq("sql-validation.log"))).thenReturn(log);
+    var rows = executions.status(id).path("rows");
+    assertThat(rows.size()).isEqualTo(6);
+    assertThat(rows.get(0).path("columns").size()).isEqualTo(100);
+    String[] expected = {"STRUCTURED", "TOO_WIDE", "LEGACY_TEXT", "INVALID_STRUCTURE", "INVALID_STRUCTURE", "INVALID_STRUCTURE"};
+    for (int n = 0; n < expected.length; n++) {
+      assertThat(rows.get(n).path("structureStatus").asText()).isEqualTo(expected[n]);
+      if (n > 0) assertThat(rows.get(n).has("columns")).isFalse();
+    }
+  }
+
   /** 部分文件成功后失败，恢复读取不能重复计入事件，相同值的后续事件仍保留。 */
   @Test
   void partialFileFailureKeepsRowsAndCursorConsistent() {
