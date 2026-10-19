@@ -133,9 +133,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 | 镜像（标签 0.0.4） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:f8f28304936c3315a0f0edd0ff7b205211fc754cd1deeb00d4bef24441e5d424 |
+| 192.168.68.1:5000/flink-web/app | sha256:bfc641b193e210f717eaacab5a3cefa8753d7eb302a1bf4d63487f01f91b46ab |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
-| 192.168.68.1:5000/flink-web/web | sha256:4b6d6dbd37c31a67ac57b88f92f7c3d5c013e281a81f872ad70cd24a1496eba4 |
+| 192.168.68.1:5000/flink-web/web | sha256:79c773658af815e4968d82544d21c9f78b041f2f3050d804d6ef7f730c5fd35a |
 
 2026-10-15 AI 健壮性/日志缓冲发布：app/web:0.0.4 已覆盖推送，不更新 latest/downloader。复用已发布 Kylin/JRE/Nginx 层，仅替换本轮完整验证的后端 JAR 和前端 dist；无数据库迁移或新增密钥。最终 app config 为 sha256:2de2377bbea1c4e631b3a5576ec219ea88b143d858e0f1489023944f64ff4248，web config 为 sha256:a773b337bb5ebdcf54d6520ba8189ef61a5343c2a26834cd542070726b5c7d48。经现有 registry 的 localhost:15000 映射推送，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要/config ID；远端 app20层/web18层的大小、压缩摘要和解压 diff ID 均与最终已测试镜像一致。
 
@@ -606,3 +606,11 @@ app/web:0.0.4 已覆盖发布，上表为本轮最新摘要；latest/downloader 
 app/web:0.0.4已覆盖发布，上表为最新manifest；通过同一registry的localhost:15000映射推送。复用原Kylin/JRE/Nginx运行层，替换已通过校验的后端JAR和前端产物；app config为 `sha256:2fae755bc534e9fd7a794214ebf7c68515a9d614c0ffd7def345805d9ba92319`，web config为 `sha256:51dfb11c883ab22b16c12f56a5dcb858797d65a80108679d03ff768c63340a18`。从指定192.168.68.1:5000核对manifest正文/响应摘要、config以及全部24/23层大小、压缩SHA-256和解压diff_id一致。本轮不改Runner/Parser、latest、downloader或实际Kubernetes工作负载；已有Pod需按授权流程重新拉取平台镜像，旧Runner升级规则继续适用。
 
 需求变化后第四步重新禁用；长SQL显示截断与完整审阅入口；超100列提示减少字段，旧协议提示重新选择新版Runner，损坏结构提示检查日志；SELECT/CTE/VALUES可验证，CTAS在基础检查提前拒绝。后端235项、最终Web25项及实际镜像/代理校验范围见 [本轮验收](agent/validation.md#ai-与-sql-五项修复2026-10-16)，不代表真实厂商或生产集群新增认证。
+
+## AI 准备取消与结果标识发布（2026-10-19）
+
+app/web:0.0.4已覆盖推送，最新manifest见上表；保留Kylin/JRE/Nginx原运行层，仅替换本次通过校验的后端JAR和前端产物。app config `sha256:03c1fcfd0eb000367cac36710a17b2d6b20f5760e5f7749d65b25f90351fc34d`，web config `sha256:22e2041b6f3b1013f25eac04e932927e04ae80ed42544aaa99e987377b90319c`，均linux/amd64、UID/GID10001。沿用原registry的localhost:15000映射推送，从指定192.168.68.1:5000核对manifest正文/响应摘要、config及各25层大小、压缩SHA-256和解压diff_id均一致；不改latest/downloader、Runner/Parser分发文件或现场Kubernetes工作负载，既有Pod需按授权流程重新拉取平台镜像。
+
+本轮发现Docker切到C盘默认目录和containerd模式，用户明确要求恢复并提供原目录。原磁盘为 `D:\DevTools\docker\DockerDesktopWSL\disk\docker_data.vhdx`；settings-store.json的CustomWslDistroDir引用其父目录 `D:\DevTools\docker\DockerDesktopWSL`，UseContainerdSnapshotter=false恢复原overlay2存储。先正常停止再修改设置/重启，旧镜像和容器数据已恢复，未移动/覆盖磁盘。沿用已有registry容器及 `D:\DevTools\registry` 绑定目录、127.0.0.1:15000映射；原192.168.68.1:5000到15000的端口转发保留，指定仓库/v2/恢复200。Docker发布环境恢复不等于更新任何Flink/Kubernetes工作负载。
+
+后端237项中236通过、可选MinIO跳过；最终Web26项及真实镜像登录/正常AI单次调用/Parser、代理回归通过。准备阶段取消零调用、1000条事件结果一致和计算量测量的详细范围见 [本轮验收](agent/validation.md#ai-准备阶段取消与结果标识优化2026-10-19)。

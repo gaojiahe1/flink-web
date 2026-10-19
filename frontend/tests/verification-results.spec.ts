@@ -48,6 +48,37 @@ test('旧文本不猜测字段，无法匹配的撤回明确提示结果范围',
   ).toContain('未匹配')
 })
 
+test('1000条混合事件保留主键更新、多重集及未匹配撤回语义', () => {
+  const events: VerificationEvent[] = []
+  const add = (sink: number, kind: string, id: number, value: string) =>
+    events.push({
+      sink,
+      kind,
+      columns: ['id', 'payload'],
+      cells: [String(id), value],
+      keys: sink === 1 ? ['id'] : [],
+      target: 'output-' + sink,
+    })
+  for (let id = 0; id < 100; id++) {
+    add(1, '+I', id, 'old')
+    add(1, '-U', id, 'old')
+    add(1, '+U', id, 'new')
+    add(1, '+I', id, 'final')
+    add(1, '-D', id, 'final')
+    add(1, '+I', id, 'kept')
+    add(2, '+I', id, 'duplicate')
+    add(2, '+I', id, 'duplicate')
+    add(2, '-D', id, 'duplicate')
+    add(2, '-U', id, 'missing')
+  }
+  expect(events).toHaveLength(1000)
+  const tables = materializeVerification(events)
+  expect(tables[0].rows).toEqual(Array.from({ length: 100 }, (_, id) => [String(id), 'kept']))
+  expect(tables[0].warning).toBe('')
+  expect(tables[1].rows).toEqual(Array.from({ length: 100 }, (_, id) => [String(id), 'duplicate']))
+  expect(tables[1].warning).toContain('未匹配')
+})
+
 test('宽表、旧 Runner 与异常结构提供各自的解决提示', () => {
   const wide = (count: number): VerificationEvent => ({
     sink: 1,

@@ -77,7 +77,8 @@ export function materializeVerification(events: VerificationEvent[]): Verificati
     const keyed = keys.length > 0 && keyIndexes.every((index) => index >= 0)
     const identity = (row: (string | null)[]) =>
       JSON.stringify(keyed ? keyIndexes.map((index) => row[index]) : row)
-    const index = table.rows.findIndex((row) => identity(row) === identity(event.cells!))
+    const eventIdentity = identity(event.cells)
+    const index = table.rows.findIndex((row) => identity(row) === eventIdentity)
     if (event.kind === '-D' || event.kind === '-U') {
       if (index >= 0) table.rows.splice(index, 1)
       else table.warning = '采集范围中存在未匹配的撤回或删除，当前结果仅反映已接收的数据。'

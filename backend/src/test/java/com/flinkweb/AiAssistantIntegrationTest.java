@@ -22,6 +22,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +35,7 @@ import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.*;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** 使用真实 SQLite、加密和本地模型协议替身验证完整 AI 安全与产物链路。 */
@@ -60,7 +64,7 @@ class AiAssistantIntegrationTest {
   @Autowired RecordRepository records;
   @Autowired SecretTransportService transport;
   @Autowired AiContentGuard guard;
-  @Autowired AiModelClient client;
+  @MockitoSpyBean AiModelClient client;
   @MockitoBean DiagnosticService diagnostics;
   @MockitoBean JobService jobs;
   String modelId;
@@ -357,6 +361,54 @@ class AiAssistantIntegrationTest {
     delay.set(0);
     assertThat(await(tasks.create(request()).path("id").asText()).path("state").asText())
         .isEqualTo("SUCCEEDED");
+  }
+
+  /** 准备过程即使吞掉或保留中断，取消后恢复也不能进入模型调用边界。 */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void cancellationDuringPreparationMakesZeroModelCalls(boolean restoreInterrupt) throws Exception {
+    String jobId = "job-" + UUID.randomUUID();
+    when(jobs.get(jobId)).thenReturn(
+        new JobDraft(jobId, "orders", "", "1.20.5", "", 1, Instant.now(), Instant.now()));
+    var entered = new CountDownLatch(1);
+    var resume = new CountDownLatch(1);
+    when(diagnostics.inspect(jobId)).thenAnswer(invocation -> {
+      entered.countDown();
+      boolean interrupted = false;
+      while (true) {
+        try {
+          if (!resume.await(5, TimeUnit.SECONDS)) throw new AssertionError("prepare was not resumed");
+          break;
+        } catch (InterruptedException ignored) {
+          interrupted = true;
+        }
+      }
+      if (interrupted && restoreInterrupt) Thread.currentThread().interrupt();
+      return mapper.createObjectNode().put("error", "synthetic diagnostic");
+    });
+    var input = mapper.createObjectNode().put("kind", "diagnosis").put("modelId", modelId)
+        .put("jobId", jobId).put("requestId", UUID.randomUUID().toString());
+    int before = calls.get();
+    var executor = (ThreadPoolExecutor) org.springframework.test.util.ReflectionTestUtils.getField(tasks, "executor");
+    String id = tasks.create(input).path("id").asText();
+    try {
+      assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(tasks.get(id).path("state").asText()).isEqualTo("RUNNING");
+      assertThat(tasks.cancel(id).path("state").asText()).isEqualTo("CANCELED");
+    } finally {
+      resume.countDown();
+    }
+    org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+        .until(() -> executor.getActiveCount() == 0);
+    verify(client, never()).complete(any(), anyString(), anyString(), anyString());
+    assertThat(calls.get()).isEqualTo(before);
+    var canceled = tasks.get(id);
+    assertThat(canceled.path("state").asText()).isEqualTo("CANCELED");
+    assertThat(canceled.has("result")).isFalse();
+    // 取消后的新任务仍能正常调用。
+    assertThat(await(tasks.create(request()).path("id").asText()).path("state").asText())
+        .isEqualTo("SUCCEEDED");
+    assertThat(calls.get()).isEqualTo(before + 1);
   }
 
   /** 其他用户不能通过任务标识读取或取消产物。 */

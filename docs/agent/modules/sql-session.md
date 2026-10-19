@@ -1,6 +1,6 @@
 # SQL 与 Session
 
-更新：2026-10-16。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-19。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
@@ -66,3 +66,7 @@ SQL 提示参考 [Flink2.3 SQL](https://nightlies.apache.org/flink/flink-docs-re
 ## 结果原因与验证范围修复（2026-10-16）
 
 事件增加可选 structureStatus=STRUCTURED/TOO_WIDE/LEGACY_TEXT/INVALID_STRUCTURE。后端完整核对列、单元格及主键后保留100列结构上限，超宽仍计入事件数；前端分别引导减少字段、更新旧Runner、排查异常结构，兼容未携带新状态的事件，不猜测旧文本。基础验证遮蔽引用内容后提前拒绝CTAS，SELECT/CTE/VALUES仍可验证，Application规则保留；Runner本轮未改。验证见 [本轮验收](../validation.md#ai-与-sql-五项修复2026-10-16)。
+
+## 结果事件标识预计算（2026-10-19）
+
+materializeVerification在候选行扫描前计算一次eventIdentity，候选行继续按原顺序/主键或整行标识匹配；未增加跨事件缓存。1000条唯一插入与1000条混合事件均与原HEAD实现结果完全一致，序列化次数和累计输出字符下降，不能外推实际生产延迟或堆占用。新增混合主键更新、无主键重复、匹配及未匹配撤回回归。测量范围见 [本次验收](../validation.md#ai-准备阶段取消与结果标识优化2026-10-19)。

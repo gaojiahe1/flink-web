@@ -268,7 +268,13 @@ public class AiTaskServiceImpl implements AiTaskService {
                           + " 统一合并。explain时dml为空。不可改变已确认时间、窗口、输出和重复处理语义。"
                           + " spec.bindings明确source/lookup/sink角色，只能写入sink。pattern=transform不添加窗口，lookup按需求关联维表，window使用确认的事件时间和滚动窗口。"
                           + " upstream仅是用户确认的去重保证，keep不增加去重逻辑。未知业务口径列入unknowns。");
-      var result = client.complete(model, models.key(model), system, context.toString());
+      String apiKey = models.key(model), requestContext = context.toString();
+      synchronized (taskLock) {
+        // 准备阶段可能跨越远端诊断/日志读取，不能仅依赖协作者响应线程中断。
+        if (Thread.currentThread().isInterrupted()
+            || !records.require("ai_tasks", id).path("state").asText().equals("RUNNING")) return;
+      }
+      var result = client.complete(model, apiKey, system, requestContext);
       if (result.toString().getBytes(StandardCharsets.UTF_8).length > 65536)
         fail("AI_RESULT_TOO_LARGE", "模型输出过长，请缩小范围");
       guard.requireSafe(result.toString());
