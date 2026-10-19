@@ -28,15 +28,8 @@ async function formatSql() {
   const original = view.state.doc.toString()
   formatError.value = ''
   try {
-    const { format } = await import('sql-formatter')
-    const { sameSqlTokens } = await import('../../utils/sqlEditing')
-    const formatted = format(original, {
-      language: 'sql',
-      tabWidth: 2,
-      keywordCase: 'preserve',
-      linesBetweenQueries: 1,
-    })
-    if (!sameSqlTokens(original, formatted)) throw new Error('格式化改变了 SQL token')
+    const { formatFlinkSql } = await import('../../utils/sqlEditing')
+    const formatted = await formatFlinkSql(original)
     if (!disposed && view && !props.readonly && view.state.doc.toString() === original) {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: formatted },

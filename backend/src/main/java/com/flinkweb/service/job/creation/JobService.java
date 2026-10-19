@@ -18,6 +18,15 @@ public interface JobService {
   /** 校验 YAML 语法，在同一事务内新增草稿和审计记录。 */
   JobDraft create(DraftRequest request);
 
+  /** SQL 发布复用已经由该草稿占用的名称，不允许普通新建接口抢占。 */
+  JobDraft createSql(DraftRequest request, String sqlId);
+
+  /** 在同一事务中占用全局名称，数据库唯一键保护 SQL/JAR 并发创建。 */
+  void reserveName(String name, String owner);
+
+  /** 删除资源时只释放匹配归属的名称。 */
+  void releaseName(String name, String owner);
+
   /** 保持作业名称不变，校验 YAML 后以修订号更新草稿及审计。 */
   JobDraft update(String id, DraftRequest request);
 

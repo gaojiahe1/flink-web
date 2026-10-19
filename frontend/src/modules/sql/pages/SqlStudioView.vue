@@ -14,6 +14,7 @@ import {
   type ColumnDefinition,
 } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
+import SqlDraftCreateDialog from '../components/SqlDraftCreateDialog.vue'
 import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
 import SqlVerificationResults from '../components/SqlVerificationResults.vue'
 import type { WizardTable } from '../../ai/utils/wizard'
@@ -106,8 +107,6 @@ async function blurName() {
     error.value = showValidationError('作业名称校验失败，请重试', document)
   }
 }
-const example =
-  "-- 数据生成 → 控制台输出；运行镜像需包含 datagen / print 连接器\nCREATE TEMPORARY TABLE source_events (\n  id BIGINT,\n  payload STRING\n) WITH (\n  'connector' = 'datagen',\n  'rows-per-second' = '1'\n);\n\nCREATE TEMPORARY TABLE sink_events (\n  id BIGINT,\n  payload STRING\n) WITH ('connector' = 'print');\n\nINSERT INTO sink_events\nSELECT id, payload FROM source_events;"
 const initialRuntime = (): Runtime => ({
   baseYaml: '',
   deploymentYaml: '',
@@ -123,12 +122,14 @@ const initialRuntime = (): Runtime => ({
   slots: 1,
   jmMemory: '1024m',
   tmMemory: '2048m',
-  upgradeMode: 'savepoint',
+  upgradeMode: 'stateless',
   dependencyArtifactIds: [],
   flinkConfiguration: {},
   ...emptyPodTemplates(),
 })
-const form = reactive({ name: '', description: '', sql: example, revision: 0 })
+const form = reactive({ name: '', description: '', sql: '', revision: 0 })
+const creating = ref(false),
+  newRuntime = ref<Runtime>()
 const runtime = reactive<Runtime>(initialRuntime())
 const podOptions = computed<PodTemplateOptions>({
   get: () => ({
@@ -168,12 +169,15 @@ let resizeObserver: ResizeObserver | undefined
 let resizeStart = { x: 0, width: 0 }
 function clampInspector(width = inspectorWidth.value) {
   const element = workbench.value
-  if (!element) return
+  if (!element || element.clientWidth < 610 || window.innerWidth <= 1000) return
   const explorer =
     sideTab.value === 'ai'
       ? 0
       : parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
-  inspectorMax.value = Math.max(300, Math.min(860, element.clientWidth - explorer - 42 - 8 - 320))
+  inspectorMax.value = Math.max(
+    300,
+    Math.min(sideTab.value === 'ai' ? 1400 : 860, element.clientWidth - explorer - 42 - 8 - 260),
+  )
   inspectorWidth.value = Math.round(Math.min(inspectorMax.value, Math.max(300, width)))
 }
 function startResize(event: PointerEvent) {
@@ -204,7 +208,7 @@ function resizeWithKeys(event: KeyboardEvent) {
 function resetInspector() {
   clampInspector(
     sideTab.value === 'ai'
-      ? ((workbench.value?.clientWidth || 1000) - 50) / 2
+      ? ((workbench.value?.clientWidth || 1000) - 50) * (aiStep.value === 1 ? 0.7 : 0.3)
       : Math.min(380, Math.max(300, window.innerWidth * 0.26)),
   )
 }
@@ -285,12 +289,22 @@ const aiContextVersion = ref(0)
 const aiStep = ref(1)
 const aiAssistant = ref<InstanceType<typeof AiSqlAssistant>>()
 const aiOpened = ref(false)
-const aiNavigation = ref([true, false, false, false])
+const aiNavigation = ref([true, false, false])
+const aiReview = ref<AiResult>(),
+  aiSqlCollapsed = ref(false)
+watch(aiStep, () => {
+  aiSqlCollapsed.value = false
+  void nextTick(resetInspector)
+})
 watch(sideTab, (value) => {
   if (value === 'ai') aiOpened.value = true
 })
 watch(
-  () => snapshot(),
+  () => {
+    const context = JSON.parse(snapshot())
+    delete context.value.form.revision
+    return JSON.stringify(context)
+  },
   () => {
     aiContextVersion.value++
   },
@@ -452,7 +466,7 @@ onMounted(async () => {
         : undefined
     if (requested) await open(requested, true)
     else if (route.query.draft) error.value = '对应 SQL 草稿不存在或没有访问权限'
-    else if (!editable.value && records.value[0]) await open(records.value[0], true)
+    else if (records.value[0]) await open(records.value[0], true)
   } catch (e) {
     error.value = showValidationError((e as Error).message)
   } finally {
@@ -504,22 +518,18 @@ async function reloadRestoredSql() {
 }
 async function create() {
   if (!(await mayDiscard())) return
-  selected.value = ''
-  stopListening()
-  verification.value = null
-  needsSession.value = false
-  linkedJob.value = ''
-  Object.assign(form, { name: '', description: '', sql: example, revision: 0 })
-  Object.assign(runtime, initialRuntime())
-  config.value = '{}'
-  pod.value = '{}'
-  configurationEditor.reset(runtime)
-  preview.value = ''
-  check.value = null
-  catalogPreview.value = ''
-  error.value = ''
-  message.value = ''
-  savedSnapshot.value = snapshot()
+  newRuntime.value = initialRuntime()
+  creating.value = true
+}
+async function created(id: string) {
+  creating.value = false
+  await run(async () => {
+    await load()
+    const record = await request<SqlDraft>('/api/sql/jobs/' + encodeURIComponent(id))
+    await open(record, true)
+    await router.replace({ query: { ...route.query, draft: id } })
+    message.value = '空白 SQL 草稿已创建，作业名称已锁定。'
+  })
 }
 async function applyPodTemplate() {
   const template = templates.value.find((t) => t.id === podTemplateId.value)
@@ -599,6 +609,7 @@ async function run(task: () => Promise<void>, fieldErrors = true) {
   }
 }
 function save() {
+  if (!selected.value) return create()
   return run(async () => {
     await persist()
     message.value = 'SQL 草稿已保存，运行中的作业不受影响。'
@@ -692,7 +703,7 @@ async function publish(deploy: boolean) {
       )
       if (result.state === 'ACCEPTED') await router.push('/jobs')
       else message.value = result.state + '：' + result.message
-    } else message.value = '已生成部署草稿。可前往作业管理部署、启停和创建快照。'
+    } else await router.push('/jobs')
   })
 }
 async function remove(record?: SqlDraft) {
@@ -828,7 +839,11 @@ watch(
     ><template #title>SQL 开发</template
     ><template #description>编写 SQL → SQL 检查 → 发布为 Application 作业</template
     ><template #actions
-      ><RouterLink class="button" to="/jobs">前往作业运维 ↗</RouterLink></template
+      ><span v-if="sideTab === 'ai' && selected" class="muted">{{ form.name }}</span>
+      <button v-if="sideTab === 'ai' && editable" class="button" :disabled="busy" @click="create">
+        新建 SQL 草稿
+      </button>
+      <RouterLink class="button" to="/jobs">前往作业运维 ↗</RouterLink></template
     ></PageHeader
   >
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
@@ -840,7 +855,7 @@ watch(
   </div>
   <nav v-if="sideTab === 'ai'" class="sql-wizard-steps" aria-label="SQL 需求向导">
     <button
-      v-for="(label, index) in ['选择数据', '确认需求', '查看 SQL', '检查与保存']"
+      v-for="(label, index) in ['确认需求', '查看 SQL', '检查和保存']"
       :key="label"
       :class="{ active: aiStep === index + 1 }"
       :aria-current="aiStep === index + 1 ? 'step' : undefined"
@@ -858,6 +873,7 @@ watch(
     :class="{
       'with-inspector': !!sideTab,
       'ai-guided': sideTab === 'ai',
+      'sql-preview-collapsed': sideTab === 'ai' && aiSqlCollapsed,
       'explorer-collapsed': explorerCollapsed,
       'studio-maximized': maximized,
       'inspector-resizing': resizing,
@@ -896,7 +912,7 @@ watch(
         <div class="sql-file-list" aria-label="SQL 草稿列表">
           <p v-if="loading" class="muted">正在加载…</p>
           <p v-else-if="!filtered.length" class="muted empty-tree">
-            暂无草稿<br />从右侧编辑器开始创建
+            暂无草稿<br />点击新建并确认名称
           </p>
           <div v-for="record in filtered" :key="record.id" class="sql-file-row">
             <button
@@ -938,7 +954,7 @@ watch(
           </button></span
         >
       </div>
-      <div class="sql-toolbar">
+      <div v-if="sideTab !== 'ai' || aiStep === 3" class="sql-toolbar">
         <div class="toolbar-actions">
           <button
             v-if="editable"
@@ -986,7 +1002,7 @@ watch(
         </div>
         <span class="muted">{{ bytes.toLocaleString() }} / 32,768 B</span>
       </div>
-      <div class="catalog-context">
+      <div v-if="sideTab !== 'ai' || aiStep === 3" class="catalog-context">
         <label
           >当前 Catalog<select
             data-field="catalogId"
@@ -1024,16 +1040,30 @@ watch(
           格式化 SQL
         </button>
       </div>
+      <div
+        v-if="sideTab === 'ai' && aiStep === 2 && aiReview?.sql"
+        class="notice sql-review-notice"
+      >
+        AI 建议 SQL · 仅供审阅，尚未应用到草稿
+      </div>
       <CodeEditor
+        v-if="sideTab === 'ai' && aiStep === 2 && aiReview?.sql"
+        :model-value="aiReview.sql"
+        language="sql"
+        label="AI 建议 SQL"
+        readonly
+      />
+      <CodeEditor
+        v-else
         ref="sqlEditor"
         data-field="sql"
         v-model="form.sql"
         language="sql"
         label="SQL 编辑器"
-        :readonly="!editable || loading || busy"
+        :readonly="!editable || !selected || loading || busy || (sideTab === 'ai' && aiStep === 2)"
         @update:model-value="check = null"
       />
-      <div class="sql-diagnostics">
+      <div v-if="sideTab !== 'ai' || aiStep === 3" class="sql-diagnostics">
         <div class="diagnostic-heading">
           检查结果 <span v-if="check" class="badge">{{ check.level }}</span>
         </div>
@@ -1054,8 +1084,8 @@ watch(
             SQL 检查使用平台内置的精确版本语法验证器，检查结果为 PARSER；没有对应版本时显示 BASIC。
           </p>
           <p>
-            SQL Runner 用于实际执行 SQL。先在部署配置选择
-            Runner，再生成部署草稿或部署并启动；运行状态和日志在作业管理查看。
+            SQL Runner 默认使用共享目录 artifacts/shared/sql-runner/flink-web-sql-runner.jar。
+            可以显式选择其他 Runner；生成部署草稿或部署并启动后在作业列表查看。
           </p>
           <p>
             试运行使用 SQL 验证：管理员先配置并启动与 SQL 镜像相同的 SQL 验证专用
@@ -1146,8 +1176,8 @@ watch(
             pattern="[a-z0-9]([\-a-z0-9]*[a-z0-9])?"
             placeholder="orders-sql"
             maxlength="63"
-            :disabled="!!selected" /><HelpTip
-            text="小写字母、数字、连字符；名称唯一，发布后自动分配编号，资源名为 flink-编号。"
+            disabled /><HelpTip
+            text="名称在新建草稿时确认且全局唯一，之后不可修改。发布后自动分配编号，资源名为 flink-编号。"
         /></label>
         <label
           >描述<input
@@ -1232,6 +1262,10 @@ watch(
           >
           <details class="runtime-advanced">
             <summary>程序与依赖及 Flink 配置</summary>
+            <p class="muted">
+              未覆盖 Runner 时，默认使用共享目录
+              artifacts/shared/sql-runner/flink-web-sql-runner.jar；请确保文件已上传。
+            </p>
             <ArtifactPicker
               data-field="runnerArtifactId"
               v-model="runtime.runnerArtifactId"
@@ -1388,8 +1422,11 @@ watch(
       :flink-version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || ''"
       :context-key="aiContextVersion"
       :editable="!!editable && !busy && !loading"
-      :sources="sources"
+      :sql-collapsed="aiSqlCollapsed"
       @close="sideTab = ''"
+      @create="create"
+      @toggle-sql="aiSqlCollapsed = !aiSqlCollapsed"
+      @review="aiReview = $event"
       @apply="applyAiSuggestion"
       @check="validate"
       @save="save"
@@ -1433,6 +1470,12 @@ watch(
       </button>
     </nav>
   </section>
+  <SqlDraftCreateDialog
+    v-if="creating && newRuntime"
+    :runtime="newRuntime"
+    @close="creating = false"
+    @created="created"
+  />
   <SqlVerificationResults
     v-if="verification"
     :key="verification.id"

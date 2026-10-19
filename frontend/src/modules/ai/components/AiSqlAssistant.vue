@@ -1,21 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { Sparkles, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import forge from 'node-forge'
+import { ArrowUp, Check, ChevronRight, MessageSquare, Sparkles, X } from '@lucide/vue'
 import AiModelSelect from './AiModelSelect.vue'
 import AiResultReport from './AiResultReport.vue'
-import AiDataDefinitionEditor from './AiDataDefinitionEditor.vue'
+import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
-import { aiApi, type AiModel, type AiResult, type AiTask } from '../api/ai'
+import { aiApi, type AiConversation, type AiModel, type AiResult, type AiTask } from '../api/ai'
 import { useAiTask } from '../composables/useAiTask'
-import { mergeDefinitions, validateDefinitions } from '../utils/definitions'
-import {
-  initialRole,
-  roleLabel,
-  wizardDataIssues,
-  type TableRole,
-  type WizardPattern,
-  type WizardTable,
-} from '../utils/wizard'
+import { requestId } from '../../../shared/utils/requestId'
+
 const props = defineProps<{
   sql: string
   sqlId: string
@@ -26,1153 +20,934 @@ const props = defineProps<{
   dirty?: boolean
   active?: boolean
   canVerify?: boolean
-  sources: (WizardTable & { id: string; name: string })[]
+  sqlCollapsed?: boolean
 }>()
 const emit = defineEmits<{
   close: []
+  create: []
   apply: [AiResult, number, (success: boolean) => void]
+  review: [AiResult | undefined]
   check: []
   save: []
   run: []
   navigation: [boolean[]]
+  'toggle-sql': []
 }>()
 const step = defineModel<number>('step', { default: 1 })
-const followup = ref('')
-const selectedTables = computed(() => props.sources.filter((s) => sourceIds.value.includes(s.id)))
-function nextStep(value: number) {
-  if (
-    value === 2 &&
-    mode.value !== 'explain' &&
-    mode.value !== 'definition' &&
-    dataIssues.value.length
-  ) {
-    localError.value = dataIssues.value.join('；')
-    return
-  }
-  if (value === 3 && !result.value) return
-  if (value === 4 && !applied.value) return
-  step.value = value
-  tab.value = 'conversation'
-}
-defineExpose({ nextStep })
-function chooseMode(value: string) {
-  mode.value = value
-  nextStep(2)
-}
-function applySql() {
-  if (result.value && canApply.value) {
-    applying.value = true
-    emit('apply', result.value, base.value, (success) => {
-      applying.value = false
-      if (success) {
-        appliedTask.value = task.value?.id || ''
-        appliedVersion.value = props.contextKey
-        nextStep(4)
-      }
-    })
-  }
-}
-async function refine() {
-  if (!followup.value.trim()) return
-  instruction.value += '\n补充需求：' + followup.value
-  followup.value = ''
-  nextStep(2)
-  compiledMessage.value = '补充已加入需求，请重新确认后生成；当前 SQL 保持不变。'
-}
+const conversation = ref<AiConversation>()
 const modelId = ref(''),
   selectedModel = ref<AiModel>(),
   allowExternal = ref(false)
-const mode = ref('generate'),
-  tab = ref('conversation'),
-  instruction = ref('')
-const sourceIds = ref<string[]>([]),
-  definitionsText = ref('[]'),
-  localError = ref('')
-const windowMinutes = ref(5),
-  eventTime = ref(''),
-  dedup = ref(''),
-  startPosition = ref('latest-offset')
-const pattern = ref<WizardPattern>('transform'),
-  timezone = ref('Asia/Shanghai')
-const roles = ref<Record<string, TableRole>>({})
-const applying = ref(false),
-  appliedTask = ref(''),
+const input = ref(''),
+  mode = ref<'requirement' | 'error'>('requirement')
+const localError = ref(''),
+  note = ref(''),
+  loading = ref(false),
+  mutation = ref(false)
+const editingSummary = ref(false),
+  summaryText = ref(''),
+  applying = ref(false)
+const suggestion = ref<AiTask>(),
+  baseline = ref(-1),
   appliedVersion = ref(-1)
-const applied = computed(() => !!appliedTask.value && appliedVersion.value === props.contextKey)
-const localTables = computed(() => {
-  try {
-    return definitions() as unknown as WizardTable[]
-  } catch {
-    return []
-  }
-})
-const allTables = computed(() => [...selectedTables.value, ...localTables.value])
-const tableRole = (table: WizardTable) =>
-  roles.value[table.tableName] ?? initialRole(table.connectorType)
-const dataIssues = computed(() => {
-  try {
-    definitions()
-  } catch (cause) {
-    return [(cause as Error).message]
-  }
-  return wizardDataIssues(allTables.value, roles.value)
-})
-const timeChoices = computed(() =>
-  allTables.value.filter((table) => tableRole(table) === 'source' && table.watermarkColumn),
+const thread = ref<HTMLElement>(),
+  reviewDialog = ref<HTMLDialogElement>(),
+  showOriginal = ref(false)
+const { task, busy, error, uncertain, start, retry, cancel } = useAiTask()
+let epoch = 0,
+  loadVersion = 0,
+  disposed = false,
+  handled = '',
+  activeContext = -1
+let pendingMessage: { messageId: string; content: string; mode: string } | undefined
+const hash = (sql: string) => forge.md.sha256.create().update(sql, 'utf8').digest().toHex()
+const result = computed(() =>
+  suggestion.value?.state === 'SUCCEEDED' ? suggestion.value.result : undefined,
 )
-const specIssues = computed(() => {
-  const issues = [...dataIssues.value]
-  if (!dedup.value) issues.push('请确认重复数据处理方式')
-  if (pattern.value === 'lookup' && !allTables.value.some((table) => tableRole(table) === 'lookup'))
-    issues.push('维表打宽需要选择一张 JDBC 维表')
-  if (pattern.value === 'window') {
-    if (
-      !Number.isInteger(windowMinutes.value) ||
-      windowMinutes.value < 1 ||
-      windowMinutes.value > 1440
-    )
-      issues.push('窗口应为1–1440分钟的整数')
-    if (
-      !eventTime.value ||
-      !timeChoices.value.some(
-        (table) => table.tableName + '.' + table.watermarkColumn === eventTime.value,
-      )
-    )
-      issues.push('请选择输入表中已定义水位线的事件时间字段')
-  }
-  return issues
-})
-const { task, busy, error, uncertain, retry, start, cancel } = useAiTask()
-const history = ref<AiTask[]>([]),
-  base = ref(-1),
-  stale = ref(false),
-  compiledMessage = ref('')
-const statusLabels: Record<string, string> = {
-  QUEUED: '等待处理',
-  RUNNING: '正在调用模型',
-  SUCCEEDED: '已完成',
-  FAILED: '失败',
-  CANCELED: '已取消',
-}
-let contextVersion = 0,
-  compileRequest = 0,
-  historyRequest = 0,
-  disposed = false
-const result = computed(() => (task.value?.state === 'SUCCEEDED' ? task.value.result : undefined))
-watch(result, (value) => {
-  if (value && !stale.value && base.value === props.contextKey) {
-    step.value = 3
-    tab.value = 'conversation'
-  }
-})
-const purpose = computed(() => (mode.value === 'definition' ? 'definition' : 'sql'))
+const blocked = computed(() => loading.value || mutation.value || busy.value || !props.editable)
+const summaryCurrent = computed(
+  () =>
+    !!conversation.value?.summary &&
+    conversation.value.summaryVersion === conversation.value.contentVersion &&
+    conversation.value.summarySqlHash === hash(props.sql),
+)
+const applied = computed(
+  () =>
+    appliedVersion.value === props.contextKey &&
+    !!result.value?.sql &&
+    result.value.sql === props.sql,
+)
 const canApply = computed(
   () =>
     !!result.value?.sql &&
-    !stale.value &&
-    base.value === props.contextKey &&
-    props.editable &&
-    !busy.value &&
+    baseline.value === props.contextKey &&
+    result.value.baseSqlHash === hash(props.sql) &&
+    result.value.conversationVersion === conversation.value?.contentVersion &&
+    conversation.value?.confirmedVersion === conversation.value?.contentVersion &&
+    !blocked.value &&
     !applying.value,
 )
-watch(
-  [dataIssues, result, applied, mode],
-  () =>
-    emit('navigation', [
-      true,
-      !dataIssues.value.length || ['explain', 'definition'].includes(mode.value),
-      !!result.value,
-      applied.value,
-    ]),
-  { immediate: true },
+function nextStep(value: number) {
+  if ((value === 2 && !result.value?.sql) || (value === 3 && !applied.value)) return
+  step.value = value
+  emit('review', value === 2 && !showOriginal.value ? result.value : undefined)
+}
+defineExpose({ nextStep })
+watch([result, applied], () => emit('navigation', [true, !!result.value?.sql, applied.value]), {
+  immediate: true,
+})
+watch(step, (value) =>
+  emit('review', value === 2 && !showOriginal.value ? result.value : undefined),
 )
+watch(showOriginal, () =>
+  emit('review', step.value === 2 && !showOriginal.value ? result.value : undefined),
+)
+watch(
+  () => props.contextKey,
+  () => {
+    epoch++
+    baseline.value = -1
+    appliedVersion.value = -1
+    emit('review', undefined)
+    if (busy.value) void cancel()
+  },
+  { flush: 'sync' },
+)
+watch(modelId, () => {
+  allowExternal.value = false
+  epoch++
+  if (busy.value) void cancel()
+})
 watch(
   () => props.active,
   (active) => {
-    if (active === false && busy.value) invalidate()
+    if (active === false && busy.value) void cancel()
   },
 )
-const differences = computed(() => {
-  const old = props.sql.split('\n'),
-    next = (result.value?.sql || '').split('\n')
-  return Array.from({ length: Math.min(1000, Math.max(old.length, next.length)) }, (_, index) => ({
-    n: index + 1,
-    old: old[index] || '',
-    next: next[index] || '',
-    changed: old[index] !== next[index],
-  }))
-})
-const omittedDifferences = computed(() => {
-  const old = props.sql.split('\n'),
-    next = (result.value?.sql || '').split('\n')
-  let changed = 0
-  for (let index = 1000; index < Math.max(old.length, next.length); index++)
-    if (old[index] !== next[index]) changed++
-  return { lines: Math.max(0, Math.max(old.length, next.length) - 1000), changed }
-})
-const fullReview = ref(false)
-function invalidate() {
-  contextVersion++
-  appliedTask.value = ''
-  appliedVersion.value = -1
-  compiledMessage.value = ''
-  stale.value = true
-  if (busy.value) void cancel()
-}
-watch(() => props.contextKey, invalidate, { flush: 'sync' })
-watch(instruction, invalidate, { flush: 'sync' })
-watch(
-  [
-    sourceIds,
-    definitionsText,
-    windowMinutes,
-    eventTime,
-    dedup,
-    startPosition,
-    modelId,
-    mode,
-    roles,
-    pattern,
-    timezone,
-  ],
-  invalidate,
-  { deep: true, flush: 'sync' },
-)
-watch(purpose, () => {
-  modelId.value = ''
-  selectedModel.value = undefined
-  allowExternal.value = false
-})
-watch(modelId, () => {
-  allowExternal.value = false
-})
-function definitions() {
-  const value: unknown = JSON.parse(definitionsText.value)
-  validateDefinitions(value)
-  return value
-}
-function addDefinition(sink: boolean) {
+async function load(restore = false) {
+  if (!props.sqlId) return
+  const id = props.sqlId,
+    request = ++loadVersion
+  const current = () => !disposed && id === props.sqlId && request === loadVersion
+  loading.value = true
   try {
-    const value = definitions()
-    let name = sink ? 'sink_events' : 'source_events'
-    let suffix = 2
-    while (allTables.value.some((table) => table.tableName === name))
-      name = (sink ? 'sink_events_' : 'source_events_') + suffix++
-    value.push({
-      tableName: name,
-      connectorType: sink ? 'print' : 'kafka',
-      columns: [{ name: 'id', type: 'STRING', primaryKey: false, nullable: true }],
-      ...(sink
-        ? {}
-        : { brokers: '', topic: '', format: 'json', groupId: '', startupMode: 'latest-offset' }),
-    })
-    definitionsText.value = JSON.stringify(value, null, 2)
-    tab.value = 'definitions'
-  } catch (cause) {
-    localError.value = (cause as Error).message
-  }
-}
-async function compile() {
-  const version = contextVersion,
-    request = ++compileRequest
-  const current = () => !disposed && version === contextVersion && request === compileRequest
-  localError.value = ''
-  compiledMessage.value = ''
-  try {
-    const value = await aiApi.compile(definitions())
+    const value = await aiApi.conversation(id)
     if (!current()) return
-    compiledMessage.value = value.valid
-      ? '数据定义编译通过，尚未应用到 SQL 或登记为共享数据源。'
-      : value.pending.map((p) => p.table + '：' + p.message).join('\n')
+    if (!conversation.value || value.revision >= conversation.value.revision)
+      conversation.value = value
+    if (restore && value.lastSqlTaskId) {
+      const previous = await aiApi.task(value.lastSqlTaskId)
+      if (current() && previous.result?.conversationVersion === value.contentVersion) {
+        suggestion.value = previous
+        if (previous.result?.baseSqlHash === hash(props.sql)) baseline.value = props.contextKey
+        if (previous.result?.sql === props.sql && value.confirmedVersion === value.contentVersion)
+          appliedVersion.value = props.contextKey
+      }
+    }
+    await nextTick()
+    if (current() && thread.value) thread.value.scrollTop = thread.value.scrollHeight
   } catch (cause) {
     if (current()) localError.value = (cause as Error).message
+  } finally {
+    if (current()) loading.value = false
   }
-}
-async function send() {
-  localError.value = ''
-  try {
-    if (!modelId.value || !instruction.value.trim()) throw new Error('请选择模型并填写需求或问题')
-    if (mode.value !== 'explain' && mode.value !== 'definition' && specIssues.value.length)
-      throw new Error(specIssues.value.join('；'))
-    const value = definitions()
-    base.value = props.contextKey
-    stale.value = false
-    tab.value = 'conversation'
-    await start({
-      kind: purpose.value,
-      mode: mode.value,
-      modelId: modelId.value,
-      allowExternal: allowExternal.value,
-      instruction: instruction.value,
-      sql: props.sql,
-      sqlId: props.sqlId,
-      sourceIds: sourceIds.value,
-      definitions: value,
-      flinkVersion: props.flinkVersion,
-      spec:
-        mode.value === 'generate' || mode.value === 'repair'
-          ? {
-              workflowVersion: 2,
-              pattern: pattern.value,
-              timezone: timezone.value,
-              bindings: allTables.value.map((table) => ({
-                tableName: table.tableName,
-                role: tableRole(table),
-              })),
-              ...(pattern.value === 'window'
-                ? {
-                    eventTable: eventTime.value.split('.')[0],
-                    eventTime: eventTime.value.split('.').slice(1).join('.'),
-                    windowMinutes: windowMinutes.value,
-                    outputMode: 'window-close',
-                  }
-                : {}),
-              dedup: dedup.value,
-              startPosition: startPosition.value,
-            }
-          : {},
-    })
-  } catch (cause) {
-    localError.value = (cause as Error).message
-  }
-}
-function applyDefinitions() {
-  try {
-    const current = definitions()
-    const incoming = result.value?.definitions || []
-    // 已有非空连接参数优先，新增表和字段可合入；建议始终需要显式应用。
-    const merged = mergeDefinitions(current, incoming)
-    definitionsText.value = JSON.stringify(merged, null, 2)
-    tab.value = 'definitions'
-    compiledMessage.value = '已合入建议并保留原有非空参数，请检查字段并编译。'
-  } catch (cause) {
-    localError.value = (cause as Error).message
-  }
-}
-async function loadHistory() {
-  const version = contextVersion,
-    request = ++historyRequest,
-    sqlId = props.sqlId
-  const current = () =>
-    !disposed && version === contextVersion && request === historyRequest && sqlId === props.sqlId
-  try {
-    const value = await aiApi.history(sqlId)
-    if (current()) history.value = value
-  } catch (cause) {
-    if (current()) localError.value = (cause as Error).message
-  }
-}
-function showHistory() {
-  tab.value = 'history'
-  void loadHistory()
 }
 watch(
   () => props.sqlId,
   () => {
-    history.value = []
-    void loadHistory()
+    conversation.value = undefined
+    suggestion.value = undefined
+    step.value = 1
+    void load(true)
   },
+  { immediate: true },
 )
-onMounted(loadHistory)
+watch(task, async (value) => {
+  if (!value || !['SUCCEEDED', 'FAILED', 'CANCELED'].includes(value.state) || handled === value.id)
+    return
+  handled = value.id
+  const version = epoch,
+    valid = activeContext === epoch
+  await load()
+  if (disposed || version !== epoch || !valid) return
+  if (
+    value.state === 'SUCCEEDED' &&
+    value.result?.sql &&
+    value.result.conversationVersion === conversation.value?.contentVersion
+  ) {
+    suggestion.value = value
+    baseline.value = props.contextKey
+    showOriginal.value = false
+    nextStep(2)
+  }
+})
+function requireModel() {
+  if (!modelId.value) throw new Error('请选择可用的任务模型')
+  if (selectedModel.value?.external && !allowExternal.value)
+    throw new Error('请明确允许本次脱敏上下文发送到外部模型')
+}
+async function analyze(kind: 'chat' | 'explain' | 'generate' | 'repair') {
+  requireModel()
+  if (!conversation.value) throw new Error('请先创建并确认 SQL 草稿名称')
+  activeContext = epoch
+  await start({
+    kind: 'sql',
+    mode: kind,
+    modelId: modelId.value,
+    allowExternal: allowExternal.value,
+    sqlId: props.sqlId,
+    sql: props.sql,
+    flinkVersion: props.flinkVersion,
+    conversationVersion: conversation.value.contentVersion,
+  })
+}
+async function act(action: () => Promise<void>) {
+  if (mutation.value || loading.value) return
+  localError.value = ''
+  note.value = ''
+  mutation.value = true
+  try {
+    await action()
+  } catch (cause) {
+    localError.value = (cause as Error).message
+  } finally {
+    mutation.value = false
+  }
+}
+async function send(explain = false) {
+  if (blocked.value) return
+  await act(async () => {
+    requireModel()
+    if (!conversation.value) throw new Error('请先新建 SQL 草稿')
+    const content = explain
+      ? '请解释并整理当前 SQL，将逻辑和已有需求保存到本次会话总结。'
+      : input.value.trim()
+    if (!content) throw new Error('请填写需求或粘贴报错信息')
+    const messageMode = explain ? 'explain' : mode.value
+    if (
+      !pendingMessage ||
+      pendingMessage.content !== content ||
+      pendingMessage.mode !== messageMode
+    )
+      pendingMessage = { messageId: requestId(), content, mode: messageMode }
+    const version = epoch
+    const value = await aiApi.message(props.sqlId, {
+      ...pendingMessage,
+      revision: conversation.value.revision,
+    })
+    pendingMessage = undefined
+    if (disposed || version !== epoch) return
+    conversation.value = value
+    input.value = ''
+    suggestion.value = undefined
+    appliedVersion.value = -1
+    step.value = 1
+    await analyze(explain ? 'explain' : 'chat')
+  })
+}
+async function summarize() {
+  if (!blocked.value) await act(() => analyze('chat'))
+}
+async function confirmAndGenerate() {
+  if (blocked.value || !summaryCurrent.value || editingSummary.value) return
+  await act(async () => {
+    requireModel()
+    const version = epoch
+    const value = await aiApi.confirm(props.sqlId, {
+      revision: conversation.value!.revision,
+      sql: props.sql,
+    })
+    if (disposed || version !== epoch) return
+    conversation.value = value
+    await analyze(
+      conversation.value.messages.filter((m) => m.role === 'user').at(-1)?.mode === 'error'
+        ? 'repair'
+        : 'generate',
+    )
+  })
+}
+async function saveSummary() {
+  await act(async () => {
+    const version = epoch
+    const value = await aiApi.summary(props.sqlId, {
+      revision: conversation.value!.revision,
+      summary: summaryText.value,
+      sql: props.sql,
+    })
+    if (disposed || version !== epoch) return
+    conversation.value = value
+    editingSummary.value = false
+    suggestion.value = undefined
+    appliedVersion.value = -1
+    note.value = '总结已保存，请核对并重新确认。'
+  })
+}
+function editSummary() {
+  summaryText.value = conversation.value?.summary || ''
+  editingSummary.value = true
+}
+function applySql() {
+  if (!result.value || !canApply.value) return
+  applying.value = true
+  emit('apply', result.value, baseline.value, (success) => {
+    applying.value = false
+    if (success) {
+      appliedVersion.value = props.contextKey
+      nextStep(3)
+    }
+  })
+}
 onBeforeUnmount(() => {
   disposed = true
-  contextVersion++
+  epoch++
+  loadVersion++
+  emit('review', undefined)
 })
 </script>
 <template>
   <aside class="sql-runtime ai-sql-panel">
-    <div class="field-heading">
-      <div>
-        <h3>
-          <Sparkles :size="17" />{{
-            ['选择数据', '需求确认', '查看 SQL 建议', '检查与保存'][step - 1]
-          }}
-        </h3>
-        <small class="muted">已选数据 · 语义确认 · SQL 建议</small>
-      </div>
-      <button class="text-button" aria-label="收起 AI 助手" @click="emit('close')">
-        <X :size="16" />
-      </button>
-    </div>
-    <AiModelSelect
-      :key="purpose"
-      v-model="modelId"
-      :purpose="purpose"
-      :disabled="busy"
-      @selected="selectedModel = $event"
-    />
-    <label v-if="selectedModel?.external" class="ai-check"
-      ><input v-model="allowExternal" type="checkbox" :disabled="busy" />允许将本次脱敏
-      SQL、表定义和需求发送到此外部模型</label
-    >
-    <div class="wizard-function-title">
-      <strong>SQL 需求向导</strong><span>选择数据 → 确认语义 → 审阅建议</span>
-    </div>
-    <div class="ai-modes" aria-label="辅助能力">
-      <button
-        v-for="item in [
-          { id: 'generate', label: '需求生成' },
-          { id: 'explain', label: '解释' },
-          { id: 'repair', label: '修复' },
-          { id: 'definition', label: '数据定义' },
-        ]"
-        :key="item.id"
-        class="button"
-        :class="{ active: mode === item.id }"
-        :disabled="busy"
-        @click="chooseMode(item.id)"
-      >
-        {{ item.label }}
-      </button>
-    </div>
-    <nav class="ai-tabs" aria-label="AI 产物">
-      <button
-        class="text-button"
-        :class="{ active: tab === 'conversation' }"
-        @click="tab = 'conversation'"
-      >
-        需求向导</button
-      ><button
-        class="text-button"
-        :class="{ active: tab === 'definitions' }"
-        @click="tab = 'definitions'"
-      >
-        数据定义</button
-      ><button class="text-button" @click="showHistory">生成记录</button>
-    </nav>
-    <div v-show="tab === 'conversation'" class="wizard-conversation">
-      <section v-show="step === 1" class="wizard-data">
-        <h4>这份作业从哪里读，写到哪里？</h4>
-        <p class="muted">选择数据后明确每张表的用途。角色仅用于本次需求，不修改共享数据源。</p>
-        <p v-if="!sources.length" class="empty-state">
-          暂无登记数据源，可先添加当前作业的数据定义。
-        </p>
-        <div
-          v-for="source in sources"
-          :key="source.id"
-          class="wizard-source"
-          :class="{ selected: sourceIds.includes(source.id) }"
-        >
-          <label
-            ><input
-              v-model="sourceIds"
-              :value="source.id"
-              type="checkbox"
-              :disabled="busy || !editable"
-            /><span
-              ><strong>{{ source.name }}</strong
-              ><small>{{ source.connectorType }} · {{ source.tableName }}</small></span
-            ></label
-          >
-          <label v-if="sourceIds.includes(source.id)" class="wizard-role"
-            >用途<select
-              :value="tableRole(source)"
-              :disabled="busy || !editable"
-              :aria-label="source.name + '的数据角色'"
-              @change="
-                roles[source.tableName] = ($event.target as HTMLSelectElement).value as TableRole
-              "
-            >
-              <option value="">请选择</option>
-              <option value="source" :disabled="source.connectorType === 'print'">输入表</option>
-              <option
-                value="lookup"
-                :disabled="!['mysql', 'postgresql'].includes(source.connectorType)"
-              >
-                维表
-              </option>
-              <option value="sink" :disabled="source.connectorType === 'datagen'">输出表</option>
-            </select></label
-          >
-        </div>
-        <div
-          v-for="(table, index) in localTables"
-          :key="'local-' + index"
-          class="wizard-local-table"
-        >
-          <span
-            >{{ table.tableName }}<small>当前作业定义 · {{ table.connectorType }}</small></span
-          ><select
-            :value="tableRole(table)"
-            :disabled="busy"
-            :aria-label="table.tableName + '的数据角色'"
-            @change="
-              roles[table.tableName] = ($event.target as HTMLSelectElement).value as TableRole
-            "
-          >
-            <option value="">请选择用途</option>
-            <option value="source">输入表</option>
-            <option value="lookup">维表</option>
-            <option value="sink">输出表</option>
-          </select>
-        </div>
-        <button class="text-button" @click="tab = 'definitions'">补充当前作业的数据定义</button>
-        <p v-if="dataIssues.length" class="wizard-pending">{{ dataIssues.join('；') }}</p>
-        <div class="wizard-actions">
-          <button
-            class="button primary"
-            :disabled="busy || !!dataIssues.length"
-            @click="nextStep(2)"
-          >
-            下一步：确认需求
-          </button>
-        </div>
-      </section>
-      <section v-show="step === 2" class="wizard-confirm">
-        <div v-if="selectedTables.length" class="wizard-source-tags">
-          <span v-for="source in selectedTables" :key="source.id"
-            >{{ roleLabel[tableRole(source) as keyof typeof roleLabel] || '待选用途' }} ·
-            {{ source.name }}</span
-          >
-        </div>
-        <label v-if="mode === 'generate' || mode === 'repair'"
-          >处理场景<select v-model="pattern" :disabled="busy" aria-label="处理场景">
-            <option value="transform">清洗转换：筛选、映射与明细同步</option>
-            <option value="lookup">维表打宽：关联 JDBC 维度</option>
-            <option value="window">窗口统计：按事件时间定期汇总</option>
-          </select></label
-        >
-        <label class="ai-prompt"
-          >{{
-            mode === 'explain'
-              ? '想了解什么'
-              : mode === 'repair'
-                ? '错误与修复目标'
-                : mode === 'definition'
-                  ? '描述输入、输出及字段'
-                  : '描述业务需求'
-          }}<textarea
-            v-model="instruction"
-            :disabled="busy"
-            maxlength="8000"
-            rows="3"
-            placeholder="描述统计口径、输入输出和时间要求，未知连接参数可后续补全。"
-          />
-        </label>
-        <p class="muted">生成器只编写转换逻辑；表结构、连接参数和密钥引用由已选定义编译。</p>
-        <section v-show="mode !== 'explain' && mode !== 'definition'" class="wizard-contract">
-          <header>
-            <strong>需求确认单</strong
-            ><span class="badge" :class="{ running: !specIssues.length }">{{
-              !specIssues.length ? '可确认生成' : '待补充'
-            }}</span>
-          </header>
-          <div class="wizard-contract-row">
-            <span>输入</span
-            ><span>{{
-              allTables
-                .filter((t) => tableRole(t) === 'source')
-                .map((t) => t.name || t.tableName)
-                .join('、')
-            }}</span
-            ><small>已选数据</small>
-          </div>
-          <div class="wizard-contract-row">
-            <span>输出表</span
-            ><span>{{
-              allTables
-                .filter((t) => tableRole(t) === 'sink')
-                .map((t) => t.name || t.tableName)
-                .join('、')
-            }}</span
-            ><small>已选目标</small>
-          </div>
-          <div class="wizard-contract-row" v-if="pattern === 'window'">
-            <label for="wizard-time">事件时间</label
-            ><select
-              id="wizard-time"
-              v-model="eventTime"
-              :disabled="busy"
-              aria-label="事件时间字段"
-            >
-              <option value="">请选择已登记水位线字段</option>
-              <option
-                v-for="table in timeChoices"
-                :key="table.tableName"
-                :value="table.tableName + '.' + table.watermarkColumn"
-              >
-                {{ table.tableName }}.{{ table.watermarkColumn }}
-              </option></select
-            ><small>输入定义</small>
-          </div>
-          <div class="wizard-contract-row" v-if="pattern === 'window'">
-            <label for="wizard-window">窗口</label
-            ><input
-              id="wizard-window"
-              v-model.number="windowMinutes"
-              :disabled="busy"
-              type="number"
-              min="1"
-              max="1440"
-              aria-label="窗口（分钟）"
-            /><small>分钟</small>
-          </div>
-          <div class="wizard-contract-row" v-if="pattern === 'window'">
-            <span>迟到</span
-            ><span
-              >{{
-                timeChoices.find((t) => t.tableName + '.' + t.watermarkColumn === eventTime)
-                  ?.watermarkDelaySeconds ?? '待选'
-              }}
-              秒；超出可能不计入窗口</span
-            ><small>水位线</small>
-          </div>
-          <div class="wizard-contract-row">
-            <span>输出方式</span
-            ><span>{{ pattern === 'window' ? '窗口结束后输出' : '持续输出符合需求的明细' }}</span
-            ><small>场景约束</small>
-          </div>
-          <div class="wizard-contract-row">
-            <label for="wizard-zone">时区</label
-            ><select id="wizard-zone" v-model="timezone" :disabled="busy">
-              <option value="Asia/Shanghai">Asia/Shanghai</option>
-              <option value="UTC">UTC</option></select
-            ><small>运行配置</small>
-          </div>
-          <div class="wizard-contract-row">
-            <label for="wizard-start">起始位置</label
-            ><select
-              id="wizard-start"
-              v-model="startPosition"
-              :disabled="busy"
-              aria-label="消费起始位置"
-            >
-              <option value="latest-offset">从最新消息</option>
-              <option value="earliest-offset">从最早消息</option>
-              <option value="group-offsets">沿用消费组位点</option></select
-            ><small>新启动生效</small>
-          </div>
-          <div class="wizard-contract-row">
-            <label for="wizard-dedup">重复数据</label
-            ><select id="wizard-dedup" v-model="dedup" :disabled="busy" aria-label="重复数据">
-              <option value="">请确认处理方式</option>
-              <option value="upstream">用户确认上游已去重</option>
-              <option value="keep">每条消息均计入</option></select
-            ><small>需确认</small>
-          </div>
-          <p v-if="specIssues.length" class="wizard-pending">{{ specIssues.join('；') }}</p>
-        </section>
-        <p v-if="compiledMessage" class="notice" role="status">{{ compiledMessage }}</p>
-        <div class="wizard-actions">
-          <button class="button" :disabled="busy" @click="nextStep(1)">上一步</button
-          ><button
-            class="button primary"
-            :disabled="
-              busy ||
-              !modelId ||
-              !editable ||
-              !instruction.trim() ||
-              (['generate', 'repair'].includes(mode) && !!specIssues.length) ||
-              (selectedModel?.external && !allowExternal)
-            "
-            @click="send"
-          >
-            {{
-              busy
-                ? '正在分析…'
-                : mode === 'definition'
-                  ? '起草 / 继续补充定义'
-                  : mode === 'generate'
-                    ? '确认并生成 SQL'
-                    : '发送'
-            }}
-          </button>
-        </div>
-      </section>
-      <section v-show="step === 3" class="wizard-suggestion">
-        <p v-if="!result" class="empty-state">确认需求后，SQL 建议和修改对比将在这里展示。</p>
-        <p v-if="stale && result" class="notice">
-          上下文或需求已改变，旧建议不可应用，请重新生成。
-        </p>
-        <AiResultReport v-if="result" :result="result" />
-        <details v-if="result?.spec" class="wizard-confirmed-spec">
-          <summary>查看本次生成使用的需求确认单</summary>
-          <pre class="ai-json">{{ JSON.stringify(result.spec, null, 2) }}</pre>
-        </details>
-        <template v-if="result?.sql"
-          ><details class="ai-suggestion" open>
-            <summary>SQL 修改对比</summary>
-            <template v-if="omittedDifferences.lines">
-              <p class="notice" role="status">
-                对比仅展示前 1000 行，后续 {{ omittedDifferences.lines }} 行中有
-                {{ omittedDifferences.changed }} 行修改未展示，请完整审阅后再应用。
-              </p>
-              <button class="button" @click="fullReview = !fullReview">
-                {{ fullReview ? '收起完整 SQL' : '审阅完整 SQL' }}
-              </button>
-              <div v-if="fullReview" class="ai-full-review">
-                <h4>当前完整 SQL</h4>
-                <CodeEditor :model-value="sql" language="sql" readonly label="当前完整 SQL" />
-                <h4>建议完整 SQL</h4>
-                <CodeEditor
-                  :model-value="result.sql"
-                  language="sql"
-                  readonly
-                  label="建议完整 SQL"
-                />
-              </div>
-            </template>
-            <div class="ai-diff" aria-label="AI SQL 修改对比">
-              <template v-for="line in differences" :key="line.n">
-                <pre v-if="line.changed && line.old" class="removed">− {{ line.old }}</pre>
-                <pre :class="{ added: line.changed }"
-                  >{{ line.changed ? '+' : ' ' }} {{ line.next }}</pre>
-              </template>
-            </div>
-          </details>
-          <button class="button primary" :disabled="!canApply" @click="applySql">
-            应用到编辑器
-          </button>
-          <p class="muted">先检查差异，再显式应用；应用后重新检查和验证。</p></template
-        >
-        <template v-if="result?.definitions"
-          ><details>
-            <summary>查看数据定义建议</summary>
-            <pre class="ai-json">{{ JSON.stringify(result.definitions, null, 2) }}</pre>
-          </details>
-          <button class="button" :disabled="stale || busy" @click="applyDefinitions">
-            应用数据定义建议
-          </button></template
-        >
-        <div class="wizard-actions">
-          <button class="button" :disabled="busy" @click="nextStep(2)">返回需求确认</button
-          ><button class="button" :disabled="!applied" @click="nextStep(4)">
-            下一步：检查与保存
-          </button>
-        </div>
-      </section>
-      <section v-show="step === 4" class="wizard-save">
-        <h4>检查当前 SQL 草稿</h4>
-        <p class="muted">
-          {{ checkSummary || '当前 SQL 尚未检查。应用 AI 建议后需要重新检查 SQL 和运行配置。' }}
-        </p>
-        <div class="wizard-actions">
-          <button class="button" :disabled="!editable || busy" @click="emit('check')">
-            检查当前 SQL</button
-          ><button class="button" :disabled="!editable || busy || !canVerify" @click="emit('run')">
-            运行验证</button
-          ><button class="button primary" :disabled="!editable || busy" @click="emit('save')">
-            保存当前草稿
-          </button>
-        </div>
-        <p class="muted">
-          {{ dirty ? '当前有未保存的编辑。' : '已保存后可返回 SQL 开发继续编辑。' }} SQL
-          检查不等于运行验证。
-        </p>
-        <button class="text-button" @click="nextStep(3)">返回查看 SQL 建议</button>
-      </section>
-      <div v-if="step === 2 || step === 3" class="wizard-followup">
-        <label
-          >继续补充需求<textarea
-            v-model="followup"
-            :disabled="busy"
-            rows="3"
-            placeholder="例如：只统计支付成功的订单…"
-          />
-        </label>
-        <div>
-          <small>仅使用已选表与字段</small
-          ><button
-            class="button primary"
-            :disabled="
-              busy ||
-              !editable ||
-              !followup.trim() ||
-              !modelId ||
-              (selectedModel?.external && !allowExternal)
-            "
-            @click="refine"
-          >
-            发送补充
-          </button>
-        </div>
-      </div>
-    </div>
-    <div v-show="tab === 'definitions'">
-      <p class="muted">这些定义仅属于当前作业，可补充字段、主键、水位线和 Connector 参数。</p>
-      <div class="toolbar-actions">
-        <button class="button" :disabled="busy" @click="addDefinition(false)">添加输入表</button
-        ><button class="button" :disabled="busy" @click="addDefinition(true)">添加输出表</button>
-      </div>
-      <AiDataDefinitionEditor v-model="definitionsText" :disabled="busy" />
-      <details>
-        <summary>高级 JSON 编辑</summary>
-        <label
-          >字段与 Connector 定义（JSON）<textarea
-            v-model="definitionsText"
-            :disabled="busy"
-            rows="18"
-            class="ai-json-input"
-            spellcheck="false"
-          />
-        </label>
-      </details>
-      <button class="button" :disabled="busy" @click="compile">编译定义并检查待补项</button>
-      <p v-if="compiledMessage" class="notice ai-prewrap" role="status">{{ compiledMessage }}</p>
-      <button class="button primary" :disabled="busy" @click="nextStep(2)">继续确认需求</button>
-    </div>
-    <div v-show="tab === 'history'">
-      <p v-if="!history.length" class="empty-state">暂无生成记录</p>
-      <details v-for="item in history" :key="item.id" class="ai-history">
-        <summary>{{ new Date(item.createdAt).toLocaleString() }} · {{ item.state }}</summary>
-        <p>{{ item.model }} · {{ item.message }}</p>
-        <AiResultReport v-if="item.result" :result="item.result" /><CodeEditor
-          v-if="item.result?.sql"
-          :model-value="item.result.sql"
-          language="sql"
-          readonly
-          label="历史 AI SQL 建议"
+    <div class="ai-panel-heading">
+      <h3>
+        <Sparkles :size="17" />{{ ['需求对话', '审阅 SQL 建议', '检查和保存'][step - 1]
+        }}<HelpTip
+          text="对话和需求总结按当前用户及 SQL 草稿保存，重新进入可以继续。模型建议不会自动保存、部署或执行。"
         />
-      </details>
+      </h3>
+      <div>
+        <button v-if="step === 1" class="text-button" @click="emit('toggle-sql')">
+          {{ sqlCollapsed ? '展开 SQL' : '收起 SQL' }}</button
+        ><button class="text-button" aria-label="收起 AI 助手" @click="emit('close')">
+          <X :size="16" />
+        </button>
+      </div>
     </div>
-    <div v-if="busy || task || uncertain" class="wizard-task-status">
-      <p v-if="task" class="muted" role="status">
-        {{ statusLabels[task.state] }} · {{ task.model }}
-      </p>
-      <button v-if="uncertain" class="button" @click="retry">核对原任务并重试</button
-      ><button v-if="busy" class="button" @click="cancel">取消任务</button>
-    </div>
-    <p v-if="localError || error" class="notice error ai-prewrap" role="alert">
+    <p v-if="localError || error" class="notice error ai-notice" role="alert">
       {{ localError || error }}
     </p>
-    <p class="ai-boundary">
-      每一步都可返回修改 · 保存后继续在 SQL 开发编辑。建议不会自动保存、发布或执行。
-    </p>
+    <p v-if="note" class="notice ai-notice" role="status">{{ note }}</p>
+    <div v-if="!sqlId" class="ai-empty">
+      <MessageSquare :size="26" />
+      <h4>先创建一份 SQL 草稿</h4>
+      <p>确认唯一名称后，即可开始并保存本次对话。</p>
+      <button class="button primary" @click="emit('create')">新建 SQL 草稿</button>
+    </div>
+    <template v-else>
+      <div v-if="busy || uncertain" class="ai-task-status" role="status">
+        <span>{{ uncertain ? '任务状态待核对' : 'AI 正在处理本次对话…' }}</span
+        ><button v-if="uncertain" class="text-button" @click="retry">核对原任务并重试</button
+        ><button class="text-button" @click="cancel">{{ uncertain ? '重试取消' : '取消' }}</button>
+      </div>
+      <div v-show="step === 1" class="ai-chat-body">
+        <div class="ai-chat-settings">
+          <AiModelSelect
+            v-model="modelId"
+            purpose="sql"
+            :disabled="blocked"
+            @selected="selectedModel = $event"
+          /><label v-if="selectedModel?.external" class="ai-external"
+            ><input
+              v-model="allowExternal"
+              type="checkbox"
+              :disabled="busy" />允许发送本次脱敏上下文<HelpTip
+              text="外部模型将读取当前会话和必要的 SQL。不要粘贴明文密码或令牌。"
+          /></label>
+        </div>
+        <div class="ai-conversation-state">
+          <span>{{
+            loading
+              ? '正在恢复会话…'
+              : conversation?.messages.length
+                ? '当前作业对话已保存'
+                : '尚无对话记录'
+          }}</span
+          ><button class="text-button" :disabled="loading || busy || mutation" @click="load(true)">
+            重新加载
+          </button>
+        </div>
+        <div ref="thread" class="ai-thread" aria-label="当前作业 AI 对话" aria-live="polite">
+          <div v-if="!conversation?.messages.length && !loading" class="ai-empty">
+            <MessageSquare :size="25" />
+            <h4>{{ sql.trim() ? '从现有 SQL 开始聊' : '从一句需求开始' }}</h4>
+            <p>
+              {{
+                sql.trim()
+                  ? '可以先解释和整理现有逻辑，或直接提出修改目标。'
+                  : '说明数据来源、输出和业务目标，AI 会继续与你确认细节。'
+              }}
+            </p>
+            <button v-if="sql.trim()" class="button" :disabled="blocked" @click="send(true)">
+              解释并整理当前 SQL
+            </button>
+          </div>
+          <article
+            v-for="message in conversation?.messages"
+            :key="message.id"
+            class="ai-chat-message"
+            :class="message.role"
+          >
+            <span class="ai-avatar">{{ message.role === 'user' ? '我' : 'AI' }}</span>
+            <div>
+              <div class="ai-message-meta">
+                {{ message.role === 'user' ? '你' : 'AI 助手'
+                }}<span v-if="message.mode === 'error'">报错分析</span>
+              </div>
+              <p>{{ message.content }}</p>
+            </div>
+          </article>
+        </div>
+        <section class="ai-inline-summary" aria-label="本次会话总结">
+          <div class="ai-summary-heading">
+            <strong>本次会话总结</strong
+            ><span class="badge">{{
+              !summaryCurrent
+                ? '待整理'
+                : conversation?.confirmedVersion === conversation?.contentVersion
+                  ? '已确认'
+                  : '待确认'
+            }}</span
+            ><HelpTip
+              text="总结综合本次会话的全部记录。请核对后确认，再生成或修改 SQL；继续补充或修改 SQL 会使旧确认与建议失效。"
+            /><button
+              v-if="conversation?.summary && !editingSummary"
+              class="text-button"
+              :disabled="blocked"
+              @click="editSummary"
+            >
+              修改总结
+            </button>
+          </div>
+          <textarea
+            v-if="editingSummary"
+            v-model="summaryText"
+            aria-label="编辑需求总结"
+            rows="5"
+            maxlength="8000"
+            :disabled="blocked"
+          />
+          <p v-else class="ai-summary-text">
+            {{ conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。' }}
+          </p>
+          <ul v-if="conversation?.unknowns.length" class="ai-unknowns">
+            <li v-for="item in conversation.unknowns" :key="item">待补充：{{ item }}</li>
+          </ul>
+          <div class="ai-summary-footer">
+            <span
+              ><Check v-if="conversation?.summary" :size="13" />{{
+                summaryCurrent ? '总结已保存' : '补充或 SQL 变化后需重新整理'
+              }}</span
+            ><template v-if="editingSummary"
+              ><button class="button" :disabled="mutation" @click="editingSummary = false">
+                取消修改</button
+              ><button
+                class="button primary"
+                :disabled="blocked || !summaryText.trim()"
+                @click="saveSummary"
+              >
+                保存总结
+              </button></template
+            ><template v-else
+              ><button
+                v-if="!summaryCurrent && conversation?.messages.length"
+                class="button"
+                :disabled="blocked"
+                @click="summarize"
+              >
+                整理本次对话</button
+              ><button
+                class="button primary"
+                :disabled="blocked || !summaryCurrent || !!conversation?.unknowns.length"
+                @click="confirmAndGenerate"
+              >
+                确认总结并{{ mode === 'error' ? '修改' : '生成' }} SQL<ChevronRight
+                  :size="14"
+                /></button
+            ></template>
+          </div>
+        </section>
+        <div class="ai-composer">
+          <div class="ai-compose-modes">
+            <button
+              class="text-button"
+              :class="{ active: mode === 'requirement' }"
+              @click="mode = 'requirement'"
+            >
+              补充需求</button
+            ><button
+              class="text-button"
+              :class="{ active: mode === 'error' }"
+              @click="mode = 'error'"
+            >
+              粘贴报错</button
+            ><button class="text-button" :disabled="blocked || !sql.trim()" @click="send(true)">
+              解释当前 SQL
+            </button>
+          </div>
+          <textarea
+            v-model="input"
+            :placeholder="
+              mode === 'error'
+                ? '粘贴 SQL 报错，并说明期望结果…'
+                : '继续补充需求，例如：只统计已支付订单，金额保留两位小数…'
+            "
+            aria-label="与 AI 对话"
+            rows="3"
+            maxlength="8000"
+            :disabled="!editable || mutation"
+            @keydown.ctrl.enter.prevent="send()"
+            @keydown.meta.enter.prevent="send()"
+          />
+          <div class="ai-compose-footer">
+            <span>可随时补充 · Ctrl / ⌘ + Enter 发送</span
+            ><button class="button primary" :disabled="blocked || !input.trim()" @click="send()">
+              发送<ArrowUp :size="14" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <section v-show="step === 2" class="ai-review-body">
+        <p class="muted">先审阅完整 SQL，再显式应用。生成不会修改当前编辑器。</p>
+        <h4>已确认的需求</h4>
+        <p class="ai-summary-text">{{ conversation?.summary }}</p>
+        <AiResultReport v-if="result" :result="result" />
+        <p v-if="!canApply && !applied" class="notice">
+          SQL、配置或需求已变化，旧建议只能审阅，请返回对话重新确认。
+        </p>
+        <div class="ai-review-actions">
+          <button class="button" @click="nextStep(1)">继续补充需求</button
+          ><button class="button" @click="showOriginal = !showOriginal">
+            {{ showOriginal ? '查看建议 SQL' : '查看当前 SQL' }}</button
+          ><button class="button" @click="reviewDialog?.showModal()">完整对比</button
+          ><button class="button primary" :disabled="!canApply" @click="applySql">
+            应用建议 SQL<ChevronRight :size="14" />
+          </button>
+        </div>
+      </section>
+      <section v-show="step === 3" class="ai-check-body">
+        <p class="notice">建议已应用到当前编辑器，尚未部署。继续补充或编辑后需重新检查。</p>
+        <div class="ai-check-row">
+          <div>
+            <strong>SQL 检查</strong>
+            <p>{{ checkSummary || '按所选 Flink 版本检查语法' }}</p>
+          </div>
+          <button class="button" :disabled="!editable || busy" @click="emit('check')">
+            检查 SQL
+          </button>
+        </div>
+        <div class="ai-check-row">
+          <div>
+            <strong>SQL 验证</strong>
+            <p>可选；使用已有验证专用 Session</p>
+          </div>
+          <button class="button" :disabled="!canVerify || !editable || busy" @click="emit('run')">
+            验证结果
+          </button>
+        </div>
+        <div class="ai-check-row">
+          <div>
+            <strong>保存草稿</strong>
+            <p>{{ dirty ? '当前 SQL 或配置有未保存改动' : '草稿已保存' }}</p>
+          </div>
+          <button class="button primary" :disabled="!editable || busy" @click="emit('save')">
+            保存 SQL 草稿
+          </button>
+        </div>
+        <p class="muted">保存不自动发布或启动作业。</p>
+        <button class="text-button" @click="nextStep(1)">返回对话继续补充</button>
+      </section>
+    </template>
+    <dialog ref="reviewDialog" class="ai-full-review">
+      <div class="field-heading">
+        <h3>完整 SQL 对比</h3>
+        <button class="text-button" aria-label="关闭完整对比" @click="reviewDialog?.close()">
+          <X :size="16" />
+        </button>
+      </div>
+      <div class="ai-comparison">
+        <section>
+          <h4>当前 SQL（完整）</h4>
+          <CodeEditor :model-value="sql" language="sql" label="当前 SQL 完整审阅" readonly />
+        </section>
+        <section>
+          <h4>建议 SQL（完整）</h4>
+          <CodeEditor
+            :model-value="result?.sql || ''"
+            language="sql"
+            label="建议 SQL 完整审阅"
+            readonly
+          />
+        </section>
+      </div>
+    </dialog>
   </aside>
 </template>
 <style scoped>
 .ai-sql-panel {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 16px !important;
 }
-.field-heading h3 {
+.ai-panel-heading,
+.ai-panel-heading h3,
+.ai-panel-heading > div {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-primary);
+  margin: 0;
 }
-.ai-intro,
-.muted {
-  font-size: 12px;
+.ai-panel-heading {
+  justify-content: space-between;
+  flex-shrink: 0;
 }
-.ai-modes {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
-  margin: 12px 0;
+.ai-panel-heading h3 {
+  font-size: 14px;
 }
-.ai-modes .button {
-  min-width: 0;
-  padding: 6px 3px;
-  font-size: 12px;
-}
-.ai-modes .active {
-  color: var(--color-primary);
-  background: #edf3ff;
-  border-color: #c9dcff;
-}
-.ai-tabs {
-  display: flex;
+.ai-panel-heading > div {
   gap: 12px;
-  border-bottom: 1px solid var(--line);
-  padding: 4px 0 10px;
-  margin-bottom: 12px;
+  font-size: 12px;
+}
+.ai-notice {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.ai-chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+.ai-chat-settings {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 9px;
+  flex-shrink: 0;
 }
-.ai-tabs .active {
-  color: var(--color-primary);
+.ai-chat-settings :deep(.ai-model-field) {
+  flex: 0 1 340px;
+  min-width: 180px;
+  margin: 0;
 }
-.ai-spec {
+.ai-chat-settings :deep(label) {
+  min-width: 130px;
+}
+.ai-external {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px !important;
+  margin: 0 !important;
+}
+.ai-external input {
+  width: auto;
+}
+.ai-conversation-state {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.ai-thread {
+  flex: 1;
+  min-height: 100px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 2px 5px 6px 0;
+  scrollbar-width: thin;
+}
+.ai-chat-message {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ai-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--surface-soft, #f4f7fc);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.assistant .ai-avatar {
+  color: var(--blue);
+  background: var(--color-primary-light, #eef4ff);
+}
+.ai-message-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 5px;
+}
+.ai-chat-message p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.user p {
+  background: var(--surface-soft, #f4f7fc);
+  padding: 9px 11px;
+  border-radius: 0 7px 7px 7px;
+}
+.ai-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+  padding: 24px 12px;
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ai-empty h4,
+.ai-empty p {
+  margin: 0;
+}
+.ai-empty h4 {
+  color: var(--text);
+}
+.ai-inline-summary {
+  flex-shrink: 0;
+  background: var(--surface-soft, #f8faff);
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 12px;
-  margin-bottom: 14px;
+  padding: 11px 12px;
 }
-.ai-spec summary {
-  font-size: 12px;
-  margin-bottom: 10px;
-  cursor: pointer;
-}
-.ai-check {
+.ai-summary-heading {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex-wrap: wrap;
   font-size: 12px;
-  font-weight: 400;
+  margin-bottom: 8px;
 }
-.ai-check input {
-  width: auto;
-  flex: none;
+.ai-summary-heading > .text-button {
+  margin-left: auto;
 }
-.ai-check small {
-  color: var(--color-muted);
+.ai-summary-heading .badge {
+  font-size: 10px;
+  padding: 1px 5px;
 }
-.ai-spec-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.ai-prompt textarea,
-.ai-json-input {
-  width: 100%;
-  resize: vertical;
-}
-.ai-json-input {
-  font:
-    12px/1.7 Consolas,
-    monospace;
-  min-height: 260px;
-}
-.ai-diff {
-  margin: 10px 0;
-  max-height: 360px;
-  overflow: auto;
-  background: #fbfcfe;
-  border: 1px solid var(--line);
-}
-.ai-diff pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 0;
-  padding: 3px 7px;
-  font:
-    12px/1.6 Consolas,
-    monospace;
-}
-.added {
-  background: #edf9f1;
-  color: #246449;
-}
-.removed {
-  background: #fff1f0;
-  color: #a64242;
-}
-.ai-json {
+.ai-summary-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
-  max-height: 350px;
+  line-height: 1.65;
+  max-height: 145px;
   overflow: auto;
-}
-.ai-history {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-}
-.ai-boundary {
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-  margin-top: 16px;
-  font-size: 12px;
-  color: var(--color-muted);
-}
-.ai-prewrap {
-  white-space: pre-wrap;
-}
-
-.wizard-data,
-.wizard-confirm,
-.wizard-suggestion,
-.wizard-save {
-  padding-top: 14px;
-}
-.wizard-source {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px;
-  margin: 10px 0;
-  flex-wrap: wrap;
-}
-.wizard-source.selected {
-  background: #f7faff;
-  border-color: #bfd3f7;
-}
-.wizard-source > label:first-child {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 130px;
   margin: 0;
+  scrollbar-width: thin;
 }
-.wizard-role {
+.ai-summary-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 0 1 150px;
-  margin: 0 !important;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.wizard-role select {
-  min-width: 0;
-}
-.wizard-local-table {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--line);
-  padding: 12px 0;
-}
-.wizard-local-table small {
-  display: block;
-  color: var(--color-muted);
-  font-size: 11px;
-}
-.wizard-local-table select {
-  width: 120px;
-}
-.wizard-function-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 16px;
-}
-.wizard-function-title strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-.wizard-function-title span {
-  font-size: 11px;
-  color: var(--color-muted);
-}
-.wizard-data h4 {
-  margin: 0 0 8px;
-}
-.wizard-source input {
-  width: auto;
-}
-.wizard-source strong,
-.wizard-source small {
-  display: block;
-}
-.wizard-source small {
-  margin-top: 5px;
-  color: var(--color-muted);
-}
-.wizard-actions {
-  display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0;
+  gap: 7px;
+  margin-top: 10px;
 }
-.wizard-source-tags {
+.ai-summary-footer > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-right: auto;
+}
+.ai-summary-footer .button {
+  min-height: 30px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.ai-unknowns {
+  font-size: 12px;
+  color: #9b621d;
+  margin: 7px 0 0;
+  padding-left: 18px;
+  max-height: 80px;
+  overflow: auto;
+}
+.ai-composer {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 11px;
+  background: var(--surface, #fff);
+}
+.ai-compose-modes {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 16px;
+  margin-bottom: 5px;
+  font-size: 12px;
 }
-.wizard-source-tags span {
-  border: 1px solid #dbe5f4;
-  background: #f7faff;
-  color: #56739c;
-  border-radius: 4px;
-  padding: 4px 7px;
-  font-size: 11px;
+.ai-compose-modes .active {
+  color: var(--blue);
+  font-weight: 600;
 }
-.wizard-contract {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  margin-top: 18px;
-  overflow: hidden;
+.ai-composer textarea {
+  border: 0;
+  padding: 3px 0;
+  min-height: 68px;
+  max-height: 150px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.6;
 }
-.wizard-contract header {
+.ai-compose-footer {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 14px;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ai-compose-footer > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ai-compose-footer .button {
+  padding: 6px 10px;
+  min-height: 30px;
+  font-size: 12px;
+}
+.ai-task-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-soft, #f4f7fc);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.ai-task-status > span {
+  margin-right: auto;
+}
+.ai-review-body,
+.ai-check-body {
+  min-height: 0;
+  overflow: auto;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ai-review-body h4 {
+  margin: 0;
+}
+.ai-review-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 4px;
+}
+.ai-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--line);
 }
-.wizard-contract-row {
-  display: grid;
-  grid-template-columns: 70px minmax(0, 1fr) 70px;
-  gap: 10px;
-  align-items: center;
-  padding: 9px 14px;
+.ai-check-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
   font-size: 12px;
 }
-.wizard-contract-row label {
-  margin: 0;
-  color: var(--color-muted);
-}
-.wizard-contract-row small {
-  color: #7b92b4;
-  text-align: right;
-  font-size: 11px;
-}
-.wizard-contract-row input,
-.wizard-contract-row select {
-  min-width: 0;
-  width: 100%;
-  margin: 0;
-}
-.wizard-pending {
-  padding: 11px 14px;
-  background: #fff8e9;
-  color: #9a6717;
-  font-size: 12px;
-  margin: 5px 0 0;
-}
-.wizard-followup {
-  margin-top: 20px;
+.ai-full-review {
+  width: min(1250px, 94vw);
+  max-width: 94vw;
+  height: 85vh;
+  max-height: 85vh;
   border: 1px solid var(--line);
-  padding: 14px;
-  border-radius: 8px;
+  border-radius: 9px;
+  padding: 18px;
+  color: var(--text);
+  background: var(--surface, #fff);
 }
-.wizard-followup textarea {
-  width: 100%;
-  resize: vertical;
+.ai-full-review::backdrop {
+  background: #14243e66;
 }
-.wizard-followup > div {
+.ai-comparison {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  height: calc(100% - 46px);
+}
+.ai-comparison > section {
+  min-height: 0;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
 }
-.wizard-followup small {
-  color: #7790b2;
-  font-size: 11px;
+.ai-comparison h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
 }
-.wizard-task-status {
-  border-top: 1px solid var(--line);
-  margin-top: 16px;
-  padding-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-.wizard-task-status p {
+.ai-comparison :deep(.code-editor) {
   flex: 1;
-  min-width: 140px;
+  min-height: 0;
 }
-.ai-sql-panel .ai-modes .button {
-  border: 0;
-  background: transparent;
-  color: #7690b1;
-}
-.ai-sql-panel .ai-modes .button.active {
-  background: #edf4ff;
-  color: #2866d8;
-}
-.ai-sql-panel .ai-intro {
-  margin: 8px 0 14px;
+@media (max-width: 1000px) {
+  .ai-sql-panel {
+    min-height: 620px;
+    max-height: 850px;
+  }
+  .ai-thread {
+    min-height: 120px;
+    max-height: 300px;
+    flex: auto;
+  }
+  .ai-full-review {
+    height: 88vh;
+  }
+  .ai-summary-text {
+    max-height: 180px;
+  }
 }
 @media (max-width: 600px) {
-  .wizard-contract-row {
-    grid-template-columns: 60px minmax(0, 1fr);
-    padding: 9px 10px;
+  .ai-sql-panel {
+    padding: 12px !important;
+    max-height: none;
   }
-  .wizard-contract-row small {
-    display: none;
+  .ai-panel-heading {
+    flex-wrap: wrap;
   }
-  .wizard-source-tags span {
-    overflow-wrap: anywhere;
+  .ai-summary-footer .primary {
+    width: 100%;
+  }
+  .ai-comparison {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .ai-comparison :deep(.code-editor) {
+    height: 330px;
+    flex: none;
+  }
+  .ai-compose-footer > span {
+    font-size: 11px;
+  }
+  .ai-chat-settings {
+    align-items: flex-start;
+  }
+  .ai-summary-text {
+    max-height: 170px;
   }
 }
 </style>

@@ -61,6 +61,7 @@ class AiAssistantIntegrationTest {
   @Autowired ObjectMapper mapper;
   @Autowired AiModelService models;
   @Autowired AiTaskService tasks;
+  @Autowired AiConversationService conversations;
   @Autowired RecordRepository records;
   @Autowired SecretTransportService transport;
   @Autowired AiContentGuard guard;
@@ -68,6 +69,93 @@ class AiAssistantIntegrationTest {
   @MockitoBean DiagnosticService diagnostics;
   @MockitoBean JobService jobs;
   String modelId;
+
+  /** 创建有独立生命周期的空白 SQL 草稿，供持久化会话测试使用。 */
+  private String conversationDraft() {
+    String id = "chat-" + UUID.randomUUID();
+    var draft = mapper.createObjectNode().put("name", id).put("sql", "SELECT 1;");
+    draft.putObject("runtime");
+    records.save("sql_jobs", id, draft, 0);
+    return id;
+  }
+
+  /** 构造只引用服务端会话版本的任务，不由客户端伪造消息或总结。 */
+  private ObjectNode conversationTask(String id, long version, String mode) {
+    return mapper.createObjectNode().put("requestId", UUID.randomUUID().toString())
+        .put("kind", "sql").put("mode", mode).put("sqlId", id).put("sql", "SELECT 1;")
+        .put("modelId", modelId).put("flinkVersion", "1.20.5").put("conversationVersion", version);
+  }
+
+  /** 对话、完整总结、确认和完整 SQL 生成分离，退出后可以恢复已有记录。 */
+  @Test
+  void persistentConversationRequiresConfirmationAndIncludesEveryTurn() throws Exception {
+    String id = conversationDraft(), messageId = UUID.randomUUID().toString();
+    var message = mapper.createObjectNode().put("messageId", messageId).put("revision", 0)
+        .put("content", "先按订单统计金额").put("mode", "requirement");
+    var first = conversations.append(id, message);
+    assertThat(conversations.append(id, message).path("revision")).isEqualTo(first.path("revision"));
+    assertThatThrownBy(() -> tasks.create(conversationTask(id, 1, "generate"))).hasMessageContaining("确认");
+    answer.set("{\"reply\":\"请补充过滤条件\",\"summary\":\"按订单统计金额\",\"unknowns\":[],\"risks\":[]}");
+    assertThat(await(tasks.create(conversationTask(id, 1, "chat")).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+    var current = conversations.get(id);
+    assertThat(current.path("messages").size()).isEqualTo(2);
+    current = conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", current.path("revision").asLong()).put("content", "只保留已支付订单").put("mode", "requirement"));
+    assertThat(current.path("confirmedVersion").asInt()).isEqualTo(-1);
+    answer.set("{\"reply\":\"已综合全部会话\",\"summary\":\"按订单统计金额，仅保留已支付订单\",\"unknowns\":[],\"risks\":[]}");
+    assertThat(await(tasks.create(conversationTask(id, 2, "chat")).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(received.get()).contains("先按订单统计金额", "只保留已支付订单");
+    current = conversations.get(id);
+    conversations.confirm(id, mapper.createObjectNode().put("revision", current.path("revision").asLong()).put("sql", "SELECT 1;"));
+    answer.set("{\"summary\":\"确认的口径\",\"sql\":\"SELECT 2;\",\"unknowns\":[],\"risks\":[]}");
+    var generated = await(tasks.create(conversationTask(id, 2, "generate")).path("id").asText());
+    assertThat(generated.path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(generated.at("/result/sql").asText()).isEqualTo("SELECT 2;");
+    assertThat(conversations.get(id).path("lastSqlTaskId").asText()).isEqualTo(generated.path("id").asText());
+    assertThat(records.require("sql_jobs", id).path("sql").asText()).isEqualTo("SELECT 1;");
+    mvc.perform(get("/api/ai/conversations/" + id).with(user("another-admin").roles("ADMIN")))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.messages.length()").value(0));
+    mvc.perform(post("/api/ai/conversations/" + id + "/messages").with(user("operator").roles("OPERATOR"))
+        .with(csrf()).contentType(MediaType.APPLICATION_JSON).content(message.toString())).andExpect(status().isForbidden());
+  }
+
+  /** 整理途中继续补充时旧回复不得持久化，报错消息和原确认也不能被覆盖。 */
+  @Test
+  void lateConversationResponseCannotOverwriteFollowupOrCancellation() throws Exception {
+    String id = conversationDraft();
+    conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", 0).put("content", "解释现有 SQL").put("mode", "explain"));
+    answer.set("{\"reply\":\"旧解释\",\"summary\":\"旧总结\",\"unknowns\":[]}");
+    delay.set(350);
+    String taskId = tasks.create(conversationTask(id, 1, "explain")).path("id").asText();
+    var current = conversations.get(id);
+    conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", current.path("revision").asLong()).put("content", "Column missing，修复字段引用").put("mode", "error"));
+    assertThat(await(taskId).path("state").asText()).isEqualTo("FAILED");
+    assertThat(conversations.get(id).path("messages").size()).isEqualTo(2);
+    taskId = tasks.create(conversationTask(id, 2, "chat")).path("id").asText();
+    tasks.cancel(taskId);
+    Thread.sleep(400);
+    assertThat(tasks.get(taskId).path("state").asText()).isEqualTo("CANCELED");
+    assertThat(conversations.get(id).path("messages").size()).isEqualTo(2);
+  }
+
+  /** 乐观锁、明文凭据和 SQL 上下文变化均在生成之前拒绝。 */
+  @Test
+  void conversationRejectsStaleSummaryCredentialsAndSqlChange() {
+    String id = conversationDraft();
+    var first = conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", 0).put("content", "保留订单字段").put("mode", "requirement"));
+    assertThatThrownBy(() -> conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", 0).put("content", "另一窗口的旧消息"))).hasMessageContaining("对话已更新");
+    assertThatThrownBy(() -> conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", first.path("revision").asLong()).put("content", "password=unsafe-secret"))).hasMessageContaining("凭据");
+    var summary = conversations.summary(id, mapper.createObjectNode().put("revision", first.path("revision").asLong())
+        .put("summary", "保持现有订单字段，整理排版").put("sql", "SELECT 1;"));
+    assertThatThrownBy(() -> conversations.confirm(id, mapper.createObjectNode().put("revision", summary.path("revision").asLong())
+        .put("sql", "SELECT 2;"))).hasMessageContaining("SQL 已变化");
+    assertThat(conversations.get(id).path("messages").size()).isEqualTo(1);
+  }
 
   /** 独立测试库与测试主密钥，不读取工作区运行数据库。 */
   @DynamicPropertySource

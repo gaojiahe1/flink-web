@@ -231,7 +231,31 @@ public class YamlServiceImpl implements YamlService {
     DumperOptions options = new DumperOptions();
     options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
     options.setPrettyFlow(true);
-    return new Yaml(options).dump(mapper.convertValue(node, Map.class));
+    return new Yaml(options).dump(ordered(node, ""));
+  }
+
+  /** 部署结构按阅读顺序稳定输出，未知字段、配置值、列表及数据类型原样保留。 */
+  private Object ordered(JsonNode node, String path) {
+    if (node.isArray()) {
+      var values = new ArrayList<Object>();
+      for (var child : node) values.add(ordered(child, path + "[]"));
+      return values;
+    }
+    if (!node.isObject()) return mapper.convertValue(node, Object.class);
+    List<String> preferred = switch (path) {
+      case "" -> List.of("apiVersion", "kind", "metadata", "spec", "status");
+      case "/metadata" -> List.of("name", "namespace", "labels", "annotations");
+      case "/spec" -> List.of("image", "imagePullPolicy", "flinkVersion", "mode", "serviceAccount",
+          "flinkConfiguration", "jobManager", "taskManager", "podTemplate", "job");
+      case "/spec/job" -> List.of("jarURI", "entryClass", "args", "parallelism", "upgradeMode", "state");
+      case "/spec/jobManager", "/spec/taskManager" -> List.of("replicas", "resource", "podTemplate");
+      default -> List.of();
+    };
+    Map<String, Object> values = new LinkedHashMap<>();
+    for (String key : preferred)
+      if (node.has(key)) values.put(key, ordered(node.get(key), path + "/" + key));
+    node.fields().forEachRemaining(entry -> values.putIfAbsent(entry.getKey(), ordered(entry.getValue(), path + "/" + entry.getKey())));
+    return values;
   }
 
   /** 读取并验证指定字段为对象，缺少时按校验规则处理。 */

@@ -75,6 +75,43 @@ class WorkbenchIntegrationTest {
   @Autowired com.flinkweb.collector.job.FlinkStateCollector collector;
   @Autowired com.flinkweb.service.job.management.JobQueryService query;
   @Autowired MockMvc mvc;
+
+  /** 空白草稿创建即占用名称，其他入口不可复用，删除后可重新创建。 */
+  @Test
+  void emptySqlDraftReservesGlobalImmutableName() {
+    actor("admin", "ADMIN");
+    String name = "empty-sql-" + UUID.randomUUID().toString().substring(0, 8);
+    var saved = sql.save(name, new SqlDraftRequest(name, "", "", mapper.createObjectNode(), 0));
+    assertThat(saved.path("sql").asText()).isEmpty();
+    assertThat(saved.at("/runtime/upgradeMode").asText()).isEqualTo("stateless");
+    assertThat(jobs.nameAvailable(name, "")).isFalse();
+    assertThatThrownBy(() -> sql.save(name, new SqlDraftRequest(name, "", "", mapper.createObjectNode(), 0)))
+        .hasMessageContaining("名称已存在");
+    assertThatThrownBy(() -> sql.save(name, new SqlDraftRequest(name + "-changed", "", "", mapper.createObjectNode(), 1)))
+        .hasMessageContaining("名称不可修改");
+    var jar = draft();
+    assertThatThrownBy(() -> jobs.create(new DraftRequest(name, "", jar.flinkVersion(), jar.yaml(), 0)))
+        .hasMessageContaining("SQL 草稿占用");
+    sql.delete(name, saved.path("revision").asLong());
+    assertThat(jobs.nameAvailable(name, "")).isTrue();
+  }
+
+  /** YAML 顶层和部署字段按稳定结构展示，不排序或丢弃用户的扩展值。 */
+  @Test
+  void yamlUsesStableResourceOrderAndPreservesUnknownValues() {
+    var value = mapper.createObjectNode();
+    value.putObject("metadata").put("namespace", "test").put("name", "ordered");
+    value.putObject("spec").putObject("job").put("upgradeMode", "stateless").put("parallelism", 1);
+    value.withObject("/spec").put("flinkVersion", "v1_20").put("image", "image:test");
+    value.withObject("/spec").putObject("flinkConfiguration").put("z-custom", "value").put("a-custom", true);
+    value.put("kind", "FlinkDeployment").put("apiVersion", "flink.apache.org/v1beta1");
+    String rendered = yaml.dump(value);
+    assertThat(rendered).startsWith("apiVersion:");
+    assertThat(rendered.indexOf("kind:")).isLessThan(rendered.indexOf("metadata:"));
+    assertThat(rendered.indexOf("metadata:")).isLessThan(rendered.indexOf("spec:"));
+    assertThat(rendered.indexOf("image:")).isLessThan(rendered.indexOf("flinkVersion:"));
+    assertThat(yaml.parse(rendered)).isEqualTo(value);
+  }
   @MockitoBean KubernetesClient kubernetes;
 
   /** 显式切换服务调用身份，避免依赖 MVC 请求结束后的线程上下文。 */

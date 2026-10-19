@@ -272,3 +272,53 @@ export function sameSqlTokens(before: string, after: string) {
     ) || []
   return JSON.stringify(tokens(before)) === JSON.stringify(tokens(after))
 }
+
+/** Flink 建表字段和 WITH 参数固定逐行；嵌套类型、函数、字符串及注释不按逗号误拆。 */
+export async function formatFlinkSql(original: string) {
+  const { format } = await import('sql-formatter')
+  let formatted = format(original, {
+    language: 'sql',
+    tabWidth: 2,
+    keywordCase: 'preserve',
+    linesBetweenQueries: 1,
+  })
+  const mask = formatted.replace(
+    /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`/g,
+    (s) => s.replace(/[^\r\n]/g, ' '),
+  )
+  const openings = new Set<number>()
+  for (const match of mask.matchAll(/\bCREATE\s+(?:TEMPORARY\s+)?TABLE\b[^;(]*\(/gi)) {
+    if (!/\bAS\b/i.test(match[0])) openings.add(match.index! + match[0].length - 1)
+  }
+  for (const match of mask.matchAll(/\bWITH\s*\(/gi))
+    openings.add(match.index! + match[0].length - 1)
+  for (const open of [...openings].sort((a, b) => b - a)) {
+    let depth = 1,
+      start = open + 1,
+      close = -1
+    const parts: string[] = []
+    for (let index = open + 1; index < mask.length; index++) {
+      if (mask[index] === '(') depth++
+      else if (mask[index] === ')' && --depth === 0) {
+        parts.push(formatted.slice(start, index).trim())
+        close = index
+        break
+      } else if (mask[index] === ',' && depth === 1) {
+        parts.push(formatted.slice(start, index).trim())
+        start = index + 1
+      }
+    }
+    if (close < 0 || !parts.some(Boolean)) continue
+    const line = formatted.slice(formatted.lastIndexOf('\n', open) + 1, open)
+    const indent = /^\s*/.exec(line)![0]
+    formatted =
+      formatted.slice(0, open + 1) +
+      '\n' +
+      parts.map((part) => indent + '  ' + part).join(',\n') +
+      '\n' +
+      indent +
+      formatted.slice(close)
+  }
+  if (!sameSqlTokens(original, formatted)) throw new Error('格式化改变了 SQL token')
+  return formatted
+}

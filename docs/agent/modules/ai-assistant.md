@@ -1,14 +1,15 @@
 # AI 助手与模型服务
 
-更新：2026-10-19。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。用户最新要求采用需求向导原型并保留任务模型选择；本模块复用既有任务协议，不包含自动执行、生产审批或完整 Planner。
+更新：2026-10-19。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。当前采用用户确认的三步“总结内嵌”设计；下方10-15/10-16四步与数据选择记录仅为历史，不能代替当前入口。模型不自动执行、保存或部署。
 
 ## 入口与代码
 
-- SQL 开发「AI 助手」：四步需求向导（选择数据、确认需求、查看 SQL、检查与保存），左侧需求与模型选择、右侧原 SQL 编辑器；生成、解释、修复、数据定义；选登记数据源或编辑当前作业字段/Connector 草稿，确认需求后调用。建议先看差异再显式应用，重新检查/验证；原有保存、发布流程保留。
+- SQL 开发「AI 助手」：确认需求→查看 SQL→检查和保存，无选择数据步骤。首步约70%对话/30%当前SQL，可拖动或收起SQL；模型区紧凑、总结内嵌、输入区独立，窄屏上下布局。对话后保存完整会话总结，用户核对确认才生成完整SQL；审阅后显式应用，再检查/验证/保存。可随时补充，旧SQL可解释整理，报错可加入对话再确认修复。问号解释保存、授权和确认边界。
 - 作业列表：本次观测状态含错误/FAILED 时显示「AI 分析」，主动读取有权访问的诊断及可选脱敏日志，展示原因、证据、未知项和解决步骤；不执行运行操作。
 - 系统设置 → 模型服务：仅管理员增删改、测试；按用途选模型，外部发送须每次明确允许。支持兼容 Chat Completions 的非流式 JSON 响应；Base URL 填到 `/v1` 等接口前缀，程序追加 `/chat/completions`。未配置真实模型时不能生成。
 - [模型客户端](../../../backend/src/main/java/com/flinkweb/client/ai/AiModelClient.java)、[模型服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiModelServiceImpl.java)、[任务服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiTaskServiceImpl.java)、[内容防护](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiContentGuard.java)。
 - [前端模块](../../../frontend/src/modules/ai/api/ai.ts)、[侧栏](../../../frontend/src/modules/ai/components/AiSqlAssistant.vue)、[字段表单](../../../frontend/src/modules/ai/components/AiDataDefinitionEditor.vue)、[模型页面](../../../frontend/src/modules/system/pages/ModelsView.vue)。
+- [会话控制器](../../../backend/src/main/java/com/flinkweb/controller/ai/AiConversationController.java)、[会话服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiConversationServiceImpl.java)、[三步页面回归](../../../frontend/tests/ai-conversation.spec.ts)。旧字段/定义接口保留兼容，不在新SQL助手中显示。
 
 ## 契约与边界
 
@@ -21,8 +22,15 @@
 | GET `/api/ai/tasks/{id}`；POST `/{id}/cancel` | 仅创建用户且重新核验 SQL/作业权限；取消先持久化，再中断调用，迟到完成不能覆盖终态 |
 | GET `/api/ai/tasks?sqlId=...` | 当前用户该 SQL 最近二十条生成/解释/修复/定义任务；不提供跨用户历史 |
 | POST `/api/ai/definitions/compile` | ADMIN/DEVELOPER，仅编译当前定义并列待补项，不写共享数据源 |
+| GET `/api/ai/conversations/{sqlId}` | ADMIN/DEVELOPER，重新核对SQL读取权限，当前用户及草稿生命周期私有会话 |
+| POST `.../messages` | SQL编辑权限，messageId/revision/content/mode；同号同内容幂等，补充使确认失效 |
+| PUT `.../summary`；POST `.../confirm` | revision保护；总结修改带summary/sql，确认带sql，完整总结/待补项/当前SQL摘要匹配后才确认 |
 
-模型/任务复用 `RecordRepository` 的 `ai_models`/`ai_tasks` JSON 记录，无新表迁移；SQLite 仍限定单后端实例。密钥用现有主密钥 AES-GCM 加密，AAD 绑定模型 id；没有新主密钥或明文配置副本。禁止将实际凭据写入文档。
+模型/任务/会话复用 `RecordRepository` 的 `ai_models`/`ai_tasks`/`ai_conversations` JSON记录；`job_names`占用记录保护SQL/JAR跨入口唯一名称，无新表迁移，SQLite仍限定单后端实例。会话ID绑定用户、SQL ID和草稿createdAt，其他用户及同名重建不恢复旧记录。密钥用现有主密钥AES-GCM加密，AAD绑定模型id；禁止将实际凭据写入文档。
+
+新任务携带conversationVersion，使用持久化全部消息与人工总结，chat/explain只整理，generate/repair要求总结已确认且绑定当前SQL SHA-256。内容版本和任务终态锁拒绝取消/并发补充后的迟到回复；应用还核对前端上下文版本及SQL摘要。编辑SQL、配置或补充会话使旧建议失效，单独保存修订号不失效。lastSqlTaskId恢复可审阅建议，完整对比不截断1000行之后内容。
+
+单条用户消息8000字符，总结8000字符，模型回复4000字符；追加前最多117条已有消息及36000字符，模型回复后总文本最多40000字符。达到上限明确拒绝本条，原记录保留，不静默截断。未知事项须继续对话澄清，手动改总结不能清掉待补事项。模型上下文仍有总预算保护；记录持久化在当前平台元数据库，离页可恢复。
 
 并发为两线程、等待六项，每账号一个活动任务；重启将未完成任务置失败，不重放计费请求。客户端禁止重定向，校验目标地址；内网/本机和 HTTP 需要管理员显式允许，链路本地/元数据地址仍拒绝。请求有超时与响应上限。模型不持有平台写工具。
 
@@ -30,9 +38,9 @@
 
 useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原任务，存在则继续观察；未确认时禁新建并提供核对/取消。主动重试再 GET，仅 404 才用同号原请求重发；取消失败保留身份并可重试，迟到活动响应继续取消，不覆盖新上下文。SQL 和作业分析共用该逻辑。生成/解释/修复模式变化立即失效；编译用单调上下文/请求版本，历史还核对 SQL ID，组件销毁不回填，未增加后台模型任务。
 
-上下文只含选中定义/当前 SQL 或归属核验后的诊断、最多两个容器各 120 行日志；不发送完整运行 YAML/env。已知配置/模型密钥及常见凭据模式遮蔽，输入与输出拒绝疑似明文凭据；自由文本脱敏不是任意业务敏感信息的完整识别，外部发送仍需用户确认。
+当前SQL对话上下文包含全部会话/总结与当前SQL；旧定义流程和作业诊断仍只含选中定义或归属核验后的诊断、最多两个容器各120行日志，不发送完整运行YAML/env。已知配置/模型密钥及常见凭据模式遮蔽，输入与输出拒绝疑似明文凭据；自由文本防护不能完整识别任意业务敏感信息，外部发送仍需用户明确允许。
 
-确定性编译复用 DataSourceService；模型只生成临时 VIEW/INSERT 转换逻辑，拒绝其他 DDL/SET 与 WITH 参数覆盖。确认的 Kafka 位点作用于定义副本；事件时间须匹配水位线。BASIC 检查不等于语义或运行成功。应用前核对上下文版本，原有手动参数优先，编辑 SQL/需求/定义使旧建议失效；不自动保存、发布或启动。当前定义属于侧栏草稿，应用生成 SQL 后随 SQL 正常保存，不单独登记共享数据源。
+当前对话生成允许完整CREATE TABLE/VIEW、INSERT和查询，经验证入口的基础边界检查，拒绝CTAS、SET、DROP/ALTER、Catalog和函数注册。提示保留已有非空连接参数，不编造未知连接信息，生成不等于Planner/运行成功。旧workflowVersion=2接口仍保留DataSourceService确定性编译及临时VIEW/INSERT、WITH覆盖拦截约束，不将旧客户端规则套入新完整SQL对话。
 
 ## 验证入口
 

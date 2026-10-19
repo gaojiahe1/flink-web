@@ -17,14 +17,12 @@ public class SqlRuntimeArtifacts {
     this.records = records;
   }
 
-  /** 必须由用户显式选择 Runner，不根据镜像版本推断文件。 */
+  /** 优先保留显式选择，否则固定使用默认共享 Runner，不根据镜像版本猜文件。 */
   public String runner(ObjectNode runtime) {
     String selected = runtime.path("runnerArtifactId").asText();
     if (!selected.isBlank()) return selected;
-    throw new com.flinkweb.exception.common.BusinessException(
-        org.springframework.http.HttpStatus.BAD_REQUEST,
-        "INVALID_RUNNER_VERSION",
-        "runnerArtifactId: 请选择 SQL Runner 文件，或确认具体 HTTP/S3 JAR 地址");
+    String prefix = storage.defaults().path("rootPrefix").asText("artifacts/").replaceAll("^/+|/+$", "");
+    return "s3:" + (prefix.isBlank() ? "" : prefix + "/") + "shared/sql-runner/flink-web-sql-runner.jar";
   }
 
   /** 将 Runner 作为主 JAR 挂载，连接器仍保持附加依赖语义。 */

@@ -15,6 +15,7 @@ const deployment = {
 async function fixture(page: Page) {
   const renders: any[] = [], saves: any[] = []
   let session: any
+  let sqlDraft: any = { id: 'sql-pods', name: 'sql-pods', description: '', sql: '', revision: 1, runtime: {} }
   const draft = { id: 'existing', name: 'existing', description: '', revision: 1, flinkVersion: '1.20.5', yaml: stringify(deployment) }
   await page.route('**/api/**', async route => {
     const req = route.request(), path = new URL(req.url()).pathname
@@ -41,8 +42,8 @@ async function fixture(page: Page) {
       data = { yaml: stringify(result), flinkVersion: '1.20.5' }
     } else if (path === '/api/jobs/validate') data = { yaml: req.postDataJSON().yaml, message: '校验通过' }
     else if (path === '/api/sessions') data = session ? [session] : []
-    else if (path === '/api/sql/jobs') data = []
-    else if (path.startsWith('/api/sql/jobs/') && req.method() === 'PUT') { saves.push(req.postDataJSON()); data = { ...req.postDataJSON(), id: 'sql-pods', revision: 1 } }
+    else if (path === '/api/sql/jobs') data = [sqlDraft]
+    else if (path.startsWith('/api/sql/jobs/') && req.method() === 'PUT') { saves.push(req.postDataJSON()); data = sqlDraft = { ...req.postDataJSON(), id: 'sql-pods', revision: sqlDraft.revision + 1 } }
     else if (path.startsWith('/api/sessions/') && req.method() === 'PUT') {
       saves.push(req.postDataJSON()); session = { ...req.postDataJSON(), id: 'ordinary', desiredState: 'stopped', state: 'STOPPED', revision: 1 }; data = session
     } else if (path.endsWith('/status')) data = session
@@ -142,7 +143,7 @@ test('SQL 复制三处模板并保存账号，格式错误切换页签后保留�
   await page.goto('/#/sql')
   await page.getByRole('button', { name: '部署配置', exact: true }).click()
   await expect(page.getByLabel('ServiceAccount', { exact: false })).toHaveValue('team-flink')
-  await page.getByLabel('作业名称', { exact: false }).fill('sql-pods')
+  await expect(page.getByLabel('作业名称', { exact: false })).toHaveValue('sql-pods')
   await page.getByRole('combobox', { name: '镜像版本', exact: true }).selectOption('flink')
   await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
   await page.getByLabel('从模板获取 PodTemplate').selectOption('template')

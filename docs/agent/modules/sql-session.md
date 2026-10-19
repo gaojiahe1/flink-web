@@ -4,6 +4,12 @@
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
+2026-10-19最新：AI采用确认需求→查看SQL→检查和保存的持久化对话及内嵌总结，见[AI模块](ai-assistant.md)。新建SQL先确认唯一名称，创建空白内容；名称不可修改，服务端job_names记录与数据库事务保护SQL/JAR跨入口占用。取消创建保留原编辑内容，响应丢失只恢复同一workspaceId创建结果。
+
+Runner未显式选择时固定解析到默认S3目录`artifacts/shared/sql-runner/flink-web-sql-runner.jar`（使用配置rootPrefix），显式已存选择继续优先。SQL Application和验证专用Session共用该解析，普通Session可不选。文件必须存在且可读，缺少不退回内置下载文件；本次不自动上传或替换共享文件。此项替代下方历史“必须手动选择”规则。
+
+新建/省略SQL升级策略使用stateless，已有显式策略保留；生成部署草稿成功或部署被ACCEPTED后进入作业列表，失败留页显示原因，不将受理称为运行成功。YamlServiceImpl按apiVersion/kind/metadata/spec及主要嵌套字段稳定输出，保留未知字段/类型/列表。formatFlinkSql强制CREATE TABLE字段和WITH选项分行，嵌套括号及引用逗号不误拆，token不变检查及撤销保留。回归入口见[编辑测试](../../../frontend/tests/editor-validation.spec.ts)、[配置测试](../../../frontend/tests/runtime-templates.spec.ts)、[工作台真实API测试](../../../frontend/tests/workbench.spec.ts)。
+
 2026-10-15：parseDeploymentYaml 明确检查 spec 为非空对象且非数组，拒绝布尔/数字/文本；Connector 提示先只遮蔽注释，保留字符串和原位置，再匹配真实 Connector/已用键。BoundedResponseBody 从空缓冲按正文倍增到原容量上限，取消和 128MiB 传输边界不变；小日志不再预分配 33MiB，满/绕回/跨增长边界有回归。[编辑校验用例](../../../frontend/tests/editor-validation.spec.ts) 与原客户端/Session 测试覆盖边界；分配量是合成测量，不能等同生产吞吐收益。
 
 2026-10-14：按用户确认的侧栏设计实现 SQL 智能体第一阶段，含生成/解释/修复、字段/Connector 草稿、需求确认、差异显式应用及历史。编辑使旧建议与检查失效，继续复用既有 Parser/Session 验证；模型不部署或执行。模型服务、作业主动诊断、接口及代码统一见 [AI 模块](ai-assistant.md)。
@@ -26,7 +32,7 @@ SqlParserServiceImpl 按精确版本读取 validator.jar，独立进程限制并
 
 Session 行末刷新独立冷却，复用 PodStatusDrawer 与 DiagnosticService 的所有者链/日志脱敏；新增 /api/sessions/{id}/diagnostics、/logs 及 /flink-ui/sessions/{id}/，代理每次调用 observedResource 核验身份。validationStatus 内部不查询 REST 数量。SQL CodeEditor 复用 sqlEditing 的 Flink 方言/Connector 补全，sql-formatter 的通用 SQL 规则受 token 不变检查保护，格式化历史独立可撤销。
 
-普通 Session 可多个，验证 Session 仅一个；运行中不得改配置。管理员配置、管理员/运维启停；开发者需 SQL 编辑权限。Runner 必须手动选具体 JAR，验证和 Application 必须选；运行 Session 镜像须与 SQL 相同。动态用户 bundle 合并服务发现、拒绝冲突类，不能删除看似重复的 META-INF 服务内容。
+普通 Session 可多个，验证 Session 仅一个；运行中不得改配置。管理员配置、管理员/运维启停；开发者需 SQL 编辑权限。Runner 默认共享具体 JAR，验证与 Application 可显式覆盖；运行 Session 镜像须与 SQL 相同。动态用户 bundle 合并服务发现、拒绝冲突类，不能删除看似重复的 META-INF 服务内容。
 
 SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 发布仍要求 INSERT；无 SQL Gateway。SQL SET 填 Flink 配置区域。删除部署草稿需清关联并迁移仍被 SQL 草稿引用的专属文件。Catalog 删除有引用保护。
 

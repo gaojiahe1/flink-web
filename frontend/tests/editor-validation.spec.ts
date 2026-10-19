@@ -2,8 +2,25 @@ import {syntaxTree} from '@codemirror/language'
 import {test,expect} from '@playwright/test'
 import {EditorState} from '@codemirror/state'
 import {CompletionContext} from '@codemirror/autocomplete'
-import {connectorCompletion,flinkSqlSupport} from '../src/shared/utils/sqlEditing'
+import {connectorCompletion,flinkSqlSupport,formatFlinkSql,sameSqlTokens} from '../src/shared/utils/sqlEditing'
 import {parseDeploymentYaml} from '../src/shared/utils/deploymentYaml'
+
+test('格式化强制建表字段和 WITH 参数分行，保留嵌套类型和字符串中的逗号',async()=>{
+  const sql="CREATE TEMPORARY TABLE sink (id BIGINT, amount DECIMAL(18, 2), payload STRING) WITH ('connector'='print','print-identifier'='a,b'); SELECT id, COALESCE(amount,0) FROM sink;"
+  const formatted=await formatFlinkSql(sql)
+  expect(formatted).toMatch(/\(\s*\n\s+id BIGINT,\s*\n\s+amount DECIMAL\(18, 2\),\s*\n\s+payload STRING/)
+  expect(formatted).toMatch(/'connector' = 'print',\s*\n\s+'print-identifier' = 'a,b'/)
+  expect(sameSqlTokens(sql,formatted)).toBe(true)
+  expect(await formatFlinkSql(formatted)).toBe(formatted)
+})
+
+test('格式化保留引用标识符、函数、行注释与多表语句的全部 token',async()=>{
+  const sql="CREATE TABLE `one` (`a,b` STRING, n DECIMAL(12,2)) WITH ('connector'='print'); -- note , (\nCREATE TABLE two (x STRING, y AS CONCAT(x, ',')) WITH ('connector'='datagen'); INSERT INTO `one` SELECT x, 1 FROM two;"
+  const formatted=await formatFlinkSql(sql)
+  expect(sameSqlTokens(sql,formatted)).toBe(true)
+  expect(formatted).toContain("`a,b` STRING,")
+  expect(formatted).toContain("-- note , (")
+})
 
 test('部署 spec 拒绝标量及数组，合法对象保留原文',()=>{
   for(const spec of ['true','false','1','0','text','null','[]','[one]'])

@@ -642,8 +642,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:49f0d1ab6d7147782c05419ad1808dc58c573eded44d7f5c122115aa511bf995 |
-| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:4f459a95413d7cc702e001a58f41edd88db68ed43085725fc0d48fce9213464c |
+| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:41a7834b231535d09987512b203d9de7ea0d3592e7cd78101df2a9f2bc329599 |
+| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:9fb159dc57fc8921a9a5aefc04df16eb573d5475211152db44d8dd6b927beea9 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -665,3 +665,11 @@ app的0.0.4与0.0.7曾共享同一manifest，因此先使用Registry3.1.2的 [�
 按 [Distribution垃圾回收要求](https://distribution.github.io/distribution/about/garbage-collection/) 停止原registry后运行原生dry-run；独立计算所有仓库保留manifest的递归引用集，确认382个候选全部属于旧flink-web且不与保留内容共享，才执行原生GC，随后恢复原容器与端口映射。未使用全仓库delete-untagged，也未修改其他仓库的标签或manifest。
 
 仓库blob数据逻辑大小6,366,328,217→925,849,866字节，回收5,440,478,351字节（约5.44GB/5.07GiB）；不等于Docker虚拟磁盘缩容。三个0.0.7的manifest/config/layer及其他仓库保留内容共46个digest均经HTTP读取并校验SHA-256，旧标签返回404，仓库/v2/恢复200。`flink:1.20.5-scala_2.12`、`registry:3`保持原摘要。没有清理本机Docker镜像、数据库或Kubernetes工作负载；实际清理范围和验收见 [维护记录](agent/validation.md#仓库旧版本清理2026-10-19)。
+
+## AI 三步对话与 SQL 默认值发布（2026-10-19）
+
+app/web继续覆盖0.0.7，上方“当前镜像”摘要已更新；downloader保持原0.0.7。本次从干净Kylin基础按正式Dockerfile及已验证产物重建，不继承业务镜像；app保留BES/Java17/Boot分层。app逻辑585,012,186字节、压缩层282,284,085字节、10层；web逻辑310,956,016字节、压缩层111,322,817字节、8层，保持上一轮瘦身范围。
+
+AI对话和总结复用元数据集合，无新表迁移；更新后保留数据库及原加密主密钥。新建SQL为空并先确认不可变名称，默认升级策略stateless，已有显式策略不覆盖。未显式选择Runner时，SQL及验证专用Session使用默认对象键`artifacts/shared/sql-runner/flink-web-sql-runner.jar`（跟随配置rootPrefix）。管理员须将匹配的Runner上传到该共享目录；内置下载入口继续提供文件，平台不自动替换共享对象、显式选择或运行中Session。文件不存在/S3未配置/读取失败仍报错，不退回另一份Runner。
+
+后端243项均实际执行通过（包含补跑的两版Parser及真实隔离MinIO），最终Web42项相关回归和真实BES加密登录/持久化会话/确认生成/报错修复/保存重进/默认Runner/YAML/发布跳转通过；Web代理恢复通过。指定仓库manifest正文/响应摘要、config及全部10/8层压缩SHA-256、大小和解压diff_id与已测试镜像一致。[具体验收范围](agent/validation.md#ai-三步对话与-sql-默认值2026-10-19)。未更新现场Kubernetes、原数据库或共享Runner文件；模型使用隔离协议替身，不宣称真实厂商或生产Planner认证。

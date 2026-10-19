@@ -102,9 +102,12 @@ public class SqlJobServiceImpl implements SqlJobService {
     if (input.sql().getBytes(StandardCharsets.UTF_8).length > 32768)
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SQL", "SQL 脚本不能超过 32 KiB");
     var runtime = runtimeYaml.prepare(input.runtime(), input.name(), false);
+    if (runtime.path("upgradeMode").asText().isBlank()) runtime.put("upgradeMode", "stateless");
     if (!runtime.path("deploymentYaml").asText().isBlank()) configuration(input);
     catalogs.prepare(runtime.deepCopy());
     ObjectNode old = records.find("sql_jobs", id);
+    if (old != null && input.revision() == 0)
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
     if (old != null) deploymentLink(old);
     var existingJob = jobRepository.findByName(input.name());
     if (existingJob.isPresent()
@@ -120,6 +123,7 @@ public class SqlJobServiceImpl implements SqlJobService {
     if (old != null)
       for (String key : List.of("jobId", "publishedAt"))
         if (old.has(key)) record.set(key, old.get(key));
+    jobs.reserveName(input.name(), "sql:" + id);
     ObjectNode saved = records.save("sql_jobs", id, record, input.revision());
     access.initialize("sql:" + id);
     records.save(
@@ -203,6 +207,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   /** 渲染可编辑配置；SQL 参数只在显式预览/发布时由脚本生成。 */
   public ObjectNode configuration(SqlDraftRequest input) {
     ObjectNode runtime = runtimeYaml.prepare(input.runtime(), input.name(), false);
+    if (runtime.path("upgradeMode").asText().isBlank()) runtime.put("upgradeMode", "stateless");
     ObjectNode options = runtime.deepCopy();
     catalogs.prepare(options);
     runtimeArtifacts.configure(options);
@@ -249,7 +254,7 @@ public class SqlJobServiceImpl implements SqlJobService {
                 ? input.runtime().path("workspaceId").asText()
                 : null);
     JobDraft result =
-        existing.isPresent() ? jobs.update(existing.get().id(), draft) : jobs.create(draft);
+        existing.isPresent() ? jobs.update(existing.get().id(), draft) : jobs.createSql(draft, id);
     if (existing.isEmpty()) access.copy("sql:" + id, result.id());
     record.put("jobId", result.id()).put("publishedAt", Instant.now().toString());
     records.save("sql_jobs", id, record, revision);
@@ -266,6 +271,7 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(
           HttpStatus.CONFLICT, "SQL_DEPLOYMENT_EXISTS", "请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿");
     records.delete("sql_jobs", id, revision);
+    jobs.releaseName(record.path("name").asText(), "sql:" + id);
     audit.record("SQL_DELETE", id, "SUCCESS");
   }
 }

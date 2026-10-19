@@ -26,6 +26,29 @@ export interface AiResult {
   flinkConfiguration?: Record<string, string>
   validationLevel?: string
   spec?: Record<string, unknown>
+  reply?: string
+  baseSqlHash?: string
+  conversationVersion?: number
+}
+export interface AiConversation {
+  id: string
+  sqlId: string
+  revision: number
+  contentVersion: number
+  summaryVersion: number
+  confirmedVersion: number
+  summary: string
+  summarySqlHash?: string
+  unknowns: string[]
+  lastSqlTaskId?: string
+  messages: {
+    id: string
+    role: 'user' | 'assistant'
+    content: string
+    mode?: string
+    taskId?: string
+    createdAt: string
+  }[]
 }
 export interface AiTask {
   id: string
@@ -37,6 +60,23 @@ export interface AiTask {
   result?: AiResult
 }
 export const aiApi = {
+  conversation: (sqlId: string) =>
+    request<AiConversation>('/api/ai/conversations/' + encodeURIComponent(sqlId)),
+  message: (sqlId: string, value: unknown) =>
+    request<AiConversation>('/api/ai/conversations/' + encodeURIComponent(sqlId) + '/messages', {
+      method: 'POST',
+      ...jsonBody(value),
+    }),
+  summary: (sqlId: string, value: unknown) =>
+    request<AiConversation>('/api/ai/conversations/' + encodeURIComponent(sqlId) + '/summary', {
+      method: 'PUT',
+      ...jsonBody(value),
+    }),
+  confirm: (sqlId: string, value: unknown) =>
+    request<AiConversation>('/api/ai/conversations/' + encodeURIComponent(sqlId) + '/confirm', {
+      method: 'POST',
+      ...jsonBody(value),
+    }),
   models: (management = false) => request<AiModel[]>('/api/ai/models?management=' + management),
   saveModel: (id: string, value: unknown) =>
     request<AiModel>('/api/ai/models/' + encodeURIComponent(id), {

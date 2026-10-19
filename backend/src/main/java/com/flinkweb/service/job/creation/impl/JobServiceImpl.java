@@ -53,7 +53,25 @@ public class JobServiceImpl implements JobService {
 
   /** 检查全局唯一名称，保存仍由数据库唯一约束兜底。 */
   public boolean nameAvailable(String name, String excludeId) {
-    return repository.findByName(name).filter(job -> !job.id().equals(excludeId)).isEmpty();
+    var sql = records.find("sql_jobs", name);
+    return repository.findByName(name).filter(job -> !job.id().equals(excludeId)).isEmpty()
+        && (sql == null || !excludeId.isBlank() && excludeId.equals(sql.path("jobId").asText()));
+  }
+
+  /** 唯一记录覆盖尚未发布的 SQL 名称，避免跨入口并发占用。 */
+  public void reserveName(String name, String owner) {
+    var old = records.find("job_names", name);
+    if (old != null && !owner.equals(old.path("owner").asText()))
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
+    if (old == null) records.save("job_names", name,
+        new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("owner", owner), 0);
+  }
+
+  /** SQL 与部署共享名称时，删除部署不能释放仍属于 SQL 草稿的名称。 */
+  public void releaseName(String name, String owner) {
+    var old = records.find("job_names", name);
+    if (old != null && owner.equals(old.path("owner").asText()))
+      records.delete("job_names", name, old.path("revision").asLong());
   }
 
   /** 读取指定草稿，不存在时返回明确业务错误。 */
@@ -67,6 +85,20 @@ public class JobServiceImpl implements JobService {
   /** 校验 YAML 语法，在同一事务内新增草稿和审计记录。 */
   @org.springframework.transaction.annotation.Transactional
   public JobDraft create(DraftRequest request) {
+    return createDraft(request, null);
+  }
+
+  /** 仅受控 SQL 发布流程能复用同一名称，并重新核验编辑范围。 */
+  @org.springframework.transaction.annotation.Transactional
+  public JobDraft createSql(DraftRequest request, String sqlId) {
+    access.require("sql:" + sqlId, "edit");
+    if (!sqlId.equals(request.name())) throw new BusinessException(HttpStatus.BAD_REQUEST, "IMMUTABLE_NAME", "SQL 名称不可修改");
+    records.require("sql_jobs", sqlId);
+    return createDraft(request, sqlId);
+  }
+
+  /** 共用创建逻辑，在插入部署之前完成名称占用。 */
+  private JobDraft createDraft(DraftRequest request, String sqlId) {
     var source = yaml.parse(request.yaml());
     if (source.at("/metadata/labels").has(JobEditorPolicy.LABEL))
       JobEditorPolicy.mark(source, JobEditorPolicy.allowsForm(source));
@@ -79,6 +111,8 @@ public class JobServiceImpl implements JobService {
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_ID_EXISTS", "作业目录标识已存在，请重新创建");
     if (repository.findByName(request.name()).isPresent())
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请修改名称或编辑已有作业");
+    if (sqlId == null && records.find("sql_jobs", request.name()) != null)
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已被 SQL 草稿占用");
     var now = Instant.now();
     var draft =
         new JobDraft(
@@ -94,6 +128,7 @@ public class JobServiceImpl implements JobService {
             now,
             0,
             null);
+    reserveName(request.name(), sqlId == null ? "job:" + draft.id() : "sql:" + sqlId);
     repository.insert(draft);
     access.initialize(draft.id());
     if (!"sql".equals(source.at("/metadata/labels/flink-web~1job-type").asText()))
@@ -143,6 +178,7 @@ public class JobServiceImpl implements JobService {
     access.require(id, "edit");
     var existing = get(id);
     if (!repository.delete(id, revision)) throw conflict();
+    releaseName(existing.name(), "job:" + id);
     for (var sql : records.list("sql_jobs")) {
       if (!id.equals(sql.path("jobId").asText())) continue;
       String workspace =

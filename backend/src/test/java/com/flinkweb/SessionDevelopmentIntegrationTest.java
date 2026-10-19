@@ -368,16 +368,19 @@ class SessionDevelopmentIntegrationTest {
     sessions.save("omit-resource", new SessionRequest("omit-resource", "", false, options, 0));
   }
 
-  /** 验证专用 Session 必须显式选择 Runner，普通 Session 可不挂载 Runner。 */
+  /** 验证与 SQL 共享固定默认 Runner，缺存储时明确报错；普通 Session 仍不挂载 Runner。 */
   @Test
-  void validationRunnerRequiresExplicitSelection() {
+  void validationRunnerUsesSharedDefaultAndStillValidatesStorage() {
     var runtime = runtime();
     runtime.remove("runnerArtifactId");
+    var resolver = applicationContext.getBean(com.flinkweb.service.sql.support.SqlRuntimeArtifacts.class);
+    assertThat(resolver.runner(runtime)).isEqualTo("s3:artifacts/shared/sql-runner/flink-web-sql-runner.jar");
+    assertThat(resolver.runner(runtime())).isEqualTo(runner);
     assertThatThrownBy(
             () ->
                 sessions.save(
                     "sql-validation", new SessionRequest("validation", "", true, runtime, 0)))
-        .hasMessageContaining("runnerArtifactId");
+        .hasMessageContaining("S3");
     var saved = sessions.save("ordinary", new SessionRequest("ordinary", "", false, runtime, 0));
     sessions.start("ordinary", saved.path("revision").asLong());
     assertThat(cluster.get().at("/spec/job").isMissingNode()).isTrue();
