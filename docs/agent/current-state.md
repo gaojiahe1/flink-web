@@ -2,7 +2,7 @@
 
 更新：2026-10-19。最新为 [BES运行时与镜像瘦身](validation.md#bes-运行时与镜像瘦身2026-10-19)：按用户附件替换Tomcat，保留Boot3.5.16/Java17/Kylin SP3。app使用干净基础层及Boot分层；web只复制实际Nginx运行组件；downloader去除Python测试/开发库/安装工具和调试符号。三镜像统一0.0.7（替代此前0.0.4），逻辑体积约1,679→585MB、446→311MB、761→393MB。
 
-后端238项中237通过、1可选跳过；最终BES8081与Web在非root/只读模式通过加密登录/会话/CSRF、3MiB真实MinIO上传下载、双Parser/Runner和SQL/Session页面；Web DNS恢复、downloader8项及真实S3中文文件/插件/启动脚本/限额清理通过。保留/app工作目录，仅BES appserver链接到/tmp，数据库仍/app/data绝对路径。三个0.0.7已发布并核对manifest/config/全部10、8、5层内容；部署清单同步，实际Kubernetes和现有下载器绑定未改。后续必须用正式Dockerfile重建，不能继承上一版业务镜像覆盖文件。提交合并和清理在验收收尾补录。
+后端238项中237通过、1可选跳过；最终BES8081与Web在非root/只读模式通过加密登录/会话/CSRF、3MiB真实MinIO上传下载、双Parser/Runner和SQL/Session页面；Web DNS恢复、downloader8项及真实S3中文文件/插件/启动脚本/限额清理通过。保留/app工作目录，仅BES appserver链接到/tmp，数据库仍/app/data绝对路径。三个0.0.7已发布并核对manifest/config/全部10、8、5层内容；部署清单同步，实际Kubernetes和现有下载器绑定未改。后续必须用正式Dockerfile重建，不能继承上一版业务镜像覆盖文件。功能提交995fdda已快进合并本地master，无冲突/新增差异，两分支树一致；临时验证资源/别名和44项确认新增缓存记录清理完成，独占产物收尾清理。仅补录文档，不推送源码Git。
 
 以下为此前状态与各自验证范围；10-15暂缓BES现已由本次明确要求替代。
 
