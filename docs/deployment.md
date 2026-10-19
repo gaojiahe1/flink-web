@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-13。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-19。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -73,8 +73,9 @@ npm run format:check
 | FLINK_WEB_ADMIN_USERNAME / FLINK_WEB_ADMIN_PASSWORD | 初始管理员账号/密码；用户名默认 admin，密码至少 12 字符且 UTF-8 最多 72 字节，仅用户库为空时使用 |
 | FLINK_WEB_MASTER_KEY | 必填，32 字节随机密钥的 Base64，独立备份 |
 | FLINK_WEB_SECURE_COOKIE | HTTPS 入口设为 true；默认 false |
+| FLINK_WEB_BES_BASEDIR | BES运行目录，默认java.io.tmpdir/flink-web-bes；须可写，容器默认/tmp/flink-web-bes |
 | FLINK_WEB_STORAGE_TYPE | local（SQLite，默认）或 mysql |
-| FLINK_WEB_LOCAL_PATH | SQLite 路径，./data/flink-web.db |
+| FLINK_WEB_LOCAL_PATH | 本地启动默认./data/flink-web.db；app镜像显式为/app/data/flink-web.db，覆盖值仍优先 |
 | FLINK_WEB_STORAGE_INITIALIZE | 本地库不存在时是否允许新建；应用与 Kubernetes 清单均为 true；不存在时建库，已有库不重建；可显式设 false 禁止创建缺失文件 |
 | FLINK_WEB_MYSQL_URL / FLINK_WEB_MYSQL_USERNAME / FLINK_WEB_MYSQL_PASSWORD | MySQL JDBC 连接与专用账号 |
 | FLINK_WEB_K8S_URL | Kubernetes API，默认 https://kubernetes.default.svc |
@@ -103,16 +104,16 @@ npm run format:check
 
 从项目根目录构建镜像，再按部署流程推送：
 
-2026-10-09 发布约定：用户要求每次代码/功能修改完成并通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。沿用 `192.168.68.1:5000/flink-web` 仓库和 `0.0.4` 标签，不更新 `latest`；未改动的组件保留现有镜像。发布镜像不自动更新运行中的 Kubernetes 工作负载。
+当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新摘要与瘦身数据见 [本轮发布](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
 
 2026-10-09 Operator 与日志兼容说明：版本识别支持 `1.9.0-xxxxx`、`1.9.1-xxxx` 等发行前缀。FlinkStateSnapshot 从 [Operator 1.10](https://flink.apache.org/2024/10/25/apache-flink-kubernetes-operator-1.10.0-release-announcement/) 引入，按实际 CRD 可用性处理，不单凭镜像版本假设存在。列表中部署与快照请求独立处理错误，快照 CRD 缺失兼容旧版状态，快照读取失败仅显示局部提示，已有作业状态与 YAML 仍返回；Savepoint 停止继续要求有效完成凭据，读取失败不直接删除作业。
 
 Pod 抽屉与详情页日志按需读取最新 10000 行，支持初始化/运行容器及上一实例，流式保留最后 4 MiB，总传输上限 64 MiB；依据 [Kubernetes Pod 日志接口](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/#read-log-log)。日志高亮时间戳与 ERROR/WARN/INFO 等级，支持行号与复制，并继续验证资源所有者链和 Secret 脱敏。需要已有 `pods/log` get、Pod 和所有者资源 get/list、日志脱敏所需 Secret get 授权。Kubernetes 401、403 与网络错误及平台授权失败在后端日志记录操作、资源路径、状态/错误码和必要身份，排查时区分平台角色/作业范围、CSRF 与 ServiceAccount RBAC；不输出请求正文、查询参数、令牌或上游错误正文。
 
 ~~~sh
-docker build -f backend/Dockerfile -t YOUR/flink-web-backend:0.1.0 .
-docker build -t YOUR/flink-web-frontend:0.1.0 frontend
-docker build -t YOUR/flink-web-downloader:0.1.0 downloader
+docker build -f backend/Dockerfile -t 192.168.68.1:5000/flink-web/app:0.0.7 .
+docker build -t 192.168.68.1:5000/flink-web/web:0.0.7 frontend
+docker build -t 192.168.68.1:5000/flink-web/downloader:0.0.7 downloader
 ~~~
 
 2026-10-05 发布验证：Docker Desktop linux/amd64 下 app、web、downloader 三个 Kylin SP3 镜像已重新构建并推送到 192.168.68.1:5000/flink-web，按用户要求覆盖 0.0.4 标签，不更新 latest，仓库摘要与本地一致。后端使用临时 SQLite 健康检查 UP，前端 HTTP 200、Nginx 配置及接口代理通过；下载器以非 root、只读根文件系统准备启动脚本；实际 Flink 1.20.5 主容器从自身镜像复制 Presto 插件并启动，/overview 返回 200。本地 MinIO 整目录复制与删除验证通过。已清理本次临时验证容器和网络，推送后清空 Docker 构建缓存，回收 2.505 GB，保留已标记镜像。未应用实际 Kubernetes 清单或修改运行作业；现场 Metaspace 故障需按下方说明调整作业内存并重新部署。SQL Runner 本次未发布。
@@ -131,9 +132,9 @@ docker build -t YOUR/flink-web-downloader:0.1.0 downloader
 
 已通过仓库 manifest 正文 SHA-256、Docker-Content-Digest 和 config 镜像 ID 核对本地与远端一致；临时容器、网络和本地测试服务已清理，推送后清空构建缓存，回收 703.6 MB，保留已标记镜像。本轮未更新实际 Kubernetes 工作负载，未对生产作业或现场 Operator 进行验收；已有 Pod 需按授权流程重新拉取镜像后生效。
 
-| 镜像（标签 0.0.4） | 仓库摘要 |
+| 历史镜像（标签 0.0.4；含本轮切换版本前的 app 过渡发布） | 仓库摘要 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app | sha256:bfc641b193e210f717eaacab5a3cefa8753d7eb302a1bf4d63487f01f91b46ab |
+| 192.168.68.1:5000/flink-web/app | sha256:49f0d1ab6d7147782c05419ad1808dc58c573eded44d7f5c122115aa511bf995 |
 | 192.168.68.1:5000/flink-web/downloader | sha256:afa85bd44748ee4ff033fad254aa8f7c8281bb3c8171032cc6334909d582f03a |
 | 192.168.68.1:5000/flink-web/web | sha256:79c773658af815e4968d82544d21c9f78b041f2f3050d804d6ef7f730c5fd35a |
 
@@ -614,3 +615,43 @@ app/web:0.0.4已覆盖推送，最新manifest见上表；保留Kylin/JRE/Nginx�
 本轮发现Docker切到C盘默认目录和containerd模式，用户明确要求恢复并提供原目录。原磁盘为 `D:\DevTools\docker\DockerDesktopWSL\disk\docker_data.vhdx`；settings-store.json的CustomWslDistroDir引用其父目录 `D:\DevTools\docker\DockerDesktopWSL`，UseContainerdSnapshotter=false恢复原overlay2存储。先正常停止再修改设置/重启，旧镜像和容器数据已恢复，未移动/覆盖磁盘。沿用已有registry容器及 `D:\DevTools\registry` 绑定目录、127.0.0.1:15000映射；原192.168.68.1:5000到15000的端口转发保留，指定仓库/v2/恢复200。Docker发布环境恢复不等于更新任何Flink/Kubernetes工作负载。
 
 后端237项中236通过、可选MinIO跳过；最终Web26项及真实镜像登录/正常AI单次调用/Parser、代理回归通过。准备阶段取消零调用、1000条事件结果一致和计算量测量的详细范围见 [本轮验收](agent/validation.md#ai-准备阶段取消与结果标识优化2026-10-19)。
+
+## BES 运行时与镜像瘦身（2026-10-19）
+
+用户提供 BES starter 要求替换 Tomcat，随后要求 app、web、downloader 统一发布 0.0.7 并全部瘦身；替代此前暂缓 BES 和沿用 0.0.4 的约定。保留 Boot3.5.16、Java17、Kylin V10 SP3 和非 root/只读根运行条件。附件原样保存，内部 Maven 坐标、file 仓库、校验及 mirrorOf 配置见 [vendor依赖](../backend/vendor-repository/README.md)；不依赖开发者桌面路径，不提取授权内容到知识库。
+
+旧 app/web 在上一版业务镜像上反复覆盖 JAR 或 dist，删除文件也不能回收历史层。现在三个正式 Dockerfile 都从干净 Kylin 构建运行层：
+
+- [app](../backend/Dockerfile)：移除重复 JAR/Parser 和额外软件包安装，采用 [Spring Boot 3.5分层提取](https://docs.spring.io/spring-boot/3.5/reference/packaging/container-images/dockerfiles.html)；依赖与应用分层复用。
+- [web](../frontend/Dockerfile)：构建阶段安装 Nginx，再由 [导出脚本](../frontend/prepare-nginx.sh) 仅带入实际使用的程序、MIME、额外共享库及安装包提供的声明；最终镜像不装入整套软件包依赖，也不保留旧 dist。自定义配置不加载额外动态模块。
+- [downloader](../downloader/Dockerfile)：[精简脚本](../downloader/prepare-runtime.py) 移除 CPython 自带测试、静态库/头文件、构建配置、pip/ensurepip、缓存和开发工具，随后去除解释器及扩展的调试符号；保留标准库、boto3/botocore 服务数据、元数据和运行组件许可。默认底座已有 SSL/压缩库、CA 和账号工具，仅额外复制同麒麟构建的 libffi。
+
+禁止再从上一版业务 app/web/downloader 镜像继承后覆盖文件。默认源码构建命令见第4节；替换 KYLIN_BASE 时须核实原生库、CA 和账号工具兼容性。本轮因外部镜像/软件源连接受限，实际使用已验证的同底座组件和宿主构建产物，经 [Docker命名context](https://docs.docker.com/build/concepts/context/#named-contexts) 覆盖产物阶段，最终运行层仍共用正式 Dockerfile；未声称联网源码 Docker 构建已完成。
+
+离线构建前必须先验证目录中的产物和版本。APP_VERIFIED 包含 app.jar、runner.jar、validators/1.20.3/validator.jar、validators/1.20.5/validator.jar；NGINX_VERIFIED 是导出脚本生成的根目录；PYTHON_VERIFIED 包含精简并 strip 后的 opt/python、usr/lib64/libffi.so.7 及许可目录；WEB_DIST 是本轮类型检查和生产构建通过的 dist。
+
+~~~powershell
+docker buildx build -f backend/Dockerfile --build-context artifacts=APP_VERIFIED -t 192.168.68.1:5000/flink-web/app:0.0.7 --load .
+docker buildx build -f frontend/Dockerfile --build-context nginx-artifacts=NGINX_VERIFIED --build-context web-artifacts=WEB_DIST -t 192.168.68.1:5000/flink-web/web:0.0.7 --load frontend
+docker buildx build -f downloader/Dockerfile --build-context python-artifacts=PYTHON_VERIFIED -t 192.168.68.1:5000/flink-web/downloader:0.0.7 --load downloader
+~~~
+
+BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置](../backend/src/main/java/com/flinkweb/config/server/BesServerConfiguration.java) 显式同步。其文档根仍相对 user.dir/appserver 创建，因此仅将 /app/appserver 链接至 /tmp，保留 /app 工作目录及相对路径语义；数据库保持 /app/data/flink-web.db，Parser/Runner 保持绝对路径。/tmp 须可写，SQLite JNI 使用允许 exec 的临时卷。未迁移原数据库或修改实际 Kubernetes 工作负载。
+
+三个 0.0.7 已推送，经原 registry 的 localhost:15000 映射发布，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要、config、全部压缩层大小/SHA-256 及解压 diff_id 与已测试镜像一致。app/web 为 UID/GID10001，downloader 为 UID9999，均 linux/amd64；不更新 latest。用户切换版本前 app 曾按旧约定发布同一 BES 内容到 0.0.4，最终交付统一采用 0.0.7。
+
+| 当前镜像 | 仓库 manifest SHA-256 |
+| --- | --- |
+| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:49f0d1ab6d7147782c05419ad1808dc58c573eded44d7f5c122115aa511bf995 |
+| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:4f459a95413d7cc702e001a58f41edd88db68ed43085725fc0d48fce9213464c |
+| 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
+
+| 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
+| --- | --- | --- | --- |
+| app | 1,679,404,280 → 585,001,401（-65.2%） | 1,269,253,098 → 282,274,156 | 25 → 10 |
+| web | 446,050,884 → 310,963,280（-30.3%） | 157,074,444 → 111,325,456 | 25 → 8 |
+| downloader | 760,604,373 → 392,503,474（-48.4%） | 244,289,216 → 146,378,698 | 6 → 5 |
+
+体积采用同一 Docker/registry 口径，逻辑大小包括共享 Kylin 层，不代表 Docker 磁盘文件占用。后端238项中237通过、1可选独立MinIO目录用例跳过；最终三镜像另通过真实隔离MinIO和只读运行验证，详见 [验收](agent/validation.md#bes-运行时与镜像瘦身2026-10-19)。Web代理恢复、下载器8项及真实S3/中文文件名/插件/启动脚本/超限清理均通过。
+
+[部署清单](../deploy/kubernetes/application.yaml) 三处引用已改为0.0.7，本次未应用到集群。已有系统设置保存的全局下载器绑定优先于环境变量，升级时须同时选择0.0.7下载器；本次不修改已有数据库中的绑定或已运行作业。生产BES授权、MySQL及现场Kubernetes不在本轮新增认证范围。

@@ -1,0 +1,5 @@
+# Repository metadata checksums require byte-for-byte checkout stability.
+*.jar binary
+*.pom -text
+*.sha1 -text
+*.sha256 -text

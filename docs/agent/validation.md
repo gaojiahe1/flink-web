@@ -1,5 +1,20 @@
 # 治理与记忆系统验收
 
+## BES 运行时与镜像瘦身（2026-10-19）
+
+- 起点：干净master `d02bedc`，工作分支 `codex/bes-lean-image`。用户明确要求优化app Dockerfile，并提供BES 11.5.0.006 JAR替换Tomcat，替代10-15暂缓决定；随后明确要求三个平台镜像统一0.0.7并同时瘦身web/downloader；不更新latest或实际Kubernetes工作负载。
+- 根因：此前离线发布在上一版业务镜像上持续COPY新JAR/Parser，旧内容仍保留在历史层。旧app 1,679,404,280字节/25层，registry压缩层1,269,253,098字节。正式Dockerfile现从干净Kylin/JRE开始，通过Spring Boot tools分离依赖与应用；已验证产物使用同一Dockerfile的命名artifacts context，非旧业务镜像覆盖。
+- BES附件原样保留，SHA-256 `b48de2e5f8ab0526cfa7b9c37a46ab0b9bc856864de57ddaa360f212c9605429`；无厂商POM，使用明确标注的项目内部坐标及file仓库，原包不修改。实际清除本任务安装的JAR/POM缓存后，从file仓库重新解析并成功package；Maven镜像排除vendor仓库。POM/校验文件通过gitattributes保持原字节；未提取或记录授权内容。
+- 最终完整后端package 238项，237通过、1可选独立MinIO目录用例跳过，无失败/错误；含实际BES监听端口及两份精确Parser。最初EL断言误以为实现类必须com.bes开头，实际BES bundle包含Apache命名实现，改查代码来源；只读启动及多上下文发现basedir未映射、旧installRoot优先和文档根相对user.dir问题，适配工厂/进程目录后全量重跑通过。193→194类/1079方法构造器中文注释及分层检查通过。
+- 最终实际镜像linux/amd64、UID/GID10001、只读根和临时SQLite；验证BES在8081端口实际运行、临时文件位于/tmp，加密登录、JSESSIONID HttpOnly/SameSite=Lax、CSRF拒绝、3MiB multipart到隔离真实MinIO后逐字节下载一致，精确1.20.3/1.20.5 Parser、Runner下载及SQL/Session页面均通过，无页面异常。SIGTERM正常关闭Hikari，退出143，无强制超时杀死。测试夹具曾误用下载器Python别名，已改为其实际/opt/python/bin/python3；健康检查直接访问后端，避免静态入口回退误判。
+- 最终585,001,401字节/10层，逻辑体积减少约65.2%；压缩层282,274,156字节，减少约77.8%。业务层约476KB，依赖独立复用。此次实际执行正式Dockerfile的离线路径及宿主完整Maven构建，未将联网源码Docker构建或生产BES/MySQL/Kubernetes认证写成通过。
+- App保持/app工作目录，仅/app/appserver链接到/tmp，避免改变相对路径语义；最终数据库/Parser/Runner仍为原绝对路径。此前开发候选曾用/tmp工作目录，未作为最终结果记录。
+- Web源码类型/生产构建通过（既有chunk体积提示保留），最终0.0.7的非root/只读、参数校验、Kubernetes DNS search补全、后端缺失启动、上线恢复及变更IP恢复全部通过。与最终BES app联调再次通过加密登录/会话/CSRF、3MiB真实MinIO逐字节上传下载、精确双Parser、Runner及SQL/Session页面，无浏览器异常。
+- Downloader精简后标准库、boto3和CA可用；原8项单元回归在宿主及最终UID9999/只读镜像内均通过。隔离真实MinIO验证3MiB逐字节S3下载、中文文件名、插件独立根、可执行启动脚本及sh语法、2字节限额拒绝并清除part；另验证系统CA加载、SSL/bz2/lzma/ctypes可用。不外推为全部S3厂商或现场Flink认证。
+- Web 446,050,884→310,963,280字节，25→8层，压缩157,074,444→111,325,456字节；downloader760,604,373→392,503,474字节，6→5层，压缩244,289,216→146,378,698字节。Nginx/Python来自原已运行同麒麟组件，经正式导出/精简脚本及正式Dockerfile运行阶段重建；联网源码构建阶段未完成，未调整版本或全局dockerignore。首次Python导出向Windows逐文件复制过慢，停止本任务容器后改为容器内精简、归档导出，最终完整验证通过。
+- 三个0.0.7均已推送并从指定192.168.68.1:5000核对manifest正文/响应摘要、config及全部10/8/5层的大小、压缩SHA-256和解压diff_id。版本切换前按旧约定发布的app0.0.4保留历史；后续不再覆盖0.0.4/latest。清单三处引用更新；系统已保存下载器绑定仍优先环境变量，未改现有数据库/实际工作负载。摘要见部署指南。
+- 最终app再次SIGTERM正常退出143且Hikari关闭完成；临时app/web/MinIO容器、独占网络及localhost发布别名已清理，两阶段共44项确认新增缓存记录按ID回收，保留正式镜像、原registry及共享/未知缓存。提交合并收尾补录。
+
 ## AI 准备阶段取消与结果标识优化（2026-10-19）
 
 - 起点：干净master `3edea59`，工作分支 `codex/ai-cancel-identity`。上轮五项不重复安排，本次仅准备取消边界和结果标识计算。

@@ -64,4 +64,4 @@ SQL、JAR、Session 共用登记的 Flink 镜像，以挂载 Runner JAR 运行�
 
 用户要求 Session 完整错误悬浮、刷新移到列表工具栏右上角、关闭 Flink UI 的 Submit New Job；模型服务重新设计并实际测试指定 ModelScope/Qwen 模型；SQL 按官方2.3资料补 Connector/类型提示和高亮；AI 按四步需求向导原型实现并增加模型选择。现已实现的边界及测试分别见 [SQL/Session模块](../modules/sql-session.md)、[AI模块](../modules/ai-assistant.md) 与 [本次验收](../validation.md#session-界面与模型需求向导2026-10-15)。
 
-用户先指定 BES11.5.0.x，随后明确“暂时先不管BES，还是用Tomcat”，本轮保留 Spring Boot3.5/Tomcat；待用户找到授权 JAR 后另行适配，没有加入猜测的依赖。真实 ModelScope 测试被账号邮箱验证要求阻止，不标成功。
+10-15历史决定：用户先指定 BES11.5.0.x，随后暂缓并保留Tomcat。2026-10-19用户已提供 BES starter 并明确要求替换，现已实现，以 [REQ-004](REQ-004-storage-security.md) 和 [运行模块](../modules/storage-runtime.md#bes-运行时与后端镜像2026-10-19) 为准。真实 ModelScope 测试被账号邮箱验证要求阻止，不标成功。

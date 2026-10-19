@@ -1,11 +1,11 @@
 # 架构与数据流
 
-更新：2026-10-12。依据当前代码；重要业务细则通过需求/模块导航，不在此重复。
+更新：2026-10-19。依据当前代码；重要业务细则通过需求/模块导航，不在此重复。
 
 ```mermaid
 flowchart LR
   Browser[Vue 浏览器] --> Web[Nginx 同源入口]
-  Web --> API[Spring Boot API]
+  Web --> API[Spring Boot + BES API]
   API --> DB[SQLite PVC 或 MySQL]
   API --> K8S[Kubernetes API]
   K8S --> Operator[Flink Operator]
@@ -17,6 +17,7 @@ flowchart LR
 ```
 
 - 平台部署：单 StatefulSet/Pod，前端 8080、后端 8081；NodePort 30080。同源 Session/CSRF 请求经过 Nginx；Flink UI 经后端验证登录、作业权限与目标路径后只读代理。
+- 运行容器：Spring Boot 3.5.16 / Java17 使用用户提供的 BES 11.5.0.006 bundle，排除独立 Tomcat/EL 依赖；镜像从干净 Kylin 基础层按依赖/业务分层重建，不能继承上一版业务镜像。[构建与运行目录](modules/storage-runtime.md#bes-运行时与后端镜像2026-10-19)。
 - 后端依赖：controller → service 接口 → impl → repository 或 collector/client；持久化 SQL 只在 repository/datasource。[分层检查](../../scripts/check_backend.py)验证该边界，Bean 构造注入和 `spring.factories` 均有动态用途。
 - 草稿发布：表单/YAML → 结构/业务校验 → 变量/制品/模板渲染 → 权限、修订与资源身份检查 → Kubernetes dry-run → 实际提交 → 发布/操作记录。保存草稿只写数据库；受理状态不证明运行。
 - 停止：持久化停止意图及加密的实际部署配置 → 提交挂起或带前置条件删除 → 手动刷新推进 → 确认保存点并先存恢复路径 → 删除 FlinkDeployment。参见 [生命周期模块](modules/job-lifecycle.md)。

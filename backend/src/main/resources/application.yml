@@ -1,5 +1,7 @@
 server:
   port: ${SERVER_PORT:8080}
+  bes:
+    basedir: ${FLINK_WEB_BES_BASEDIR:${java.io.tmpdir}/flink-web-bes}
   servlet:
     session:
       timeout: 30m

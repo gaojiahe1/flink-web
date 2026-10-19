@@ -9,14 +9,21 @@ RUN yum install -y gcc make curl tar gzip openssl-devel bzip2-devel libffi-devel
     && cd /build && ./configure --prefix=/opt/python --with-ensurepip=install \
     && make -j2 && make install \
     && /opt/python/bin/python3 -m pip install --no-cache-dir boto3==1.42.70
+COPY prepare-runtime.py /tmp/prepare-runtime.py
+RUN /opt/python/bin/python3 /tmp/prepare-runtime.py /opt/python \
+    && strip --strip-unneeded /opt/python/bin/python3.12 \
+    && find /opt/python/lib/python3.12/lib-dynload -name '*.so' -exec strip --strip-unneeded {} +
 
-FROM ${KYLIN_BASE}
-RUN yum install -y openssl-libs bzip2-libs libffi zlib xz-libs ca-certificates shadow-utils \
-    && yum clean all && rm -rf /var/cache/dnf /var/cache/yum \
-    && useradd --uid 9999 --create-home downloader
+FROM scratch AS python-artifacts
 COPY --from=python-build /opt/python /opt/python
+COPY --from=python-build /usr/lib64/libffi.so.7* /usr/lib64/
+COPY --from=python-build /usr/share/licenses/libffi /usr/share/licenses/libffi
+
+FROM ${KYLIN_BASE} AS runtime
+COPY --from=python-artifacts / /
+RUN useradd --uid 9999 --no-create-home downloader
 COPY download.py flink-bootstrap.sh /app/
-RUN /opt/python/bin/python3 -c "import ssl, boto3; print(ssl.OPENSSL_VERSION)"
+RUN /opt/python/bin/python3 -c "import ssl, boto3, bz2, lzma, ctypes; assert ssl.get_default_verify_paths().cafile; print(ssl.OPENSSL_VERSION)"
 USER 9999
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 ENTRYPOINT ["/opt/python/bin/python3", "/app/download.py"]

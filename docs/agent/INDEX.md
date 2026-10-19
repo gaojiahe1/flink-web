@@ -1,6 +1,6 @@
 # 项目知识索引
 
-更新：2026-10-15。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
+更新：2026-10-19。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |
 | --- | --- | --- | --- |
@@ -8,7 +8,7 @@
 | 刷新、轮询、Operator、状态、ACCEPTED | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [按需观测](decisions/ADR-001-on-demand.md) |
 | JAR、YAML、表单、ServiceAccount、PodTemplate、模板、JM/TM | [REQ-002](requirements/REQ-002-authoring.md) | [作业配置](modules/job-authoring.md) | [模板分层](decisions/ADR-004-templates.md) |
 | SQL、AI 助手、自然语言生成、需求确认、修改对比、Session、验证、Runner、Parser、Catalog、StatementSet、TaskManager 数量、固定副本、格式化、Connector 提示、logConfiguration、RowKind、事件游标、取消延迟、共享配置编辑 | [REQ-003](requirements/REQ-003-sql-session.md) | [SQL 与 Session](modules/sql-session.md) | [按需观测与验证例外](decisions/ADR-001-on-demand.md) |
-| S3、文件、目录、制品、复制、下载器、插件、Kylin、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
+| S3、文件、目录、制品、复制、下载器、插件、Kylin、镜像、Dockerfile、BES、Tomcat、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | AI、需求向导、ModelScope、模型服务、SQL 生成/解释/修复、报错分析、数据定义补充、同号核对、异常结构、密钥快照 | [REQ-003](requirements/REQ-003-sql-session.md) | [AI 助手与模型服务](modules/ai-assistant.md) | 复用现有权限、存储与显式验证边界 |
 | 权限、登录、密钥、模型服务配置、SQLite、MySQL、迁移、数据源、JDBC、Kafka | [REQ-004](requirements/REQ-004-storage-security.md)；AI 新需求见 [REQ-003](requirements/REQ-003-sql-session.md) | [元数据与权限](modules/metadata-security.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | 治理、清理、记忆、新会话、增量、索引 | [REQ-005](requirements/REQ-005-governance.md) | [工作说明](workflow.md) | [轻量记忆](decisions/ADR-005-memory.md) |

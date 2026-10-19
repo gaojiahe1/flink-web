@@ -1,6 +1,6 @@
 # 制品与运行文件
 
-更新：2026-10-13。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-19。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：S3 浏览/上传/复制/删除、外部文件引用、下载器与 S3 插件准备。S3StorageClient 单独负责存储协议，ArtifactService 管业务，ArtifactPodBuilder/S3PluginPodBuilder 渲染受管卷与容器；实际文件读取在 downloader/Flink 主容器。
 
@@ -33,3 +33,15 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 2026-10-13 来源补核：下载器无 SHA-256 内容校验不等于禁用 S3 协议 checksum、交付文件哈希或镜像摘要核对。生成 YAML 不注入 AWS_DEFAULT_REGION；当前下载器可读取该变量作为旧环境兼容回退，受管 S3 清单注入 AWS_REGION 用于签名。系统设置全局下载器绑定替代每条 Flink 镜像配置；唯一 fw-download 准备脚本，主容器从自身镜像复制插件的原因及历史方案替代见 ADR-003。复制专属目录含子目录和未引用文件，实际目录操作定位 S3StorageClient.copyJobFiles/deleteJobStorage；本轮只读核对，10-05/10-08 隔离 MinIO 及现场 test2 历史验证见验收记录。
 
 本聊天补核（2026-10-13）：当前 S3Client 显式配置 WHEN_REQUIRED、LegacyMd5Plugin、path-style 和禁用分块编码，下载器也设置 s3v4/WHEN_REQUIRED；生产旧镜像通过两个环境变量修复的记录不表示当前代码仍缺此配置。S3FailureDiagnostics.failure/trace 已有结构化诊断及安全原因链/栈帧/suppressed，测试定义覆盖脱敏、循环链和批量删除 HTTP200 下的单项错误，本轮未执行。`artifacts/` 是对象前缀，启动不创建空目录，首次写对象自然形成；桶须预建，平台没有 CreateBucket。环境密钥只初始化缺失的配置管理项；切换存储不自动搬对象、更新已有作业/Session 或替换已保存密钥。详见 [部署指南](../../deployment.md#更换-s3-兼容服务2026-10-10)。
+
+## BES 运行时与后端镜像（2026-10-19）
+
+后端使用用户提供的未修改 BES bundle，内部坐标/来源校验见 [依赖说明](../../../backend/vendor-repository/README.md)；[POM](../../../backend/pom.xml) 排除 starter-tomcat 及独立 tomcat-embed-el。BES bundle 自带 Jakarta Servlet/EL，EL类名仍有Apache命名，以代码来源检查确认来自BES bundle，不按包名前缀猜容器。
+
+[运行目录适配](../../../backend/src/main/java/com/flinkweb/config/server/BesServerConfiguration.java) 将 FLINK_WEB_BES_BASEDIR（默认java.io.tmpdir/flink-web-bes）传给工厂，并同步BES优先读取的installRoot，避免上下文沿用旧目录。该版本仍无条件相对user.dir创建文档根，因此将/app/appserver链接至/tmp，保留/app工作目录及相对路径语义；数据库明确使用/app/data/flink-web.db，Parser/Runner保持绝对路径。只读根及UID10001不变，不把授权资源提取到知识库。
+
+[Dockerfile](../../../backend/Dockerfile) 使用干净Kylin/JRE，移除重复业务层及额外软件包安装；Spring Boot工具拆分依赖/应用。默认源码构建；离线发布可用命名context覆盖artifacts阶段，目录必须含经过相应校验的app.jar、runner.jar和双版本validators。后续发布必须使用此正式Dockerfile，不能FROM上一版app再覆盖JAR，否则旧内容仍在历史层。实测1,679,404,280→585,001,401字节，25→10层；压缩层1,269,253,098→282,274,156字节。体积是同一Docker/registry口径，不是Docker全盘占用。
+
+[真实BES回归](../../../backend/src/test/java/com/flinkweb/BesServerIntegrationTest.java) 核对实际服务器、显式端口、目录、EL来源及真实HTTP；最终镜像另验证登录/Session/CSRF、3MiB MinIO上传下载、双Parser及Runner。完整范围见 [验收](../validation.md#bes-运行时与镜像瘦身2026-10-19)。
+
+2026-10-19 追加要求：app、web、downloader统一发布0.0.7，替代0.0.4。三个运行镜像均从干净Kylin基础层构建；[Web Dockerfile](../../../frontend/Dockerfile) 通过 [导出脚本](../../../frontend/prepare-nginx.sh) 仅复制Nginx及所需额外运行库，避免整套安装层和历史dist；[Downloader Dockerfile](../../../downloader/Dockerfile) 用 [精简脚本](../../../downloader/prepare-runtime.py) 清理CPython测试/开发静态库/安装工具及缓存，再strip，保留boto3服务数据和标准库。Web逻辑体积446,050,884→310,963,280字节；downloader760,604,373→392,503,474字节。正式源码构建与离线验证产物共用Dockerfile，不能从旧业务镜像覆盖。全部0.0.7已推送并核对所有层；清单引用更新，实际工作负载/现有系统下载器绑定未修改，升级注意保存配置优先于环境变量。摘要和命令见 [部署指南](../../deployment.md#bes-运行时与镜像瘦身2026-10-19)。
