@@ -2,6 +2,8 @@
 
 2026-10-19最新：[AI三步对话与SQL默认值](validation.md#ai-三步对话与-sql-默认值2026-10-19)。用户确认的总结内嵌设计已实现：三步导航、七成对话区、完整会话/总结持久化、明确确认后生成、旧SQL解释及报错修复。新SQL先确认唯一名称、内容为空且名称锁定；建表字段/WITH选项分行；默认共享Runner、stateless、发布成功/部署受理后跳转列表，YAML顺序稳定。后端243项及最终Web42项通过，真实隔离镜像链路和代理通过；app/web0.0.7已发布并逐层核对，downloader不变，摘要见[部署指南](../deployment.md#ai-三步对话与-sql-默认值发布2026-10-19)。未改现场Kubernetes或共享Runner文件；默认文件须存在且可读，已有显式Runner/策略继续优先。下方四步向导/强制手动Runner记录仅为历史。
 
+功能提交`9dec122`已从`codex/ai-conversation-inline`快进合并本地master，无冲突/新增差异；临时验证容器/网络/Vite/别名及19项本次新增构建缓存已清理，保留正式镜像、原registry和共享数据。此后仅补录文档，未推送源码Git。
+
 2026-10-19 维护追加：[按用户要求清理仓库旧版本](validation.md#仓库旧版本清理2026-10-19)。app/web/downloader仅保留0.0.7，三个旧标签及63份历史manifest已删除；离线原生GC回收382个旧版独占blob，约5.44GB。原registry已恢复，全部保留内容46个digest校验通过；flink/registry其他仓库和本机镜像、数据库、Kubernetes未改。以下历史旧标签/摘要只作记录，不能视为仍可从仓库拉取。
 
 更新：2026-10-19。最新为 [BES运行时与镜像瘦身](validation.md#bes-运行时与镜像瘦身2026-10-19)：按用户附件替换Tomcat，保留Boot3.5.16/Java17/Kylin SP3。app使用干净基础层及Boot分层；web只复制实际Nginx运行组件；downloader去除Python测试/开发库/安装工具和调试符号。三镜像统一0.0.7（替代此前0.0.4），逻辑体积约1,679→585MB、446→311MB、761→393MB。
