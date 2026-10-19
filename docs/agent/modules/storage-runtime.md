@@ -45,3 +45,5 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 [真实BES回归](../../../backend/src/test/java/com/flinkweb/BesServerIntegrationTest.java) 核对实际服务器、显式端口、目录、EL来源及真实HTTP；最终镜像另验证登录/Session/CSRF、3MiB MinIO上传下载、双Parser及Runner。完整范围见 [验收](../validation.md#bes-运行时与镜像瘦身2026-10-19)。
 
 2026-10-19 追加要求：app、web、downloader统一发布0.0.7，替代0.0.4。三个运行镜像均从干净Kylin基础层构建；[Web Dockerfile](../../../frontend/Dockerfile) 通过 [导出脚本](../../../frontend/prepare-nginx.sh) 仅复制Nginx及所需额外运行库，避免整套安装层和历史dist；[Downloader Dockerfile](../../../downloader/Dockerfile) 用 [精简脚本](../../../downloader/prepare-runtime.py) 清理CPython测试/开发静态库/安装工具及缓存，再strip，保留boto3服务数据和标准库。Web逻辑体积446,050,884→310,963,280字节；downloader760,604,373→392,503,474字节。正式源码构建与离线验证产物共用Dockerfile，不能从旧业务镜像覆盖。全部0.0.7已推送并核对所有层；清单引用更新，实际工作负载/现有系统下载器绑定未修改，升级注意保存配置优先于环境变量。摘要和命令见 [部署指南](../../deployment.md#bes-运行时与镜像瘦身2026-10-19)。
+
+同日按用户授权清理其他版本：仓库三组件仅保留0.0.7，旧标签与63份历史manifest移除后离线GC回收约5.44GB。app旧标签与保留版本共享摘要，须按tag解绑，不能按共享digest删除；GC前核实所有仓库保留引用，其他仓库/本机镜像/实际工作负载未改。维护方法及验收见 [部署指南](../../deployment.md#仓库旧版本清理2026-10-19)。

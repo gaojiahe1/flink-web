@@ -1,5 +1,13 @@
 # 治理与记忆系统验收
 
+## 仓库旧版本清理（2026-10-19）
+
+- 起点干净master `f50aae3`；用户明确授权清理指定flink-web仓库其他版本，工作分支 `codex/registry-cleanup-007` 只补录维护文档，没有运行代码改动，不触发镜像重建/重发或实际工作负载更新。
+- 盘点app/web/downloader各有0.0.4和0.0.7，共66份历史manifest。app两标签共享同一摘要，核实Registry3.1.2源码后使用DELETE tag只去旧标签；三个0.0.4标签及除三份保留manifest之外的63份旧manifest已删除，0.0.7摘要保持发布记录一致。
+- 原registry停止后离线GC预演；独立遍历全部仓库保留manifest/index/config/layer引用集，382个GC候选与限定旧flink-web可回收集合完全一致，再执行原生回收并恢复原registry。未使用delete-untagged，不扩大删除flink/registry版本；未移动原存储或修改端口映射。
+- 实际回收5,440,478,351字节，blob逻辑数据6,366,328,217→925,849,866字节。保留全部46个digest通过HTTP读取及SHA-256校验；三组件仅0.0.7标签、各一份manifest，旧标签404，其他两个仓库标签/manifest不变。三个0.0.7及flink/registry的manifest、config和全部layer可读；原仓库/v2/返回200。
+- 临时GC容器自动移除；本任务计划/元数据快照/配置副本和日志收尾清理。未清理本机Docker镜像、原数据库或现场Kubernetes资源。历史发布记录仍保留但旧版本已无法从该仓库拉取；方法与范围见 [部署指南](../deployment.md#仓库旧版本清理2026-10-19)。
+
 ## BES 运行时与镜像瘦身（2026-10-19）
 
 - 起点：干净master `d02bedc`，工作分支 `codex/bes-lean-image`。用户明确要求优化app Dockerfile，并提供BES 11.5.0.006 JAR替换Tomcat，替代10-15暂缓决定；随后明确要求三个平台镜像统一0.0.7并同时瘦身web/downloader；不更新latest或实际Kubernetes工作负载。

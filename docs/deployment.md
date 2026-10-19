@@ -655,3 +655,13 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 体积采用同一 Docker/registry 口径，逻辑大小包括共享 Kylin 层，不代表 Docker 磁盘文件占用。后端238项中237通过、1可选独立MinIO目录用例跳过；最终三镜像另通过真实隔离MinIO和只读运行验证，详见 [验收](agent/validation.md#bes-运行时与镜像瘦身2026-10-19)。Web代理恢复、下载器8项及真实S3/中文文件名/插件/启动脚本/超限清理均通过。
 
 [部署清单](../deploy/kubernetes/application.yaml) 三处引用已改为0.0.7，本次未应用到集群。已有系统设置保存的全局下载器绑定优先于环境变量，升级时须同时选择0.0.7下载器；本次不修改已有数据库中的绑定或已运行作业。生产BES授权、MySQL及现场Kubernetes不在本轮新增认证范围。
+
+## 仓库旧版本清理（2026-10-19）
+
+用户明确要求清理 `192.168.68.1:5000/flink-web` 的其他版本。本次 app、web、downloader 仅保留0.0.7；三个0.0.4标签及63份旧历史manifest已删除，旧日期的发布摘要只保留作为历史记录，不能再按旧标签或已清理摘要从此仓库拉取。当前0.0.7摘要与上表一致。
+
+app的0.0.4与0.0.7曾共享同一manifest，因此先使用Registry3.1.2的 [按标签删除分支](https://github.com/distribution/distribution/blob/v3.1.2/registry/handlers/manifests.go) 只去除旧标签，保留共享内容。再删除指定三个仓库内其余历史manifest。不能直接按共享摘要删除旧版本，否则会影响保留标签。
+
+按 [Distribution垃圾回收要求](https://distribution.github.io/distribution/about/garbage-collection/) 停止原registry后运行原生dry-run；独立计算所有仓库保留manifest的递归引用集，确认382个候选全部属于旧flink-web且不与保留内容共享，才执行原生GC，随后恢复原容器与端口映射。未使用全仓库delete-untagged，也未修改其他仓库的标签或manifest。
+
+仓库blob数据逻辑大小6,366,328,217→925,849,866字节，回收5,440,478,351字节（约5.44GB/5.07GiB）；不等于Docker虚拟磁盘缩容。三个0.0.7的manifest/config/layer及其他仓库保留内容共46个digest均经HTTP读取并校验SHA-256，旧标签返回404，仓库/v2/恢复200。`flink:1.20.5-scala_2.12`、`registry:3`保持原摘要。没有清理本机Docker镜像、数据库或Kubernetes工作负载；实际清理范围和验收见 [维护记录](agent/validation.md#仓库旧版本清理2026-10-19)。
