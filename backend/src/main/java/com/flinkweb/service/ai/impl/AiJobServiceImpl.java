@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** 以作业生命周期和用户隔离记忆，成功总结后压缩原文并保留有限证据及方案。 */
+/** 以作业生命周期隔离私有消息并引用唯一总结，成功总结后压缩原文并保留有限证据及方案。 */
 @Service
 public class AiJobServiceImpl implements AiJobService {
   private final ObjectMapper mapper;
@@ -32,10 +32,12 @@ public class AiJobServiceImpl implements AiJobService {
   private final AiJobEvidenceCollector evidence;
   private final AiJobRepairCoordinator repairs;
   private final TransactionTemplate transaction;
+  private final AiSharedSummary memory;
 
   /** 注入已分离的会话存储、证据采集和确定性修复编排。 */
   public AiJobServiceImpl(ObjectMapper mapper,RecordRepository records,JobService jobs,AccessService access,
-      AiContentGuard guard,AiJobState state,AiJobEvidenceCollector evidence,AiJobRepairCoordinator repairs,PlatformTransactionManager manager) {
+      AiContentGuard guard,AiJobState state,AiJobEvidenceCollector evidence,AiJobRepairCoordinator repairs,PlatformTransactionManager manager,AiSharedSummary memory) {
+    this.memory=memory;
     this.mapper=mapper;this.records=records;this.jobs=jobs;this.access=access;this.guard=guard;this.state=state;
     this.evidence=evidence;this.repairs=repairs;this.transaction=new TransactionTemplate(manager);
   }
@@ -46,11 +48,11 @@ public class AiJobServiceImpl implements AiJobService {
     var job=jobs.get(jobId);
     String id=UUID.nameUUIDFromBytes((access.actor()+"\0"+jobId+"\0"+job.createdAt()).getBytes(StandardCharsets.UTF_8)).toString();
     var value=records.find("ai_job_conversations",id);
-    if(value!=null) return value;
+    if(value!=null) return memory.view(value,memory.job(jobId),false);
     var empty=mapper.createObjectNode().put("id",id).put("jobId",jobId).put("owner",access.actor())
         .put("jobCreatedAt",job.createdAt().toString()).put("revision",0).put("contentVersion",0)
         .put("summary","").put("compressedMessages",0);
-    empty.putArray("messages");empty.putArray("unknowns");return empty;
+    empty.putArray("messages");empty.putArray("unknowns");return memory.view(empty,memory.job(jobId),false);
   }
 
   /** 恢复时仅访问元数据；运行状态仍由原页面手动刷新。 */
@@ -62,7 +64,8 @@ public class AiJobServiceImpl implements AiJobService {
       var plan=records.find("ai_job_plans",value.path("lastPlanId").asText());
       if(plan!=null) {
         boolean current=plan.path("contentVersion").asLong()==value.path("contentVersion").asLong()
-            && evidence.matches(jobs.get(jobId),plan.path("baseline")) && !plan.hasNonNull("applicationId");
+            && evidence.matches(jobs.get(jobId),plan.path("baseline")) && !plan.hasNonNull("applicationId")
+            && plan.path("summaryRevision").asLong()==value.path("summaryRevision").asLong();
         value.set("plan",plan.put("canApply",current));
         if(plan.hasNonNull("applicationId")) value.set("application",repairs.application(jobId,plan.path("applicationId").asText()));
       }
@@ -104,8 +107,11 @@ public class AiJobServiceImpl implements AiJobService {
     synchronized(state.monitor()) {
       var value=load(jobId);revision(value,input);
       String text=input.path("summary").asText().trim();
-      if(text.isBlank() || text.length()>4000) fail("AI_INVALID_SUMMARY","总结应为1到4000字符");
+      if(text.isBlank() || text.length()>8000) fail("AI_INVALID_SUMMARY","总结应为1到8000字符");
       guard.requireSafe(text);
+      memory.requireRevision(value.path("summaryRevision").asLong(),input.path("summaryRevision").asLong(value.path("summaryRevision").asLong()));
+      var shared=memory.update(memory.job(jobId),value.path("summaryRevision").asLong(),text,value.path("unknowns"),sqlHash(jobId));
+      value.put("summaryRevision",shared.path("revision").asLong());
       value.put("summary",text).put("contentVersion",value.path("contentVersion").asLong()+1).put("manualSummary",true);
       save(value);return get(jobId);
     }
@@ -136,14 +142,18 @@ public class AiJobServiceImpl implements AiJobService {
   public void complete(String jobId,long version,String taskId,ObjectNode context,ObjectNode result) {
     synchronized(state.monitor()) {
       var value=load(jobId);requireVersion(value,version);
+      memory.requireRevision(value.path("summaryRevision").asLong(),context.at("/conversation/summaryRevision").asLong());
       var job=jobs.get(jobId);
       if(!evidence.matches(job,context.at("/evidence/baseline"))) conflict("分析期间 SQL 或配置已变化，旧回复未应用");
       String summary=result.path("summary").asText(),reply=result.path("reply").asText();
-      if(summary.isBlank() || summary.length()>4000 || reply.isBlank() || reply.length()>4000)
-        fail("AI_INVALID_OUTPUT","模型应返回1到4000字符的完整总结和回复，原消息未压缩");
+      if(summary.isBlank() || summary.length()>8000 || reply.isBlank() || reply.length()>4000)
+        fail("AI_INVALID_OUTPUT","模型须返回完整总结（最多8000字符）和回复（最多4000字符），原消息未压缩");
       var plan="repair".equals(context.path("mode").asText())?repairs.propose(job,(ObjectNode)context.path("evidence"),result,version,access.actor()):null;
       transaction.executeWithoutResult(status->{
+        var shared=memory.update(memory.job(jobId),value.path("summaryRevision").asLong(),summary,result.path("unknowns"),sqlHash(jobId));
+        value.put("summaryRevision",shared.path("revision").asLong());
         if(plan!=null) {
+          plan.put("summaryRevision",shared.path("revision").asLong());
           var saved=records.save("ai_job_plans",UUID.randomUUID().toString(),plan,0);
           value.put("lastPlanId",saved.path("id").asText());result.put("planId",saved.path("id").asText());
         }
@@ -183,6 +193,7 @@ public class AiJobServiceImpl implements AiJobService {
         if(!planId.equals(value.path("lastPlanId").asText()) || plan.path("contentVersion").asLong()!=value.path("contentVersion").asLong())
           conflict("对话或总结已更新，请重新生成并审阅方案");
         if(!input.path("confirmed").asBoolean()) fail("AI_CONFIRMATION_REQUIRED","请确认已审阅完整变更后再应用");
+        memory.requireRevision(value.path("summaryRevision").asLong(),plan.path("summaryRevision").asLong());
       }
       var application=repairs.apply(jobId,plan,input,actor);prune(jobId);return application;
     }
@@ -196,7 +207,14 @@ public class AiJobServiceImpl implements AiJobService {
   /** 持久化会话正文，临时展示字段不得混入下一次模型上下文。 */
   private ObjectNode save(ObjectNode value) {
     value.remove(List.of("plan","evidence","application","lastTask","canEdit","canOperate"));
-    return records.save("ai_job_conversations",value.path("id").asText(),value,value.path("revision").asLong());
+    value.put("sharedSummaryRevision",value.path("summaryRevision").asLong());
+    var stored=value.deepCopy();stored.remove(List.of("summary","summaryRevision","summaryId","unknowns"));
+    return records.save("ai_job_conversations",value.path("id").asText(),stored,value.path("revision").asLong());
+  }
+
+  /** 总结绑定当前SQL内容，运行分析改进会使SQL入口的旧确认失效。 */
+  private String sqlHash(String jobId) {
+    var sql=evidence.sql(jobId);return sql==null?"":com.flinkweb.service.sql.support.SqlDeploymentSource.hash(sql.path("sql").asText());
   }
 
   /** 每个用户作业只保留有限任务、方案与应用记录，不累计无限旧正文。 */

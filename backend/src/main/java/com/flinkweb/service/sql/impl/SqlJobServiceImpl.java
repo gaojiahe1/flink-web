@@ -272,6 +272,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(
           HttpStatus.CONFLICT, "SQL_DEPLOYMENT_EXISTS", "请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿");
     records.delete("sql_jobs", id, revision);
+    for(String collection:List.of("ai_summaries","ai_conversations","ai_tasks"))
+      for(var associated:records.list(collection))
+        if(id.equals(associated.path("sqlId").asText()))records.delete(collection,associated.path("id").asText(),associated.path("revision").asLong());
     jobs.releaseName(record.path("name").asText(), "sql:" + id);
     audit.record("SQL_DELETE", id, "SUCCESS");
   }

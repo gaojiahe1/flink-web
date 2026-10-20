@@ -642,8 +642,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:b2ac411cc843bd1316265fe1535cf4182dc8a9dfe4b4fbc93ea2aba94c0be164 |
-| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:cad79000710df0e8258825226af08a98ec5a1db573c9bcb79e7121a41eb787f0 |
+| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:8553bb3812c75be9da5564e1c287cea16d5250ef0edcbdb702f2b268d01bd8e0 |
+| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:22ed9af63670ac852c24179a2dd0bde1261ad546ba7b678bf8ad75d4211c7663 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -696,3 +696,9 @@ app/web覆盖发布0.0.7，当前manifest表已更新。app config `sha256:861ee
 app/web覆盖0.0.7，当前manifest见上表；config分别为`sha256:a5430ce72c9bf9aee2054a5c5dfb9bbf84af0831c038d228e2535065f89bc340`、`sha256:26c7ab516f17c044e996e7e5793d10f5bffdfd2a851b0d75b6a6daa19baa788b`，逻辑585,052,810/310,996,426字节、压缩282,323,445/111,336,934字节、10/8层。正式Dockerfile、已验证命名context、干净Kylin底座及非root/只读条件不变；先通过真实隔离镜像登录、两轮分析/修复、确认仅保存、恢复会话、删除清理，再经原registry localhost:15000发布。指定192.168.68.1:5000的manifest正文/响应摘要、config、全部压缩层大小/SHA-256及解压diff_id均核对一致。downloader保持原0.0.7，不更新latest或共享Runner。
 
 现场`flink-kubernetes-operator` namespace的单副本`StatefulSet/flink-web`保留原配置，沿用Always拉取策略执行滚动重启；`flink-web-0`两个容器Ready且imageID与上述manifest完全一致，站点登录和新助手可用。只创建一个临时SQL作业：JobManager CPU100导致真实FailedScheduling，经既有Qwen/Qwen3.5-27B分析/持续对话生成CPU0.25及SQL n+1建议，完整对比后显式选择stateless，保存/发布/dry-run/deploy受理，随后实际RUNNING/STABLE且Print输出从2开始。JM/TM各1024m、各0.25CPU、并行度1；没有启动原有五个作业。完整后续日志、清理及提交记录见[验收](agent/validation.md#作业-ai-持续诊断与确认修复2026-10-20)。
+
+## AI 阅读布局与统一总结（2026-10-20）
+
+本轮覆盖app/web 0.0.7，最新manifest见上表；app config为sha256:cf33d0956e7e149aa8511b887e50a96eabf95cb0849605a2c90542d9dc0f2d7a，web config为sha256:901606a1af348ce803ef54d1f875ba2782f19a6e832f8d392e19e62cb305e076。逻辑585,061,177/311,006,413字节，压缩282,331,663/111,339,775字节，10/8层。沿用正式Dockerfile及已验证命名context，从干净Kylin构建；只读非root镜像先通过登录、唯一总结保存/格式化大视图、宽度及删除，再经原localhost:15000映射发布，从192.168.68.1:5000核验manifest正文/响应摘要、config、全部压缩层大小/哈希和解压diff_id一致。downloader保持原0.0.7，latest和共享Runner未改。
+
+在用户既有授权下滚动重启单副本StatefulSet/flink-web，原PVC/数据库/主密钥保留且不做备份，无DDL迁移。规范总结与运行标记复用platform_records及主体索引，按需兼容旧总结；不迁移其他存储。实际仅运行一个临时SQL作业，真实模型完成共享总结分析/修复并经显式stateless应用达到RUNNING/STABLE；受理不清消息，成功后清旧排障、保留唯一总结，SQL入口展示同一总结。临时作业/SQL及4份AI正文/3条索引最终清零，原五作业版本不变。[完整验收](agent/validation.md#ai-阅读布局与统一总结2026-10-20)。

@@ -4,10 +4,16 @@
 
 ## 作业持续诊断与修复（2026-10-20）
 
+后续五项反馈：[AiSharedSummary](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiSharedSummary.java)提供作业唯一总结，SQL/作业两入口共享总结和待核对项、保留私有消息隔离；summaryRevision保护手工更新、确认、模型完成和修复应用。总结独立于会话正文，旧本地总结按需兼容；JAR以作业生命周期、SQL以草稿生命周期定位，不按名称关联。总结最大8000字符；跨入口更新使旧确认/方案失效，实际SQL变化仍需重新整理核对。
+
+按需refresh通过归属、当前修订协调证明及RUNNING/STABLE后，由AiJobState清空上一轮诊断及相关任务/证据/方案/应用并保留规范总结。ai_job_runtime保存单个运行身份，重复刷新不清空新一轮对话；未确认应用、升级中、旧修订、错误/未知状态不清。SQL需求消息保留；作业/SQL删除分别清理关联规范总结和会话，边界见ADR。GET助手本身仍不额外查询集群。
+
+助手宽度扩为min(1840px,98vw)，对话/修复中轴可指针拖动与方向键/Home调整（28–72%），1000px以下上下排列。证据以[AiEvidenceView](../../../frontend/src/modules/ai/components/AiEvidenceView.vue)分为Pod/事件、配置、容器日志；[AiContentDialog](../../../frontend/src/modules/ai/components/AiContentDialog.vue)提供证据/总结/完整对比大视图，长代码可上下对比自动换行。[AiRichText](../../../frontend/src/modules/ai/components/AiRichText.vue)以Vue文本节点安全显示标题、粗体、列表、代码、表格/引用及HTTP链接，不执行HTML/脚本链接。SQL总结压成一行预览及紧凑操作区，对话保留主要空间，授权问号移出checkbox label并对齐。
+
 - [会话契约](../../../backend/src/main/java/com/flinkweb/service/ai/AiJobService.java)/[实现](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiJobServiceImpl.java)、[控制器](../../../backend/src/main/java/com/flinkweb/controller/ai/AiJobController.java)、[取证](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobEvidenceCollector.java)、[修复](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobRepairCoordinator.java)、[生命周期清理](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobState.java)、[配置指纹](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/JobResourceFingerprint.java)。[原抽屉](../../../frontend/src/modules/ai/components/AiJobAnalysis.vue)增加持续对话/总结、证据、完整SQL/YAML对比和显式应用，复用现有设计系统；原SQL创作流程不变。
 - GET `/api/ai/jobs/{jobId}/conversation`只恢复元数据；POST `.../messages`带messageId/revision/content/mode(chat或repair)；PUT `.../summary`带revision/summary。新诊断任务仍走`/api/ai/tasks`、kind=diagnosis，增加jobConversationVersion/mode/includeLogs及每次allowExternal。上下文从服务端读总结与近期消息，不接受浏览器伪造历史/回复。
 - POST `.../plans/{planId}/apply`仅ADMIN/DEVELOPER，带requestId、mode(save或restart)、confirmed；restart还需restoreMode、acceptImpact，可带savepointPath。GET `.../applications/{requestId}`核对原号。重新核验作业/SQL权限、会话/草稿/SQL基准；restart另核对UID及配置摘要，由原OperationService使用当前resourceVersion/dry-run提交。JSON整数按数值比较，资源摘要忽略对象字段顺序和数值表示差异。
-- 总结/回复各4000字符；单条输入8000字符。未成功总结的原文最多26条/36000字符，超限拒绝追加、允许重试本轮；成功后超过24条裁至16条，再施加28000字符预算。失败/取消不裁剪。当前证据1份，方案2份、终态应用3份、终态任务5份；归属及删除规则集中见ADR。日志只允许operate权限，最多两容器各120行/8000字符，优先跨Pod的Flink主容器，再补其他容器，按真实states选择current/previous；证据缺失明确标注。
+- 总结8000/回复4000字符；单条输入8000字符。未成功总结的原文最多26条/36000字符，超限拒绝追加、允许重试本轮；成功后超过24条裁至16条，再施加28000字符预算。失败/取消不裁剪。当前证据1份，方案2份、终态应用3份、终态任务5份；归属及删除规则集中见ADR。日志只允许operate权限，最多两容器各120行/8000字符，优先跨Pod的Flink主容器，再补其他容器，按真实states选择current/previous；证据缺失明确标注。
 - SQL候选与配置由同一原文生成，经既有边界/Parser/发布链路；仅保存SQL不隐式发布，restart提交最新完整配置。保存与阶段状态同事务提交，运行阶段使用确定性原操作号；不确定提交不能以新号重复，原应用未确认时拒绝新消息/模型上下文，保留原恢复入口，同号完成后允许继续对话。受理不等于RUNNING。生命周期锁先于SQLite事务取得，避免单连接锁反转。
 - [后端回归](../../../backend/src/test/java/com/flinkweb/AiJobIntegrationTest.java)、[页面回归](../../../frontend/tests/ai-job.spec.ts)覆盖有界记忆、SQL/配置应用、幂等、权限、过期与删除迟到回复；替身和现场验收分别记录。
 

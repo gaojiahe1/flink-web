@@ -24,10 +24,12 @@ public class AiConversationServiceImpl implements AiConversationService {
   private final SqlJobService sqlJobs;
   private final AccessService access;
   private final AiContentGuard guard;
+  private final com.flinkweb.service.ai.support.AiSharedSummary memory;
 
   /** 复用现有 JSON 元数据存储、草稿权限及凭据防护，不创建另一套身份或数据库。 */
   public AiConversationServiceImpl(RecordRepository records, ObjectMapper mapper,
-      SqlJobService sqlJobs, AccessService access, AiContentGuard guard) {
+      SqlJobService sqlJobs, AccessService access, AiContentGuard guard,com.flinkweb.service.ai.support.AiSharedSummary memory) {
+    this.memory=memory;
     this.records = records;
     this.mapper = mapper;
     this.sqlJobs = sqlJobs;
@@ -41,13 +43,13 @@ public class AiConversationServiceImpl implements AiConversationService {
     String id = UUID.nameUUIDFromBytes((access.actor() + "\0" + sqlId + "\0"
         + draft.path("createdAt").asText()).getBytes(StandardCharsets.UTF_8)).toString();
     var value = records.find("ai_conversations", id);
-    if (value != null) return value;
+    if (value != null) return memory.view(value,memory.sql(sqlId),true);
     var empty = mapper.createObjectNode().put("id", id).put("sqlId", sqlId)
         .put("revision", 0).put("contentVersion", 0).put("summaryVersion", -1)
         .put("confirmedVersion", -1).put("summary", "");
     empty.putArray("messages");
     empty.putArray("unknowns");
-    return empty;
+    return memory.view(empty,memory.sql(sqlId),true);
   }
 
   /** 消息标识去重先于修订检查，网络丢响应后重试不会追加两份消息。 */
@@ -90,6 +92,9 @@ public class AiConversationServiceImpl implements AiConversationService {
     long version = value.path("contentVersion").asLong() + 1;
     value.put("contentVersion", version).put("summaryVersion", version)
         .put("confirmedVersion", -1).put("scopeAccepted", false).put("summary", text).put("summarySqlHash", hash(sql));
+    memory.requireRevision(value.path("summaryRevision").asLong(),input.path("summaryRevision").asLong(value.path("summaryRevision").asLong()));
+    var shared=memory.update(memory.sql(sqlId),value.path("summaryRevision").asLong(),text,value.path("unknowns"),hash(sql));
+    value.put("summaryRevision",shared.path("revision").asLong());
     return save(value);
   }
 
@@ -99,6 +104,7 @@ public class AiConversationServiceImpl implements AiConversationService {
     access.require("sql:" + sqlId, "edit");
     var value = get(sqlId);
     requireRevision(value, input);
+    memory.requireRevision(value.path("summaryRevision").asLong(),input.path("summaryRevision").asLong(value.path("summaryRevision").asLong()));
     long version = value.path("contentVersion").asLong();
     if (value.path("summary").asText().isBlank()
         || value.path("summaryVersion").asLong(-1) != version)
@@ -117,7 +123,8 @@ public class AiConversationServiceImpl implements AiConversationService {
     access.require("sql:" + sqlId, "edit");
     var value = get(sqlId);
     if (!Set.of("chat", "explain", "generate", "repair").contains(mode)
-        || value.path("contentVersion").asLong() != version || value.path("messages").isEmpty())
+        || value.path("contentVersion").asLong() != version
+        || (value.path("messages").isEmpty() && value.path("summary").asText().isBlank()))
       fail("AI_CONVERSATION_CHANGED", "会话已更新，请重新读取本次对话后重试");
     if (Set.of("generate", "repair").contains(mode)
         && (value.path("confirmedVersion").asLong(-1) != version
@@ -128,8 +135,9 @@ public class AiConversationServiceImpl implements AiConversationService {
 
   /** 取消由任务终态锁保护；并发补充则以内容版本拒绝迟到回复。 */
   @Transactional
-  public void complete(String sqlId, long version, String taskId, String mode, String sqlHash, ObjectNode result) {
+  public void complete(String sqlId, long version, String taskId, String mode, String sqlHash, long summaryRevision, ObjectNode result) {
     var value = get(sqlId);
+    memory.requireRevision(value.path("summaryRevision").asLong(),summaryRevision);
     if (value.path("contentVersion").asLong() != version)
       fail("AI_CONVERSATION_CHANGED", "会话已补充，本次旧回复未写入，请重新整理");
     boolean generation = Set.of("generate", "repair").contains(mode);
@@ -145,6 +153,8 @@ public class AiConversationServiceImpl implements AiConversationService {
       value.put("summary", text).put("summaryVersion", version).put("summarySqlHash", sqlHash)
           .put("confirmedVersion", -1).put("scopeAccepted", false);
       value.set("unknowns", result.path("unknowns").deepCopy());
+      var shared=memory.update(memory.sql(sqlId),summaryRevision,text,result.path("unknowns"),sqlHash);
+      value.put("summaryRevision",shared.path("revision").asLong());
     }
     save(value);
   }
@@ -164,7 +174,10 @@ public class AiConversationServiceImpl implements AiConversationService {
 
   /** 只写会话集合，不改变 SQL 草稿、部署或运行状态。 */
   private ObjectNode save(ObjectNode value) {
-    return records.save("ai_conversations", value.path("id").asText(), value, value.path("revision").asLong());
+    value.put("sharedSummaryRevision",value.path("summaryRevision").asLong());
+    var stored=value.deepCopy();stored.remove(List.of("summary","summaryRevision","summaryId","unknowns"));
+    var saved=records.save("ai_conversations", value.path("id").asText(), stored, value.path("revision").asLong());
+    return memory.view(saved,memory.sql(value.path("sqlId").asText()),true);
   }
 
   /** 以摘要绑定当前 SQL，不重复持久化输入脚本。 */

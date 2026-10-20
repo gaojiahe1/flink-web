@@ -1,5 +1,7 @@
 # 元数据、权限与数据管理
 
+2026-10-20后续：ai_summaries按SQL草稿或JAR生命周期保存唯一总结及待核对项，两入口按授权共享总结、私有消息仍隔离；正文会话不重复保存总结，sharedSummaryRevision绑定读写，模型上下文持总结修订。ai_job_runtime按jobId只留当前一次稳定运行身份；运行成功清旧诊断与删除清理规则见[ADR-006](../decisions/ADR-006-job-ai-repair.md)。两集合复用主体索引，无表迁移；MySQL未新增现场认证。
+
 更新：2026-10-20。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：数据库配置/迁移、JSON记录修订控制、登录/角色/用户组/作业ACL、普通配置/密钥、数据源与Catalog元数据。用户登录→一次性挑战→EncryptedLoginFilter/Session→CSRF+角色/ACL；数据修改带revision，用户相关修订使旧会话失效。

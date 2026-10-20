@@ -21,6 +21,7 @@ public class JobQueryServiceImpl implements JobQueryService {
   private final AccessService access;
   private final SnapshotService snapshots;
   private final com.flinkweb.service.job.runtime.StopService stops;
+  private final com.flinkweb.service.ai.support.AiJobState aiState;
 
   /** 注入按需采集器、草稿仓库和资源绑定仓库。 */
   public JobQueryServiceImpl(
@@ -30,7 +31,8 @@ public class JobQueryServiceImpl implements JobQueryService {
       PlatformProperties properties,
       AccessService access,
       SnapshotService snapshots,
-      com.flinkweb.service.job.runtime.StopService stops) {
+      com.flinkweb.service.job.runtime.StopService stops,com.flinkweb.service.ai.support.AiJobState aiState) {
+    this.aiState=aiState;
     this.collector = collector;
     this.jobs = jobs;
     this.bindings = bindings;
@@ -90,8 +92,10 @@ public class JobQueryServiceImpl implements JobQueryService {
       if (managed) {
         row.put("jobId", local.orElseThrow().id());
         if (stopProgress.has(local.orElseThrow().id())) row.put("desiredState", "stopped");
-        if (permitted.test(local.orElseThrow().id(), "read"))
+        if (permitted.test(local.orElseThrow().id(), "read")) {
           snapshots.observe(row, result.path("queriedAt").asText());
+          aiState.observed(row);
+        }
       }
     }
     var filtered = result.arrayNode();

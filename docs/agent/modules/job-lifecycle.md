@@ -22,6 +22,8 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 
 ## 定位代码与验证
 
+2026-10-20后续：FlinkStateCollector投影runningRevisionConfirmed及runIdentity，仅由observedGeneration或lastReconciledSpec当前generation/规范化spec证明本修订已协调。JobQueryService在绑定/归属及读取权限核验后调用AiJobState.observed：当前修订RUNNING/STABLE/无错误且无未确认应用才清上一轮诊断，保留唯一总结及SQL需求消息；每作业运行身份标记避免重复刷新清新消息。未增加定时采集/模型调用，ACCEPTED不触发清理。
+
 - [StopServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/runtime/impl/StopServiceImpl.java)
 - [OperationServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/runtime/impl/OperationServiceImpl.java)
 - [JobQueryServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/management/impl/JobQueryServiceImpl.java)

@@ -95,7 +95,12 @@ class WorkbenchIntegrationTest {
       for (int index = 0; index < 8; index++) {
         String recordId = UUID.randomUUID().toString();
         ids.add(recordId);
-        records.save(collection, recordId, mapper.createObjectNode().put(field, first).put("order", index), 0);
+        var version=records.save(collection, recordId, mapper.createObjectNode().put(field, first).put("order", index), 0);
+        // 明确控制各版本的时间，避免Windows同一时钟刻度内随机UUID的平局顺序干扰断言。
+        String stamp="2026-10-20T01:00:0"+index+"Z";
+        version.put("createdAt",stamp);version.remove("revision");
+        historyJdbc.update("UPDATE platform_records SET payload=? WHERE collection=? AND id=?",version.toString(),collection,recordId);
+        historyJdbc.update("UPDATE platform_record_subjects SET created_at=? WHERE collection=? AND record_id=?",stamp,collection,recordId);
       }
       records.save(collection, UUID.randomUUID().toString(), mapper.createObjectNode().put(field, second), 0);
       assertThat(records.listForSubject(collection, first)).hasSize(5);

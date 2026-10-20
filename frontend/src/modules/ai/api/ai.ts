@@ -32,6 +32,7 @@ export interface AiResult {
   conversationVersion?: number
 }
 export interface AiConversation {
+  summaryRevision?: number
   id: string
   sqlId: string
   revision: number
@@ -85,6 +86,7 @@ export interface AiJobApplication {
   savedJobRevision?: number
 }
 export interface AiJobConversation {
+  summaryRevision?: number
   id: string
   revision: number
   contentVersion: number

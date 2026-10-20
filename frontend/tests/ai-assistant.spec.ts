@@ -325,6 +325,7 @@ test('作业报错按钮主动分析并展示解决步骤，不执行运行操�
   await expect(drawer).toContainText('Metaspace')
   await drawer.getByRole('button', { name: '开始 AI 分析' }).first().click()
   await expect(drawer).toContainText('先检查源表网络')
+  await expect.poll(() => f.submissions.length).toBe(1)
   expect(f.submissions[0]).toMatchObject({ kind: 'diagnosis', jobId: 'job-one', includeLogs: true })
   expect(f.operations).toEqual([])
   await drawer.getByRole('button', { name: '关闭 AI 助手' }).click()

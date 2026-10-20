@@ -3,6 +3,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, Sparkles, LoaderCircle, ArrowUp, Check, RefreshCw } from '@lucide/vue'
 import AiModelSelect from './AiModelSelect.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import AiRichText from './AiRichText.vue'
+import AiContentDialog from './AiContentDialog.vue'
+import AiEvidenceView from './AiEvidenceView.vue'
+import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import { aiApi, type AiJobConversation, type AiJobApplication, type AiModel } from '../api/ai'
 import { useAiTask } from '../composables/useAiTask'
 import { requestId } from '../../../shared/utils/requestId'
@@ -36,6 +40,40 @@ const savepointPath = ref(''),
   confirmed = ref(false),
   acceptImpact = ref(false)
 const application = ref<AiJobApplication>()
+const body = ref<HTMLElement>(),
+  split = ref(42),
+  largeView = ref<'summary' | 'evidence' | 'comparison'>(),
+  stacked = ref(false)
+let stopResize: (() => void) | undefined
+function resize(event: PointerEvent) {
+  if (!body.value || window.innerWidth <= 1000) return
+  event.preventDefault()
+  stopResize?.()
+  const move = (e: PointerEvent) => {
+    const rect = body.value!.getBoundingClientRect()
+    split.value = Math.max(28, Math.min(72, ((e.clientX - rect.left) / rect.width) * 100))
+  }
+  stopResize = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', stop)
+    window.removeEventListener('pointercancel', stop)
+  }
+  const stop = () => {
+    stopResize?.()
+    stopResize = undefined
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', stop)
+  window.addEventListener('pointercancel', stop)
+}
+function resizeKey(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return
+  event.preventDefault()
+  split.value =
+    event.key === 'Home'
+      ? 42
+      : Math.max(28, Math.min(72, split.value + (event.key === 'ArrowLeft' ? -3 : 3)))
+}
 const pendingApplication = ref<{ planId: string; input: Record<string, unknown> }>()
 const { task, busy, error: taskError, uncertain, retry, start, cancel, resume } = useAiTask()
 let disposed = false
@@ -99,6 +137,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   disposed = true
+  stopResize?.()
 })
 watch(modelId, () => {
   allowExternal.value = false
@@ -188,6 +227,7 @@ async function saveSummary() {
   try {
     conversation.value = await aiApi.jobSummary(props.job.id, {
       revision: conversation.value.revision,
+      summaryRevision: conversation.value.summaryRevision,
       summary: summaryText.value,
     })
     editingSummary.value = false
@@ -272,24 +312,27 @@ async function continueApplication() {
         @selected="model = $event"
       />
       <label v-if="canReadLogs" class="ai-check"
-        ><input
-          v-model="includeLogs"
-          :disabled="working"
-          type="checkbox"
-        />本轮包含受限脱敏日志</label
-      >
+        ><input v-model="includeLogs" :disabled="working" type="checkbox" />包含容器日志<HelpTip
+          text="按本轮分析需要读取有权访问的JM/TM日志，最多两份，各120行，并经过脱敏。"
+      /></label>
       <label v-if="model?.external" class="ai-check ai-external"
         ><input
           v-model="allowExternal"
           :disabled="working"
-          type="checkbox"
-        />允许本次将总结、近期对话及脱敏 SQL、配置、事件与所选日志发送到此外部模型</label
-      >
+          type="checkbox" />允许本次发送脱敏上下文<HelpTip
+          text="本轮会向所选外部模型发送作业总结、近期对话、SQL、受限配置、事件和勾选的日志；每轮单独确认。"
+      /></label>
     </div>
     <p v-if="loading" class="muted" role="status">
       <LoaderCircle :size="14" class="ai-job-spin" /> 正在恢复本作业对话…
     </p>
-    <div v-else class="ai-job-body" :class="{ 'ai-job-has-plan': !!plan }">
+    <div
+      v-else
+      ref="body"
+      class="ai-job-body"
+      :class="{ 'ai-job-has-plan': !!plan }"
+      :style="{ '--chat-width': split + '%' }"
+    >
       <section class="ai-job-conversation" aria-label="诊断对话">
         <details class="ai-job-summary" :open="editingSummary">
           <summary>
@@ -301,12 +344,15 @@ async function continueApplication() {
             }}</span>
           </summary>
           <template v-if="!editingSummary"
-            ><p class="ai-prewrap">
-              {{
+            ><AiRichText
+              :text="
                 conversation?.summary ||
                 '开始分析后，AI 会总结已知事实、用户约束、尝试结果和待核对事项。'
-              }}
-            </p>
+              "
+            />
+            <button v-if="conversation?.summary" class="text-button" @click="largeView = 'summary'">
+              大视图阅读总结
+            </button>
             <button
               v-if="conversation?.summary"
               class="text-button"
@@ -317,7 +363,7 @@ async function continueApplication() {
             </button></template
           >
           <template v-else
-            ><label>核对后的总结<textarea v-model="summaryText" rows="5" maxlength="4000" /></label>
+            ><label>核对后的总结<textarea v-model="summaryText" rows="5" maxlength="8000" /></label>
             <div class="toolbar-actions">
               <button
                 class="button primary"
@@ -350,53 +396,18 @@ async function continueApplication() {
             :class="{ 'ai-job-user': item.role === 'user' }"
           >
             <small>{{ item.role === 'user' ? '你' : 'AI 助手' }}</small>
-            <p class="ai-prewrap">{{ item.content }}</p>
+            <AiRichText :text="item.content" />
           </article>
           <p v-if="busy" class="ai-job-progress" role="status">
             <LoaderCircle :size="15" class="ai-job-spin" /> 正在收集证据并分析，可继续查看已有对话…
           </p>
         </div>
-        <details v-if="conversation?.evidence" class="ai-job-evidence">
-          <summary>
+        <div v-if="conversation?.evidence" class="ai-job-evidence">
+          <button class="text-button" @click="largeView = 'evidence'">
             本轮证据 · {{ new Date(conversation.evidence.queriedAt).toLocaleTimeString() }}
-            <span class="muted">· 展开查看来源</span>
-          </summary>
-          <p class="muted">
-            草稿 r{{ conversation.evidence.baseline.jobRevision
-            }}<template v-if="conversation.evidence.baseline.sqlRevision">
-              · SQL r{{ conversation.evidence.baseline.sqlRevision }}</template
-            >
-            ·
-            {{
-              conversation.evidence.resourceExists
-                ? '已核对当前资源归属'
-                : '运行证据不完整或资源不存在'
-            }}
-          </p>
-          <p v-for="item in conversation.evidence.unavailable" :key="item" class="notice">
-            {{ item }}
-          </p>
-          <details>
-            <summary>部署配置投影与 Pod / 事件</summary>
-            <pre>{{
-              JSON.stringify(
-                {
-                  draft: conversation.evidence.draftConfiguration,
-                  runtime: conversation.evidence.runtimeConfiguration,
-                  diagnostics: conversation.evidence.diagnostics,
-                },
-                null,
-                2,
-              )
-            }}</pre>
-          </details>
-          <details v-for="log in conversation.evidence.logs" :key="log.pod + log.container">
-            <summary>
-              {{ log.pod }} / {{ log.container }} {{ log.previous ? '· 上次实例' : '' }}
-            </summary>
-            <pre>{{ log.text }}</pre>
-          </details>
-        </details>
+            <span>· 打开大视图查看 Pod、事件、配置和日志 ↗</span>
+          </button>
+        </div>
         <div class="ai-job-input">
           <label for="ai-job-question">问题或补充说明</label
           ><textarea
@@ -438,6 +449,21 @@ async function continueApplication() {
           </div>
         </div>
       </section>
+      <div
+        v-if="plan"
+        class="ai-job-resizer"
+        role="separator"
+        aria-label="调整对话与修复区域宽度"
+        aria-orientation="vertical"
+        :aria-valuenow="Math.round(split)"
+        aria-valuemin="28"
+        aria-valuemax="72"
+        tabindex="0"
+        @pointerdown="resize"
+        @keydown="resizeKey"
+      >
+        <span />
+      </div>
       <section v-if="plan" class="ai-job-plan" aria-label="修复方案审阅">
         <h4>修复方案与完整对比</h4>
         <p class="muted">
@@ -457,6 +483,7 @@ async function continueApplication() {
           >
             SQL 对比
           </button>
+          <button class="text-button" @click="largeView = 'comparison'">大视图对比 ↗</button>
         </div>
         <div class="ai-job-comparison">
           <section>
@@ -566,9 +593,45 @@ async function continueApplication() {
       </p>
       <p v-else-if="notice" class="muted" role="status">{{ notice }}</p>
       <p class="muted">
-        按需取证，不持续监控。总结与近期对话保存在本作业下；作业删除后清理关联 AI 数据。
+        总结与 SQL 开发共用；实际启动成功后清空上一轮排障对话，保留总结。按需取证。
       </p>
     </footer>
+    <AiContentDialog
+      v-if="largeView"
+      :title="
+        largeView === 'summary'
+          ? '作业总结'
+          : largeView === 'evidence'
+            ? '本轮证据详情'
+            : '完整修改对比'
+      "
+      @close="largeView = undefined"
+    >
+      <AiRichText v-if="largeView === 'summary'" :text="conversation?.summary || ''" />
+      <AiEvidenceView
+        v-else-if="largeView === 'evidence' && conversation?.evidence"
+        :evidence="conversation.evidence"
+      />
+      <template v-else-if="plan"
+        ><div class="toolbar-actions">
+          <button class="button" @click="file = 'yaml'">YAML 对比</button
+          ><button v-if="plan.sqlChanged" class="button" @click="file = 'sql'">SQL 对比</button
+          ><button class="button" @click="stacked = !stacked">
+            {{ stacked ? '切换并排' : '切换上下' }}
+          </button>
+        </div>
+        <div class="ai-job-large-comparison" :class="{ stacked }">
+          <section>
+            <h4>当前完整内容</h4>
+            <pre>{{ currentText }}</pre>
+          </section>
+          <section>
+            <h4>建议完整内容</h4>
+            <pre>{{ proposedText }}</pre>
+          </section>
+        </div></template
+      >
+    </AiContentDialog>
   </dialog>
 </template>
 
@@ -578,7 +641,7 @@ async function continueApplication() {
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0 0 0 auto;
-  width: min(1180px, 94vw);
+  width: min(1840px, 98vw);
   height: 100dvh;
   max-height: 100dvh;
   max-width: 100vw;
@@ -619,11 +682,11 @@ async function continueApplication() {
   min-width: 220px;
 }
 .ai-external {
-  flex-basis: 100%;
+  flex: none;
 }
 .ai-check {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 7px;
   font-size: 12px;
   font-weight: 400;
@@ -639,10 +702,52 @@ async function continueApplication() {
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   flex: 1;
-  gap: 20px;
+  gap: 0;
 }
 .ai-job-has-plan {
-  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, var(--chat-width, 42%)) 14px minmax(0, 1fr);
+}
+.ai-job-resizer {
+  cursor: col-resize;
+  touch-action: none;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  outline-offset: -2px;
+}
+.ai-job-resizer span {
+  width: 3px;
+  height: 52px;
+  background: var(--line);
+  border-radius: 4px;
+}
+.ai-job-resizer:hover,
+.ai-job-resizer:focus-visible {
+  background: #edf3ff;
+}
+.ai-job-resizer:hover span {
+  background: var(--blue);
+}
+.ai-job-large-comparison {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+.ai-job-large-comparison.stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ai-job-large-comparison section {
+  min-width: 0;
+}
+.ai-job-large-comparison pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--color-background);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.7;
 }
 .ai-job-conversation {
   display: flex;
@@ -658,7 +763,7 @@ async function continueApplication() {
   padding: 10px 12px;
   font-size: 12px;
   overflow: auto;
-  max-height: 30%;
+  max-height: 120px;
   flex: none;
 }
 .ai-job-summary {
@@ -749,8 +854,7 @@ async function continueApplication() {
   min-width: 0;
   overflow: auto;
   min-height: 0;
-  border-left: 1px solid var(--line);
-  padding-left: 20px;
+  padding-left: 14px;
 }
 .ai-job-plan h4 {
   margin: 0 0 8px;
@@ -774,8 +878,8 @@ async function continueApplication() {
   min-width: 0;
 }
 .ai-job-comparison :deep(.cm-editor) {
-  height: 260px;
-  font-size: 11px;
+  height: clamp(300px, 45vh, 620px);
+  font-size: 13px;
 }
 .ai-job-comparison :deep(.editor-shell) {
   min-width: 0;
@@ -851,7 +955,7 @@ async function continueApplication() {
     animation: none;
   }
 }
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .ai-analysis-drawer {
     width: 100%;
     padding: 16px;
@@ -868,6 +972,9 @@ async function continueApplication() {
     border-left: 0;
     border-top: 1px solid var(--line);
     padding: 16px 0;
+  }
+  .ai-job-resizer {
+    display: none;
   }
 }
 @media (max-width: 540px) {

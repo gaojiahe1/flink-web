@@ -15,6 +15,8 @@ import AiModelSelect from './AiModelSelect.vue'
 import AiResultReport from './AiResultReport.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import AiRichText from './AiRichText.vue'
+import AiContentDialog from './AiContentDialog.vue'
 import { aiApi, type AiConversation, type AiModel, type AiResult, type AiTask } from '../api/ai'
 import { useAiTask } from '../composables/useAiTask'
 import { requestId } from '../../../shared/utils/requestId'
@@ -43,6 +45,7 @@ const emit = defineEmits<{
   'toggle-sql': []
 }>()
 const step = defineModel<number>('step', { default: 1 })
+const summaryLarge = ref(false)
 const conversation = ref<AiConversation>()
 const modelId = ref(''),
   selectedModel = ref<AiModel>(),
@@ -288,6 +291,7 @@ async function confirmAndGenerate() {
     const version = epoch
     const value = await aiApi.confirm(props.sqlId, {
       revision: conversation.value!.revision,
+      summaryRevision: conversation.value!.summaryRevision,
       sql: props.sql,
       acceptCurrentScope: true,
     })
@@ -305,6 +309,7 @@ async function saveSummary() {
     const version = epoch
     const value = await aiApi.summary(props.sqlId, {
       revision: conversation.value!.revision,
+      summaryRevision: conversation.value!.summaryRevision,
       summary: summaryText.value,
       sql: props.sql,
     })
@@ -382,13 +387,16 @@ onBeforeUnmount(() => {
             purpose="sql"
             :disabled="blocked"
             @selected="selectedModel = $event"
-          /><label v-if="selectedModel?.external" class="ai-external"
-            ><input
-              v-model="allowExternal"
-              type="checkbox"
-              :disabled="busy" />允许发送本次脱敏上下文<HelpTip
-              text="外部模型将读取当前会话和必要的 SQL。不要粘贴明文密码或令牌。"
-          /></label>
+          />
+          <div v-if="selectedModel?.external" class="ai-external">
+            <label
+              ><input
+                v-model="allowExternal"
+                type="checkbox"
+                :disabled="busy"
+              />允许发送本次脱敏上下文</label
+            ><HelpTip text="外部模型将读取当前会话和必要的 SQL。不要粘贴明文密码或令牌。" />
+          </div>
         </div>
         <div class="ai-conversation-state">
           <span>{{
@@ -439,7 +447,7 @@ onBeforeUnmount(() => {
                 {{ message.role === 'user' ? '你' : 'AI 助手'
                 }}<span v-if="message.mode === 'error'">报错分析</span>
               </div>
-              <p>{{ message.content }}</p>
+              <AiRichText :text="message.content" />
             </div>
           </article>
           <div v-if="busy" class="ai-waiting" role="status">
@@ -472,6 +480,12 @@ onBeforeUnmount(() => {
             ><button
               v-if="conversation?.summary && !editingSummary"
               class="text-button"
+              @click="summaryLarge = true"
+            >
+              大视图</button
+            ><button
+              v-if="conversation?.summary && !editingSummary"
+              class="text-button"
               :disabled="blocked"
               @click="editSummary"
             >
@@ -487,9 +501,11 @@ onBeforeUnmount(() => {
               maxlength="8000"
               :disabled="blocked"
             />
-            <p v-else class="ai-summary-text">
-              {{ conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。' }}
-            </p>
+            <AiRichText
+              v-else
+              class="ai-summary-text"
+              :text="conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。'"
+            />
             <ul v-if="conversation?.unknowns.length" class="ai-unknowns">
               <li v-for="item in conversation.unknowns" :key="item">待核对：{{ item }}</li>
             </ul>
@@ -643,6 +659,9 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </aside>
+  <AiContentDialog v-if="summaryLarge" title="作业总结" @close="summaryLarge = false"
+    ><AiRichText :text="conversation?.summary || ''"
+  /></AiContentDialog>
 </template>
 <style scoped>
 .ai-sql-panel {
@@ -722,6 +741,19 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   min-height: 34px;
 }
+.ai-external > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 400;
+  font-size: 11px;
+}
+.ai-external :deep(.help-tip) {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
 .ai-external input {
   width: auto;
 }
@@ -736,7 +768,7 @@ onBeforeUnmount(() => {
 }
 .ai-thread {
   flex: 1;
-  min-height: 0;
+  min-height: 160px;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -808,7 +840,7 @@ onBeforeUnmount(() => {
   background: var(--surface-soft, #f8faff);
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 9px 10px;
+  padding: 6px 9px;
   min-width: 0;
 }
 .ai-summary-heading {
@@ -817,7 +849,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   flex-wrap: wrap;
   font-size: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 3px;
 }
 .ai-summary-heading > .ai-summary-toggle {
   margin-left: auto;
@@ -829,7 +861,7 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 .ai-summary-content {
-  max-height: 38px;
+  max-height: 22px;
   overflow: hidden;
 }
 .ai-summary-content.expanded {
@@ -839,7 +871,7 @@ onBeforeUnmount(() => {
 }
 .ai-summary-content:not(.expanded) .ai-summary-text {
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -867,7 +899,7 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 7px;
-  margin-top: 7px;
+  margin-top: 4px;
 }
 .ai-summary-footer > span {
   display: flex;

@@ -74,6 +74,20 @@ public class FlinkStateCollector {
       String error = item.path("status").path("error").asText("");
       for (String secret : secrets) error = error.replace(secret, "******");
       row.put("error", error);
+      boolean reconciled=false;
+      long generation=item.at("/metadata/generation").asLong(-1);
+      if(generation>=0) {
+        reconciled=item.at("/status/observedGeneration").asLong(-2)>=generation;
+        if(!reconciled) try {
+          var previous=mapper.readTree(item.at("/status/reconciliationStatus/lastReconciledSpec").asText("{}"));
+          reconciled=previous.at("/metadata/generation").asLong(-2)==generation
+              || (previous.path("spec").isObject() && com.flinkweb.service.job.creation.support.JobResourceFingerprint.hash(previous.path("spec"))
+                .equals(com.flinkweb.service.job.creation.support.JobResourceFingerprint.hash(item.path("spec"))));
+        }catch(Exception ignored) { /* 缺少当前修订证据时保留排障对话。 */ }
+      }
+      row.put("runningRevisionConfirmed",reconciled);
+      String runId=item.at("/status/jobStatus/jobId").asText(),started=item.at("/status/jobStatus/startTime").asText();
+      row.put("runIdentity",runId.isBlank()?"":row.path("uid").asText()+":"+runId+":"+started);
       row.put(
           "healthState",
           "ERROR".equals(row.path("jobManagerDeploymentStatus").asText())

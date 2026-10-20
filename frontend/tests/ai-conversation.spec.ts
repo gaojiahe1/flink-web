@@ -267,6 +267,28 @@ test('生成部署草稿后跳转作业列表', async ({ page }) => {
   expect(f.operations).toEqual(['/api/sql/jobs/sql-draft/publish'])
 })
 
+test('SQL对话与总结格式化阅读，总结大视图及授权问号保持对齐', async ({ page }) => {
+  const f = await fixture(page), panel = await openAssistant(page)
+  await discuss(page, '**业务目标**\n\n- 保留原逻辑\n- 融合运行修复')
+  const conv = f.conversations['sql-draft']
+  conv.summary = '**统一作业总结**\n\n- 保留业务逻辑\n- 已核对运行配置\n\n`SELECT n + 1`'
+  await panel.getByRole('button', { name: '重新加载', exact: true }).click()
+  await expect(panel.locator('.ai-chat-message strong').first()).toHaveText('业务目标')
+  await panel.getByRole('button', { name: '大视图', exact: true }).click()
+  const large = page.getByRole('dialog', { name: '作业总结', exact: true })
+  await expect(large.locator('strong')).toHaveText('统一作业总结')
+  await expect(large.locator('li')).toHaveCount(2)
+  await large.getByRole('button', { name: '关闭大视图' }).click()
+  f.setModels([{ ...model, external: true }])
+  await page.reload(); await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  const consent = panel.locator('.ai-external')
+  const label = (await consent.locator('label').boundingBox())!, help = (await consent.getByRole('button', { name: '参数说明' }).boundingBox())!
+  expect(Math.abs(label.y + label.height / 2 - help.y - help.height / 2)).toBeLessThan(4)
+  const summary = (await panel.locator('.ai-inline-summary').boundingBox())!, thread = (await panel.locator('.ai-thread').boundingBox())!
+  expect(thread.height).toBeGreaterThan(summary.height * 2)
+  expect(f.errors).toEqual([])
+})
+
 test('仅切换 SQL 草稿和展开配置不会误报修改，真实 SQL 编辑仍须确认', async ({ page }) => {
   const f = await fixture(page)
   f.drafts['sql-draft'].runtime = { ...runtime, flinkConfiguration: { 'pipeline.name': 'first', 'parallelism.default': '2' } }
