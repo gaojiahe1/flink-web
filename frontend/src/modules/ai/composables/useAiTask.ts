@@ -135,7 +135,7 @@ export function useAiTask() {
         accept(await aiApi.task(id), version, id)
       } catch (cause) {
         if (!current(version, id)) return
-        if (cause instanceof ApiError && cause.status === 404) await send(version, id)
+        if (cause instanceof ApiError && cause.status === 404 && pending) await send(version, id)
         else unresolved(version, id)
       }
     } finally {
@@ -146,5 +146,17 @@ export function useAiTask() {
     disposed = true
     void cancel()
   })
-  return { task, busy, error, uncertain, start, cancel, retry }
+  async function resume(id: string) {
+    if (busy.value || disposed) return
+    const version = ++epoch
+    active = id
+    cancelRequested = false
+    busy.value = true
+    try {
+      accept(await aiApi.task(id), version, id)
+    } catch {
+      unresolved(version, id)
+    }
+  }
+  return { task, busy, error, uncertain, start, cancel, retry, resume }
 }

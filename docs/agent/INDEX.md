@@ -9,7 +9,7 @@
 | JAR、命名弹窗、拖动分栏、历史5次、左侧草稿列表、YAML、表单、ServiceAccount、PodTemplate、模板、JM/TM | [REQ-002](requirements/REQ-002-authoring.md) | [作业配置](modules/job-authoring.md) | [模板分层](decisions/ADR-004-templates.md) |
 | SQL、核对部署SQL、启动旧SQL、AI 助手、自然语言生成、需求确认、修改对比、Session、验证、Runner、Parser、Catalog、StatementSet、TaskManager 数量、固定副本、格式化、Connector 提示、logConfiguration、RowKind、事件游标、取消延迟、共享配置编辑 | [REQ-003](requirements/REQ-003-sql-session.md) | [SQL 与 Session](modules/sql-session.md) | [按需观测与验证例外](decisions/ADR-001-on-demand.md) |
 | S3、目录标记、UUID清理、文件、目录、制品、复制、下载器、插件、Kylin、镜像、Dockerfile、BES、Tomcat、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
-| AI、持久化对话、内嵌总结、三步向导、名称锁定、ModelScope、模型服务、SQL 生成/解释/修复、报错分析、数据定义补充、同号核对、异常结构、密钥快照 | [REQ-003](requirements/REQ-003-sql-session.md) | [AI 助手与模型服务](modules/ai-assistant.md) | 复用现有权限、存储与显式验证边界 |
+| AI、作业助手、Pod日志取证、持续对话、总结压缩、SQL/YAML修复对比、确认应用、同号恢复、删除清理、ModelScope、SQL生成 | [REQ-003](requirements/REQ-003-sql-session.md) | [AI 助手与模型服务](modules/ai-assistant.md) | [作业AI与受控修复](decisions/ADR-006-job-ai-repair.md) |
 | 权限、登录、密钥、模型服务配置、SQLite、MySQL、迁移、数据源、JDBC、Kafka | [REQ-004](requirements/REQ-004-storage-security.md)；AI 新需求见 [REQ-003](requirements/REQ-003-sql-session.md) | [元数据与权限](modules/metadata-security.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | 治理、清理、记忆、新会话、增量、索引 | [REQ-005](requirements/REQ-005-governance.md) | [工作说明](workflow.md) | [轻量记忆](decisions/ADR-005-memory.md) |
 

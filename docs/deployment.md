@@ -642,8 +642,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:37ee75b15f19125dda887987a44ba37cf0568f8182718831202535fae127fbd6 |
-| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:b17f3834558609a316eab29e0316944f6982f4fe69ec9c50c66ddc969978c19c |
+| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:b2ac411cc843bd1316265fe1535cf4182dc8a9dfe4b4fbc93ea2aba94c0be164 |
+| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:cad79000710df0e8258825226af08a98ec5a1db573c9bcb79e7121a41eb787f0 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -688,3 +688,11 @@ app/web覆盖发布0.0.7，当前manifest表已更新。app config `sha256:861ee
 本轮统一三处列表状态和JAR/SQL开发布局，新增JAR命名确认与表单/YAML拖动。SQL保存版本、作业发布版本按主体各留5次，旧超限历史在读写时修剪，不删除审计或保存点文件；没有数据库迁移。删除作业清理当前jobs/id及旧prefix/id的专属程序目录和标记，保留共享与邻居；仍须先确认集群资源消失，SQL草稿依赖按原迁移规则保留。
 
 后端248项、最终Web84项、真实非root只读镜像登录/历史保留/命名/删除及代理检查通过，[验收范围](agent/validation.md#开发列表与版本清理统一2026-10-20)不代表现场Kubernetes或MySQL/提供商认证。原数据库/主密钥/共享Runner保留，实际工作负载未更新；需按授权流程重新拉取0.0.7才应用新功能与保留策略。
+
+## 作业 AI 持续诊断与确认修复（2026-10-20）
+
+用户选择方案一侧栏、底层按独立取证/会话/修复服务设计，并授权同步重启现场平台，要求一次只验证一个作业；随后明确PVC不用备份。本次没有备份或替换PVC、数据库和原加密主密钥，没有数据库迁移。旧版本“未更新现场”说明属于各自历史范围。
+
+app/web覆盖0.0.7，当前manifest见上表；config分别为`sha256:a5430ce72c9bf9aee2054a5c5dfb9bbf84af0831c038d228e2535065f89bc340`、`sha256:26c7ab516f17c044e996e7e5793d10f5bffdfd2a851b0d75b6a6daa19baa788b`，逻辑585,052,810/310,996,426字节、压缩282,323,445/111,336,934字节、10/8层。正式Dockerfile、已验证命名context、干净Kylin底座及非root/只读条件不变；先通过真实隔离镜像登录、两轮分析/修复、确认仅保存、恢复会话、删除清理，再经原registry localhost:15000发布。指定192.168.68.1:5000的manifest正文/响应摘要、config、全部压缩层大小/SHA-256及解压diff_id均核对一致。downloader保持原0.0.7，不更新latest或共享Runner。
+
+现场`flink-kubernetes-operator` namespace的单副本`StatefulSet/flink-web`保留原配置，沿用Always拉取策略执行滚动重启；`flink-web-0`两个容器Ready且imageID与上述manifest完全一致，站点登录和新助手可用。只创建一个临时SQL作业：JobManager CPU100导致真实FailedScheduling，经既有Qwen/Qwen3.5-27B分析/持续对话生成CPU0.25及SQL n+1建议，完整对比后显式选择stateless，保存/发布/dry-run/deploy受理，随后实际RUNNING/STABLE且Print输出从2开始。JM/TM各1024m、各0.25CPU、并行度1；没有启动原有五个作业。完整后续日志、清理及提交记录见[验收](agent/validation.md#作业-ai-持续诊断与确认修复2026-10-20)。

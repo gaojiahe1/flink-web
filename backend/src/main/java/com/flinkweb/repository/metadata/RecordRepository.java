@@ -118,7 +118,7 @@ public class RecordRepository {
       }
       throw ex;
     }
-    if (java.util.Set.of("releases", "snapshots", "operations", "sql_versions")
+    if (java.util.Set.of("releases", "snapshots", "operations", "sql_versions", "ai_tasks", "ai_job_conversations", "ai_job_evidence", "ai_job_plans", "ai_job_applications")
         .contains(collection)) {
       String subject = node.path(collection.equals("sql_versions") ? "sqlId" : "jobId").asText();
       jdbc.update(

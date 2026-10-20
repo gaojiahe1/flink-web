@@ -20,6 +20,8 @@ SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接�
 
 ## 定位代码与验证
 
+2026-10-20作业AI增量：新会话/证据/方案/应用及诊断任务写入复用主体索引，没有新表迁移。其私有归属、有界保留和作业删除清理属于独立AI生命周期策略，不改变原配置历史5份或审计保留规则，见[AI模块](ai-assistant.md)及[ADR-006](../decisions/ADR-006-job-ai-repair.md)。本轮继续SQLite单后端；不宣称MySQL现场验证。
+
 - [StorageConfiguration.java](../../../backend/src/main/java/com/flinkweb/datasource/metadata/StorageConfiguration.java)
 - [SchemaInitializer.java](../../../backend/src/main/java/com/flinkweb/datasource/metadata/SchemaInitializer.java)
 - [RecordRepository.java](../../../backend/src/main/java/com/flinkweb/repository/metadata/RecordRepository.java)

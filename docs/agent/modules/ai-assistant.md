@@ -1,11 +1,20 @@
 # AI 助手与模型服务
 
-更新：2026-10-20。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。当前采用用户确认的三步“总结内嵌”设计；下方10-15/10-16四步与数据选择记录仅为历史，不能代替当前入口。模型不自动执行、保存或部署。
+更新：2026-10-20。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[元数据权限](metadata-security.md)。SQL创作采用三步“总结内嵌”；作业诊断采用用户选择的方案一侧栏，底层按证据、会话和修复编排拆分，见[ADR-006](../decisions/ADR-006-job-ai-repair.md)。模型无写工具，作业修复须用户确认后由平台校验执行。下方旧四步记录仅为历史。
+
+## 作业持续诊断与修复（2026-10-20）
+
+- [会话契约](../../../backend/src/main/java/com/flinkweb/service/ai/AiJobService.java)/[实现](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiJobServiceImpl.java)、[控制器](../../../backend/src/main/java/com/flinkweb/controller/ai/AiJobController.java)、[取证](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobEvidenceCollector.java)、[修复](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobRepairCoordinator.java)、[生命周期清理](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiJobState.java)、[配置指纹](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/JobResourceFingerprint.java)。[原抽屉](../../../frontend/src/modules/ai/components/AiJobAnalysis.vue)增加持续对话/总结、证据、完整SQL/YAML对比和显式应用，复用现有设计系统；原SQL创作流程不变。
+- GET `/api/ai/jobs/{jobId}/conversation`只恢复元数据；POST `.../messages`带messageId/revision/content/mode(chat或repair)；PUT `.../summary`带revision/summary。新诊断任务仍走`/api/ai/tasks`、kind=diagnosis，增加jobConversationVersion/mode/includeLogs及每次allowExternal。上下文从服务端读总结与近期消息，不接受浏览器伪造历史/回复。
+- POST `.../plans/{planId}/apply`仅ADMIN/DEVELOPER，带requestId、mode(save或restart)、confirmed；restart还需restoreMode、acceptImpact，可带savepointPath。GET `.../applications/{requestId}`核对原号。重新核验作业/SQL权限、会话/草稿/SQL基准；restart另核对UID及配置摘要，由原OperationService使用当前resourceVersion/dry-run提交。JSON整数按数值比较，资源摘要忽略对象字段顺序和数值表示差异。
+- 总结/回复各4000字符；单条输入8000字符。未成功总结的原文最多26条/36000字符，超限拒绝追加、允许重试本轮；成功后超过24条裁至16条，再施加28000字符预算。失败/取消不裁剪。当前证据1份，方案2份、终态应用3份、终态任务5份；归属及删除规则集中见ADR。日志只允许operate权限，最多两容器各120行/8000字符，优先跨Pod的Flink主容器，再补其他容器，按真实states选择current/previous；证据缺失明确标注。
+- SQL候选与配置由同一原文生成，经既有边界/Parser/发布链路；仅保存SQL不隐式发布，restart提交最新完整配置。保存与阶段状态同事务提交，运行阶段使用确定性原操作号；不确定提交不能以新号重复，原应用未确认时拒绝新消息/模型上下文，保留原恢复入口，同号完成后允许继续对话。受理不等于RUNNING。生命周期锁先于SQLite事务取得，避免单连接锁反转。
+- [后端回归](../../../backend/src/test/java/com/flinkweb/AiJobIntegrationTest.java)、[页面回归](../../../frontend/tests/ai-job.spec.ts)覆盖有界记忆、SQL/配置应用、幂等、权限、过期与删除迟到回复；替身和现场验收分别记录。
 
 ## 入口与代码
 
 - SQL 开发「AI 助手」：确认需求→查看 SQL→检查和保存，无选择数据步骤。首步约70%对话/30%当前SQL，可拖动或收起SQL；模型区紧凑、总结内嵌、输入区独立，窄屏上下布局。对话后保存完整会话总结，用户核对确认才生成完整SQL；审阅后显式应用，再检查/验证/保存。可随时补充，旧SQL可解释整理，报错可加入对话再确认修复。问号解释保存、授权和确认边界。
-- 作业列表：本次观测状态含错误/FAILED 时显示「AI 分析」，主动读取有权访问的诊断及可选脱敏日志，展示原因、证据、未知项和解决步骤；不执行运行操作。
+- 作业列表：正常作业为「AI 助手」，错误/FAILED显示「AI 分析」；持续诊断和明确确认后的修复应用见上方新流程，替代原单次只读窗口。
 - 系统设置 → 模型服务：仅管理员增删改、测试；按用途选模型，外部发送须每次明确允许。支持兼容 Chat Completions 的非流式 JSON 响应；Base URL 填到 `/v1` 等接口前缀，程序追加 `/chat/completions`。未配置真实模型时不能生成。
 - [模型客户端](../../../backend/src/main/java/com/flinkweb/client/ai/AiModelClient.java)、[模型服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiModelServiceImpl.java)、[任务服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiTaskServiceImpl.java)、[内容防护](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiContentGuard.java)。
 - [前端模块](../../../frontend/src/modules/ai/api/ai.ts)、[侧栏](../../../frontend/src/modules/ai/components/AiSqlAssistant.vue)、[字段表单](../../../frontend/src/modules/ai/components/AiDataDefinitionEditor.vue)、[模型页面](../../../frontend/src/modules/system/pages/ModelsView.vue)。
@@ -38,7 +47,7 @@
 
 useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原任务，存在则继续观察；未确认时禁新建并提供核对/取消。主动重试再 GET，仅 404 才用同号原请求重发；取消失败保留身份并可重试，迟到活动响应继续取消，不覆盖新上下文。SQL 和作业分析共用该逻辑。生成/解释/修复模式变化立即失效；编译用单调上下文/请求版本，历史还核对 SQL ID，组件销毁不回填，未增加后台模型任务。
 
-当前SQL对话上下文包含全部会话/总结与当前SQL；旧定义流程和作业诊断仍只含选中定义或归属核验后的诊断、最多两个容器各120行日志，不发送完整运行YAML/env。已知配置/模型密钥及常见凭据模式遮蔽，输入与输出拒绝疑似明文凭据；自由文本防护不能完整识别任意业务敏感信息，外部发送仍需用户明确允许。
+当前SQL创作对话仍包含全部会话/总结与当前SQL；旧定义及未带jobConversationVersion的诊断接口保留兼容。新作业会话使用有界总结/近期消息、必要SQL和配置投影及受限日志，不发送完整运行YAML/env。已知配置/模型密钥及常见凭据模式遮蔽，输入输出拒绝疑似明文凭据；自由文本防护不能识别任意业务敏感信息，外部发送仍需逐次明确允许。
 
 当前对话生成允许完整CREATE TABLE/VIEW、INSERT和查询，经验证入口的基础边界检查，拒绝CTAS、SET、DROP/ALTER、Catalog和函数注册。提示保留已有非空连接参数，不编造未知连接信息，生成不等于Planner/运行成功。旧workflowVersion=2接口仍保留DataSourceService确定性编译及临时VIEW/INSERT、WITH覆盖拦截约束，不将旧客户端规则套入新完整SQL对话。
 
@@ -60,7 +69,7 @@ useAiTask 保留原 requestId 和不可变请求副本：创建失败先 GET 原
 
 模型服务改为列表筛选、启用概览、配置表单与逐项测试结果；ModelScope 预设仅填写地址/模型，不包含密钥。客户端接受根地址并补 `/v1`，Qwen3 系列非流式请求显式关闭 thinking；401/403/404/429/400 返回脱敏分类，不能回显厂商正文。保留 HTTPS/内网授权、禁重定向和有界响应。
 
-本次用用户指定的 Qwen/Qwen3.5-27B 发起真实认证调用，返回 HTTP403，服务明确要求完成账号邮箱验证；没有成功生成结果，不能标记真实模型可用。处理入口：[ModelScope 账号设置](https://modelscope.cn/my/settings/account)。本库不保存该密钥，功能链路另用隔离协议替身验证。[客户端回归](../../../backend/src/test/java/com/flinkweb/client/ai/AiModelClientTest.java) 覆盖根地址、非流式参数、错误分类及正文不回显。
+2026-10-15历史：用户指定的 Qwen/Qwen3.5-27B 认证调用返回HTTP403，要求账号邮箱验证；该次没有成功结果。2026-10-20已在用户授权现场使用现有模型配置完成真实调度故障分析及第二轮SQL/YAML修复建议，不能继续把旧403记为当前阻塞；详见[当前验收](../validation.md#作业-ai-持续诊断与确认修复2026-10-20)。本库不保存密钥。[客户端回归](../../../backend/src/test/java/com/flinkweb/client/ai/AiModelClientTest.java)覆盖根地址、非流式参数、错误分类及正文不回显。
 
 ## 五项反馈中的 AI 修复（2026-10-16）
 

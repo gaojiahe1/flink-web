@@ -175,6 +175,9 @@ public class OperationServiceImpl implements OperationService {
     try {
       JsonNode existing = client.call("GET", client.base() + "/" + job.deploymentName(), null);
       if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
+      if(request.has("expectedUid") && (!request.path("expectedUid").asText().equals(existing.at("/metadata/uid").asText())
+          || (!existing.isMissingNode() && !request.path("expectedSpecHash").asText().equals(com.flinkweb.service.job.creation.support.JobResourceFingerprint.hash(existing.path("spec"))))))
+        throw new BusinessException(HttpStatus.CONFLICT,"AI_RESOURCE_CHANGED","集群身份或配置已变化，本次未提交，请重新取证和审阅");
       var publishedSource = yaml.parse(job.yaml());
       boolean canEditSource = auth != null && auth.getAuthorities().stream()
           .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") || a.getAuthority().equals("ROLE_DEVELOPER"))

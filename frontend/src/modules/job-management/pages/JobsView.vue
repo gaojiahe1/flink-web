@@ -767,17 +767,14 @@ function resetFilters() {
               >
             </td>
             <td class="row-actions">
-              <button
-                v-if="
-                  operator &&
-                  (state(job)?.error ||
-                    ['FAILED', 'ERROR', 'RECONCILING_ERROR'].includes(state(job)?.jobState || '') ||
-                    state(job)?.healthState === 'ERROR')
-                "
-                class="text-button"
-                @click="aiJob = job"
-              >
-                AI 分析
+              <button v-if="operator" class="text-button" @click="aiJob = job">
+                {{
+                  state(job)?.error ||
+                  state(job)?.healthState === 'ERROR' ||
+                  state(job)?.jobState === 'FAILED'
+                    ? 'AI 分析'
+                    : 'AI 助手'
+                }}
               </button>
               <button
                 class="text-button"
@@ -1125,6 +1122,7 @@ function resetFilters() {
     :job="aiJob"
     :error="state(aiJob)?.error"
     :can-read-logs="mayOperate(aiJob)"
+    @changed="load"
     @close="aiJob = null"
   />
   <PodStatusDrawer

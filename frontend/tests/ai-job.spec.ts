@@ -1,0 +1,294 @@
+import { test, expect, type Page } from '@playwright/test'
+
+async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
+  const tasks: any[] = [],
+    applications: any[] = [],
+    errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  const job = {
+    id: 'job-ai',
+    name: 'orders',
+    description: '',
+    flinkVersion: '1.20.5',
+    deploymentName: 'flink-0000001',
+    jobNumber: 1,
+    revision: 1,
+    yaml: 'metadata:\n  name: orders\n',
+  }
+  const model = {
+    id: 'diagnosis',
+    name: '诊断模型',
+    model: 'test-model',
+    enabled: true,
+    purposes: ['diagnosis'],
+    external,
+    revision: 1,
+  }
+  const memory: any = {
+    id: 'conversation',
+    revision: 0,
+    contentVersion: 0,
+    summary: '',
+    unknowns: [],
+    messages: [],
+    compressedMessages: 0,
+    canEdit: role === 'ROLE_ADMIN',
+    canOperate: true,
+  }
+  let currentTask: any,
+    latestApplication: any,
+    loseResponse = false
+  await page.route('**/api/**', async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname
+    if (!path.startsWith('/api/')) return route.continue()
+    let data: any = []
+    if (path === '/api/auth/me') data = { username: 'admin', roles: [role] }
+    else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
+    else if (path === '/api/system') data = { namespace: 'team', capabilities: [] }
+    else if (path === '/api/jobs') data = [job]
+    else if (path.endsWith('/access')) data = { canEdit: true, canOperate: true }
+    else if (path === '/api/development/links') data = { 'job-ai': { type: 'jar' } }
+    else if (path === '/api/jobs/refresh')
+      data = {
+        items: [
+          {
+            name: job.deploymentName,
+            managed: true,
+            jobId: job.id,
+            healthState: 'ERROR',
+            jobState: 'FAILED',
+            error: 'OOMKilled',
+            snapshots: [],
+            yaml: '',
+          },
+        ],
+        stopProgress: {},
+        queriedAt: new Date().toISOString(),
+      }
+    else if (path === '/api/runtime/jobs') data = []
+    else if (path === '/api/ai/models') data = [model]
+    else if (path === '/api/ai/jobs/job-ai/conversation') data = memory
+    else if (path === '/api/ai/jobs/job-ai/messages') {
+      const input = req.postDataJSON()
+      memory.messages.push({
+        id: input.messageId,
+        role: 'user',
+        content: input.content,
+        mode: input.mode,
+      })
+      memory.revision++
+      memory.contentVersion++
+      if (memory.plan) memory.plan.canApply = false
+      data = memory
+    } else if (path === '/api/ai/jobs/job-ai/summary') {
+      memory.summary = req.postDataJSON().summary
+      memory.revision++
+      memory.contentVersion++
+      if (memory.plan) memory.plan.canApply = false
+      data = memory
+    } else if (path === '/api/ai/tasks' && req.method() === 'POST') {
+      const input = req.postDataJSON()
+      tasks.push(input)
+      currentTask = { id: input.requestId, kind: 'diagnosis', state: 'QUEUED', model: 'test-model' }
+      data = currentTask
+    } else if (path.startsWith('/api/ai/tasks/') && path.endsWith('/cancel'))
+      data = { ...currentTask, state: 'CANCELED' }
+    else if (path.startsWith('/api/ai/tasks/')) {
+      if (currentTask.state !== 'SUCCEEDED') {
+        memory.summary = '保留当前业务逻辑；已确认容器被 OOMKilled，待核对内存峰值。'
+        memory.messages.push({
+          id: currentTask.id,
+          role: 'assistant',
+          content: '引用 Pod 终止原因与部署内存配置，建议先核对资源配额。',
+        })
+        memory.revision++
+        memory.evidence = {
+          queriedAt: new Date().toISOString(),
+          baseline: { jobRevision: 1 },
+          resourceExists: true,
+          unavailable: [],
+          logs: [
+            {
+              pod: 'tm-one',
+              container: 'flink-main-container',
+              previous: true,
+              text: 'memory pressure',
+            },
+          ],
+        }
+        if (tasks.at(-1).mode === 'repair')
+          memory.plan = {
+            id: currentTask.id,
+            canApply: true,
+            contentVersion: memory.contentVersion,
+            beforeYaml: 'taskManager:\n  resource:\n    memory: 1024m',
+            afterYaml: 'taskManager:\n  resource:\n    memory: 2048m',
+            sqlChanged: false,
+            yamlChanged: true,
+            check: 'YAML 本地结构检查通过',
+            baseline: { jobRevision: 1 },
+            changes: [{ path: '/spec/taskManager/resource/memory', value: '2048m' }],
+          }
+        currentTask = { ...currentTask, state: 'SUCCEEDED', result: { summary: memory.summary } }
+      }
+      data = currentTask
+    } else if (path.includes('/plans/') && path.endsWith('/apply')) {
+      const input = req.postDataJSON()
+      applications.push(input)
+      latestApplication = {
+        id: input.requestId,
+        mode: input.mode,
+        state: input.mode === 'save' ? 'SAVED' : 'ACCEPTED',
+        message:
+          input.mode === 'save'
+            ? '草稿已保存，当前运行实例未变更'
+            : 'API 已接受，请手动刷新确认实际运行状态',
+        request: input,
+      }
+      memory.application = latestApplication
+      memory.plan.applicationId = latestApplication.id
+      memory.plan.canApply = false
+      if (loseResponse) {
+        loseResponse = false
+        return route.abort('failed')
+      }
+      data = latestApplication
+    } else if (path.includes('/applications/')) data = latestApplication
+    return route.fulfill({ json: { data, error: null } })
+  })
+  await page.goto('/#/jobs')
+  await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: 'AI 作业助手：orders' })
+  await expect(drawer.getByLabel('任务模型')).toHaveValue('diagnosis')
+  return {
+    drawer,
+    memory,
+    tasks,
+    applications,
+    errors,
+    loseResponse: () => {
+      loseResponse = true
+    },
+  }
+}
+
+async function generate(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first().click()
+  await expect(f.drawer).toContainText('AI 已回答')
+  await f.drawer.getByRole('button', { name: '生成修复方案', exact: true }).click()
+  await expect(f.drawer.getByRole('heading', { name: '修复方案与完整对比' })).toBeVisible()
+}
+
+test('恢复记忆不自动调用模型，持续对话与完整对比在确认后仅保存', async ({ page }) => {
+  const f = await fixture(page)
+  expect(f.tasks).toHaveLength(0)
+  await generate(f)
+  expect(f.tasks).toHaveLength(2)
+  expect(f.applications).toHaveLength(0)
+  const apply = f.drawer.getByRole('button', { name: '确认仅保存草稿', exact: true })
+  await expect(apply).toBeDisabled()
+  await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
+  await apply.click()
+  await expect(f.drawer).toContainText('草稿已保存，当前运行实例未变更')
+  expect(f.applications).toHaveLength(1)
+  expect(f.applications[0].mode).toBe('save')
+  await f.drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
+  await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('草稿已保存')
+  expect(f.tasks).toHaveLength(2)
+  expect(f.errors).toEqual([])
+})
+
+test('重启需要恢复方式、影响和完整变更确认，受理不显示运行成功', async ({ page }) => {
+  const f = await fixture(page)
+  await generate(f)
+  await f.drawer.getByLabel('保存、发布并启动 / 重启作业').check()
+  const apply = f.drawer.getByRole('button', { name: '确认保存并启动 / 重启', exact: true })
+  await expect(apply).toBeDisabled()
+  await f.drawer.getByLabel('恢复方式', { exact: true }).selectOption('stateless')
+  await f.drawer.getByLabel('已核对恢复方式，接受作业中断及可能的处理进度变化').check()
+  await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
+  await apply.click()
+  await expect(f.drawer).toContainText('操作已受理，待观察')
+  expect(f.applications[0]).toMatchObject({
+    mode: 'restart',
+    restoreMode: 'stateless',
+    confirmed: true,
+    acceptImpact: true,
+  })
+  expect(f.errors).toEqual([])
+})
+
+test('人工总结更新使旧方案失效，外部模型每轮需明确授权', async ({ page }) => {
+  const f = await fixture(page, 'ROLE_ADMIN', true)
+  const consent = f.drawer.getByRole('checkbox', { name: /允许本次/ })
+  await expect(
+    f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first(),
+  ).toBeDisabled()
+  await consent.check()
+  await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first().click()
+  await expect(f.drawer).toContainText('AI 已回答')
+  await expect(consent).not.toBeChecked()
+  await consent.check()
+  await f.drawer.getByRole('button', { name: '生成修复方案', exact: true }).click()
+  await expect(f.drawer.getByRole('heading', { name: '修复方案与完整对比' })).toBeVisible()
+  await f.drawer.locator('.ai-job-summary summary').click()
+  await f.drawer.getByRole('button', { name: '修正总结' }).click()
+  await f.drawer.getByLabel('核对后的总结').fill('保持当前内存，不再采用旧建议')
+  await f.drawer.getByRole('button', { name: '保存总结', exact: true }).click()
+  await expect(f.drawer).toContainText('旧方案仅供查看')
+  await expect(f.drawer.getByRole('button', { name: '确认仅保存草稿' })).toBeDisabled()
+  expect(f.errors).toEqual([])
+})
+
+test('应用断响应核对原号，不再次保存；窄屏输入与对比可操作', async ({ page }) => {
+  const f = await fixture(page)
+  await generate(f)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(390)
+  await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
+  f.loseResponse()
+  await f.drawer.getByRole('button', { name: '确认仅保存草稿' }).click()
+  await expect(f.drawer).toContainText('草稿已保存，当前运行实例未变更')
+  expect(f.applications).toHaveLength(1)
+  await page.screenshot({ path: test.info().outputPath('ai-job-mobile.png'), fullPage: true })
+  expect(f.errors).toEqual([])
+})
+
+test('运维可以持续排障和审阅，不能直接应用建议', async ({ page }) => {
+  const f = await fixture(page, 'ROLE_OPERATOR')
+  await generate(f)
+  await expect(f.drawer).toContainText('保存与发布需要开发角色及作业编辑权限')
+  await expect(f.drawer.getByRole('button', { name: '确认仅保存草稿' })).toHaveCount(0)
+  expect(f.applications).toHaveLength(0)
+  expect(f.errors).toEqual([])
+})
+
+test('平台重启后保存中的应用沿用原请求继续完成', async ({ page }) => {
+  const f = await fixture(page)
+  await generate(f)
+  const request = {
+    requestId: '00000000-0000-4000-8000-000000000001',
+    mode: 'save',
+    confirmed: true,
+  }
+  f.memory.plan.applicationId = request.requestId
+  f.memory.plan.canApply = false
+  f.memory.application = {
+    id: request.requestId,
+    state: 'SAVING',
+    mode: 'save',
+    request,
+    message: '保存结果待核对',
+  }
+  await f.drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
+  await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
+  await f.drawer.getByRole('button', { name: '核对并继续原应用', exact: true }).click()
+  await expect(f.drawer).toContainText('草稿已保存，当前运行实例未变更')
+  expect(f.applications).toEqual([request])
+  expect(f.tasks).toHaveLength(2)
+  expect(f.errors).toEqual([])
+})

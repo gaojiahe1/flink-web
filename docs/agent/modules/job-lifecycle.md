@@ -18,6 +18,8 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 
 2026-10-20追加：作业管理/JAR/SQL列表共享observedJobStatus；读取同一jobs/refresh的资源、身份冲突、healthState、deleting和stopProgress，资源消失且停止DONE显示“已停止”，查询失败显示未知。开发页查询仍遵守进入一次/三秒手动规则；统一观测也复用已有授权停止推进，不新增后台采集。发布历史每作业仅保留最近5次，SQL保存版本同一策略，详见[元数据模块](metadata-security.md)。
 
+2026-10-20 作业AI：助手复用已有归属诊断与运行入口，SQL/YAML建议先完整审阅。确认“保存并启动/重启”先dry-run，保存/发布后调用deploy，传入取证时UID及规范化spec摘要并再次检查，实际写入继续受resourceVersion保护；不以ACCEPTED宣称运行成功。JobServiceImpl删除先获取AI生命周期锁再开启SQLite事务，资源消失后删除所有用户的该作业AI记录/任务并取消活动调用，迟到回调不得复活记录。后端拆分及会话边界见[AI模块](ai-assistant.md)、[ADR-006](../decisions/ADR-006-job-ai-repair.md)，回归入口为[AiJobIntegrationTest](../../../backend/src/test/java/com/flinkweb/AiJobIntegrationTest.java)。
+
 ## 定位代码与验证
 
 - [StopServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/runtime/impl/StopServiceImpl.java)

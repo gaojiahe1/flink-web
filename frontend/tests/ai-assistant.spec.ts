@@ -53,6 +53,17 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
   let models: any[] = [model],
     active: any = null,
     pending = false
+  const jobConversation: any = {
+    id: 'job-conversation',
+    revision: 0,
+    contentVersion: 0,
+    summary: '',
+    unknowns: [],
+    messages: [],
+    compressedMessages: 0,
+    canEdit: true,
+    canOperate: true,
+  }
   await page.route('**/api/**', async (route) => {
     const req = route.request(),
       url = new URL(req.url()),
@@ -63,7 +74,18 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
     else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
     else if (path === '/api/system') data = { namespace: 'team', capabilities: [] }
     else if (path === '/api/ai/models' && req.method() === 'GET') data = models
-    else if (path.startsWith('/api/ai/models/') && req.method() === 'PUT') {
+    else if (path === '/api/ai/jobs/job-one/conversation') data = jobConversation
+    else if (path === '/api/ai/jobs/job-one/messages') {
+      const value = req.postDataJSON()
+      jobConversation.revision++
+      jobConversation.contentVersion++
+      jobConversation.messages.push(
+        { id: value.messageId, role: 'user', content: value.content },
+        { id: 'reply', role: 'assistant', content: '先检查源表网络，确认配置后重新检查 SQL' },
+      )
+      jobConversation.summary = '综合当前作业报错和用户问题'
+      data = jobConversation
+    } else if (path.startsWith('/api/ai/models/') && req.method() === 'PUT') {
       const value = req.postDataJSON()
       saved.push(value)
       data = { ...value, revision: 1 }
@@ -299,13 +321,13 @@ test('作业报错按钮主动分析并展示解决步骤，不执行运行操�
   const f = await fixture(page)
   await page.goto('/#/jobs')
   await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
-  const drawer = page.getByRole('dialog', { name: 'AI 分析：orders' })
+  const drawer = page.getByRole('dialog', { name: 'AI 作业助手：orders' })
   await expect(drawer).toContainText('Metaspace')
-  await drawer.getByRole('button', { name: '开始 AI 分析' }).click()
+  await drawer.getByRole('button', { name: '开始 AI 分析' }).first().click()
   await expect(drawer).toContainText('先检查源表网络')
   expect(f.submissions[0]).toMatchObject({ kind: 'diagnosis', jobId: 'job-one', includeLogs: true })
   expect(f.operations).toEqual([])
-  await drawer.getByRole('button', { name: '关闭 AI 分析' }).click()
+  await drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
   await expect(drawer).toBeHidden()
 })
 

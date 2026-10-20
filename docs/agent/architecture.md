@@ -1,6 +1,6 @@
 # 架构与数据流
 
-更新：2026-10-19。依据当前代码；重要业务细则通过需求/模块导航，不在此重复。
+更新：2026-10-20。依据当前代码；重要业务细则通过需求/模块导航，不在此重复。
 
 ```mermaid
 flowchart LR
@@ -23,6 +23,7 @@ flowchart LR
 - 停止：持久化停止意图及加密的实际部署配置 → 提交挂起或带前置条件删除 → 手动刷新推进 → 确认保存点并先存恢复路径 → 删除 FlinkDeployment。参见 [生命周期模块](modules/job-lifecycle.md)。
 - SQL：草稿/历史 → BASIC/精确 Parser → Application Runner，或唯一专用 Session 的 REST 上传/提交 → Print 输出限额 → 截止取消/清理。用户程序与 Connector 在 Flink 执行，后端不加载用户类。参见 [SQL 模块](modules/sql-session.md)。
 - 文件：平台 S3 SDK 的浏览/上传/CopyObject/删除、下载器取程序文件、Flink 插件访问状态目录是三条独立连接路径。平台 SDK 连通不等于 Flink 状态访问成功。
+- 作业AI：私有总结/近期消息→按需证据快照→结构化候选→版本/权限/身份复核→用户确认→草稿事务保存→原运行接口。界面采用侧栏，底层按会话、证据、方案/执行拆分；有限保留及生命周期删除见[ADR-006](decisions/ADR-006-job-ai-repair.md)。
 
 ## 数据结构与安全边界
 

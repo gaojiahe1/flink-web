@@ -26,6 +26,8 @@ public class JobServiceImpl implements JobService {
   private final AccessService access;
   private final com.flinkweb.client.storage.S3StorageClient storage;
   private final com.flinkweb.repository.metadata.RecordRepository records;
+  private final com.flinkweb.service.ai.support.AiJobState aiJobState;
+  private final org.springframework.transaction.support.TransactionTemplate transactions;
 
   /** 注入草稿仓库、YAML 校验器、绑定仓库和审计服务。 */
   public JobServiceImpl(
@@ -35,7 +37,11 @@ public class JobServiceImpl implements JobService {
       JobBindingRepository bindings,
       AccessService access,
       com.flinkweb.client.storage.S3StorageClient storage,
-      com.flinkweb.repository.metadata.RecordRepository records) {
+      com.flinkweb.repository.metadata.RecordRepository records,
+      com.flinkweb.service.ai.support.AiJobState aiJobState,
+      org.springframework.transaction.PlatformTransactionManager manager) {
+    this.transactions = new org.springframework.transaction.support.TransactionTemplate(manager);
+    this.aiJobState = aiJobState;
     this.records = records;
     this.storage = storage;
     this.repository = repository;
@@ -173,8 +179,13 @@ public class JobServiceImpl implements JobService {
   }
 
   /** 以修订号删除草稿及资源绑定，并在同一事务内记录审计。 */
-  @org.springframework.transaction.annotation.Transactional
   public void delete(String id, long revision) {
+    // 先取生命周期锁再开启 SQLite 事务，避免独占连接与完成回调之间形成锁顺序反转。
+    synchronized(aiJobState.monitor()) { transactions.executeWithoutResult(status -> deleteLocked(id,revision)); }
+  }
+
+  /** 作业与所有用户的诊断记录在同一事务内删除，旧任务不能恢复该生命周期。 */
+  private void deleteLocked(String id,long revision) {
     access.require(id, "edit");
     var existing = get(id);
     if (!repository.delete(id, revision)) throw conflict();
@@ -202,6 +213,7 @@ public class JobServiceImpl implements JobService {
     var jar = records.find("jar_development", id);
     if (jar != null) records.delete("jar_development", id, jar.path("revision").asLong());
     audit.record("DRAFT_DELETE", id, "SUCCESS");
+    aiJobState.delete(id);
   }
 
   /** 复制源配置为独立草稿；新编号、文件目录和状态目录不与源作业共用。 */

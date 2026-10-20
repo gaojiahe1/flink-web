@@ -15,6 +15,7 @@ export interface AiModel {
   maxTokens: number
 }
 export interface AiResult {
+  planId?: string
   summary: string
   risks: string[]
   evidence: string[]
@@ -59,7 +60,82 @@ export interface AiTask {
   createdAt: string
   result?: AiResult
 }
+export interface AiRepairPlan {
+  id: string
+  canApply: boolean
+  contentVersion: number
+  beforeYaml: string
+  afterYaml: string
+  beforeSql?: string
+  sql?: string
+  sqlChanged: boolean
+  yamlChanged: boolean
+  check: string
+  changes: { path: string; value: unknown }[]
+  baseline: { jobRevision: number; sqlRevision?: number }
+  applicationId?: string
+}
+export interface AiJobApplication {
+  request?: Record<string, unknown>
+  id: string
+  mode: 'save' | 'restart'
+  state: string
+  message: string
+  operationId?: string
+  savedJobRevision?: number
+}
+export interface AiJobConversation {
+  id: string
+  revision: number
+  contentVersion: number
+  summary: string
+  unknowns: string[]
+  compressedMessages: number
+  messages: AiConversation['messages']
+  canEdit: boolean
+  canOperate: boolean
+  evidence?: {
+    queriedAt: string
+    resourceExists?: boolean
+    uid?: string
+    resourceVersion?: string
+    baseline: { jobRevision: number; sqlRevision?: number }
+    unavailable: string[]
+    logs?: { pod: string; container: string; previous: boolean; text: string }[]
+    diagnostics?: unknown
+    draftConfiguration?: unknown
+    runtimeConfiguration?: unknown
+  }
+  plan?: AiRepairPlan
+  application?: AiJobApplication
+  lastTask?: AiTask
+}
 export const aiApi = {
+  jobConversation: (jobId: string) =>
+    request<AiJobConversation>('/api/ai/jobs/' + encodeURIComponent(jobId) + '/conversation'),
+  jobMessage: (jobId: string, value: unknown) =>
+    request<AiJobConversation>('/api/ai/jobs/' + encodeURIComponent(jobId) + '/messages', {
+      method: 'POST',
+      ...jsonBody(value),
+    }),
+  jobSummary: (jobId: string, value: unknown) =>
+    request<AiJobConversation>('/api/ai/jobs/' + encodeURIComponent(jobId) + '/summary', {
+      method: 'PUT',
+      ...jsonBody(value),
+    }),
+  applyJobPlan: (jobId: string, planId: string, value: unknown) =>
+    request<AiJobApplication>(
+      '/api/ai/jobs/' +
+        encodeURIComponent(jobId) +
+        '/plans/' +
+        encodeURIComponent(planId) +
+        '/apply',
+      { method: 'POST', ...jsonBody(value) },
+    ),
+  jobApplication: (jobId: string, id: string) =>
+    request<AiJobApplication>(
+      '/api/ai/jobs/' + encodeURIComponent(jobId) + '/applications/' + encodeURIComponent(id),
+    ),
   conversation: (sqlId: string) =>
     request<AiConversation>('/api/ai/conversations/' + encodeURIComponent(sqlId)),
   message: (sqlId: string, value: unknown) =>
