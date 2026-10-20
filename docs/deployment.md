@@ -104,7 +104,7 @@ npm run format:check
 
 从项目根目录构建镜像，再按部署流程推送：
 
-当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新摘要见 [本轮发布](#开发列表与版本清理统一2026-10-20)，瘦身基线见 [BES记录](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
+当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新web摘要见 [本轮发布](#ai-抽屉调宽与继续对话2026-10-20)，app见[统一总结发布](#ai-阅读布局与统一总结2026-10-20)，瘦身基线见 [BES记录](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
 
 2026-10-09 Operator 与日志兼容说明：版本识别支持 `1.9.0-xxxxx`、`1.9.1-xxxx` 等发行前缀。FlinkStateSnapshot 从 [Operator 1.10](https://flink.apache.org/2024/10/25/apache-flink-kubernetes-operator-1.10.0-release-announcement/) 引入，按实际 CRD 可用性处理，不单凭镜像版本假设存在。列表中部署与快照请求独立处理错误，快照 CRD 缺失兼容旧版状态，快照读取失败仅显示局部提示，已有作业状态与 YAML 仍返回；Savepoint 停止继续要求有效完成凭据，读取失败不直接删除作业。
 
@@ -696,6 +696,12 @@ app/web覆盖发布0.0.7，当前manifest表已更新。app config `sha256:861ee
 app/web覆盖0.0.7，当前manifest见上表；config分别为`sha256:a5430ce72c9bf9aee2054a5c5dfb9bbf84af0831c038d228e2535065f89bc340`、`sha256:26c7ab516f17c044e996e7e5793d10f5bffdfd2a851b0d75b6a6daa19baa788b`，逻辑585,052,810/310,996,426字节、压缩282,323,445/111,336,934字节、10/8层。正式Dockerfile、已验证命名context、干净Kylin底座及非root/只读条件不变；先通过真实隔离镜像登录、两轮分析/修复、确认仅保存、恢复会话、删除清理，再经原registry localhost:15000发布。指定192.168.68.1:5000的manifest正文/响应摘要、config、全部压缩层大小/SHA-256及解压diff_id均核对一致。downloader保持原0.0.7，不更新latest或共享Runner。
 
 现场`flink-kubernetes-operator` namespace的单副本`StatefulSet/flink-web`保留原配置，沿用Always拉取策略执行滚动重启；`flink-web-0`两个容器Ready且imageID与上述manifest完全一致，站点登录和新助手可用。只创建一个临时SQL作业：JobManager CPU100导致真实FailedScheduling，经既有Qwen/Qwen3.5-27B分析/持续对话生成CPU0.25及SQL n+1建议，完整对比后显式选择stateless，保存/发布/dry-run/deploy受理，随后实际RUNNING/STABLE且Print输出从2开始。JM/TM各1024m、各0.25CPU、并行度1；没有启动原有五个作业。完整后续日志、清理及提交记录见[验收](agent/validation.md#作业-ai-持续诊断与确认修复2026-10-20)。
+
+## AI 抽屉调宽与继续对话（2026-10-20）
+
+仅web:0.0.7覆盖发布，manifest `sha256:a99f4339a462c1e314552c2528e2db47fcfdfae8eb6e705ab6f5825c0f7d7777`，config `sha256:7f31576a245f3dc546ea21b9cfb3e5976b5da0a6b8799a24645128ff865f9dc2`；逻辑311,009,868字节、压缩111,340,373字节、8层。从正式Dockerfile和干净Kylin底座构建，已验证命名context提供Nginx运行件与前端dist；非root/只读镜像32项相关页面及启动/DNS代理4项通过，经原localhost:15000映射推送后，从192.168.68.1:5000核验manifest正文/响应摘要、config、全部压缩层及解压diff_id一致。
+
+在既有授权下重启StatefulSet/flink-web；frontend实际imageID为上述manifest、backend仍为上一节app `sha256:8553bb3812c75be9da5564e1c287cea16d5250ef0edcbdb702f2b268d01bd8e0`，两个容器Ready。app/downloader/共享Runner/latest不改，无迁移，PVC/数据库/主密钥保留且不备份。此次不启动、停止或修改用户作业；现有test仍FAILED，旧会话/总结保留，修复的是继续授权发送入口及页面布局。[验收范围](agent/validation.md#ai-抽屉调宽与继续对话2026-10-20)。
 
 ## AI 阅读布局与统一总结（2026-10-20）
 

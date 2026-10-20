@@ -44,9 +44,61 @@ const body = ref<HTMLElement>(),
   split = ref(42),
   largeView = ref<'summary' | 'evidence' | 'comparison'>(),
   stacked = ref(false)
+const drawerWidth = ref(1180),
+  availableWidth = ref(window.innerWidth)
+const consentRequest = ref<{ kind: 'chat' | 'repair'; repeat: boolean }>()
+let sidebarObserver: ResizeObserver | undefined
+let stopDrawerResize: (() => void) | undefined
+const minDrawerWidth = computed(() => Math.min(640, availableWidth.value))
+function measureDrawer() {
+  const sidebar = document.querySelector('.sidebar')?.getBoundingClientRect()
+  availableWidth.value = Math.max(240, document.documentElement.clientWidth - (sidebar?.right || 0))
+  drawerWidth.value = Math.max(
+    minDrawerWidth.value,
+    Math.min(drawerWidth.value, availableWidth.value),
+  )
+}
+function resizeDrawer(event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  stopDrawerResize?.()
+  const move = (e: PointerEvent) => {
+    drawerWidth.value = Math.max(
+      minDrawerWidth.value,
+      Math.min(availableWidth.value, document.documentElement.clientWidth - e.clientX),
+    )
+  }
+  const stop = () => {
+    stopDrawerResize?.()
+    stopDrawerResize = undefined
+  }
+  stopDrawerResize = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', stop)
+    window.removeEventListener('pointercancel', stop)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', stop)
+  window.addEventListener('pointercancel', stop)
+}
+function resizeDrawerKey(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  drawerWidth.value = Math.max(
+    minDrawerWidth.value,
+    Math.min(
+      availableWidth.value,
+      event.key === 'Home'
+        ? 1180
+        : event.key === 'End'
+          ? availableWidth.value
+          : drawerWidth.value + (event.key === 'ArrowLeft' ? 40 : -40),
+    ),
+  )
+}
 let stopResize: (() => void) | undefined
 function resize(event: PointerEvent) {
-  if (!body.value || window.innerWidth <= 1000) return
+  if (!body.value || drawerWidth.value <= 1000 || event.button !== 0) return
   event.preventDefault()
   stopResize?.()
   const move = (e: PointerEvent) => {
@@ -79,9 +131,7 @@ const { task, busy, error: taskError, uncertain, retry, start, cancel, resume } 
 let disposed = false
 const working = computed(() => busy.value || saving.value || applying.value || loading.value)
 const plan = computed(() => conversation.value?.plan)
-const ready = computed(
-  () => !!modelId.value && (!model.value?.external || allowExternal.value) && !working.value,
-)
+const ready = computed(() => !!modelId.value && !working.value)
 const mayApply = computed(
   () =>
     !!plan.value?.canApply &&
@@ -116,6 +166,11 @@ async function reload() {
   application.value = value.application
 }
 onMounted(async () => {
+  measureDrawer()
+  window.addEventListener('resize', measureDrawer)
+  sidebarObserver = new ResizeObserver(measureDrawer)
+  const sidebar = document.querySelector('.sidebar')
+  if (sidebar) sidebarObserver.observe(sidebar)
   dialog.value?.showModal()
   try {
     await reload()
@@ -138,9 +193,13 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposed = true
   stopResize?.()
+  stopDrawerResize?.()
+  sidebarObserver?.disconnect()
+  window.removeEventListener('resize', measureDrawer)
 })
 watch(modelId, () => {
   allowExternal.value = false
+  consentRequest.value = undefined
 })
 watch([mode, restoreMode, savepointPath], () => {
   confirmed.value = false
@@ -175,6 +234,13 @@ watch(
 
 async function ask(kind: 'chat' | 'repair', repeat = false) {
   if (!ready.value || !conversation.value || pendingApplication.value) return
+  if (model.value?.external && !allowExternal.value) {
+    consentRequest.value = { kind, repeat }
+    await nextTick()
+    dialog.value?.querySelector<HTMLButtonElement>('.ai-job-consent .primary')?.focus()
+    return
+  }
+  consentRequest.value = undefined
   saving.value = true
   failure.value = ''
   notice.value = ''
@@ -215,6 +281,12 @@ async function ask(kind: 'chat' | 'repair', repeat = false) {
   } finally {
     saving.value = false
   }
+}
+async function allowAndAsk() {
+  const request = consentRequest.value
+  if (!request) return
+  allowExternal.value = true
+  await ask(request.kind, request.repeat)
 }
 function editSummary() {
   summaryText.value = conversation.value?.summary || ''
@@ -291,9 +363,25 @@ async function continueApplication() {
   <dialog
     ref="dialog"
     class="ai-analysis-drawer"
+    :class="{ 'ai-drawer-narrow': drawerWidth <= 1000 }"
+    :style="{ width: drawerWidth + 'px', maxWidth: availableWidth + 'px' }"
     :aria-label="'AI 作业助手：' + job.name"
     @cancel.prevent="emit('close')"
   >
+    <div
+      class="ai-drawer-resizer"
+      role="separator"
+      aria-label="调整 AI 助手宽度"
+      aria-orientation="vertical"
+      tabindex="0"
+      :aria-valuenow="Math.round(drawerWidth)"
+      :aria-valuemin="minDrawerWidth"
+      :aria-valuemax="Math.round(availableWidth)"
+      @pointerdown="resizeDrawer"
+      @keydown="resizeDrawerKey"
+    >
+      <span />
+    </div>
     <header class="field-heading ai-job-heading">
       <div>
         <h3><Sparkles :size="18" /> AI 作业助手</h3>
@@ -334,52 +422,15 @@ async function continueApplication() {
       :style="{ '--chat-width': split + '%' }"
     >
       <section class="ai-job-conversation" aria-label="诊断对话">
-        <details class="ai-job-summary" :open="editingSummary">
-          <summary>
-            当前总结
-            <span class="muted">{{
-              conversation?.compressedMessages
-                ? `· 已归纳 ${conversation.compressedMessages} 条较早消息`
-                : '· 每次对话自动带入'
-            }}</span>
-          </summary>
-          <template v-if="!editingSummary"
-            ><AiRichText
-              :text="
-                conversation?.summary ||
-                '开始分析后，AI 会总结已知事实、用户约束、尝试结果和待核对事项。'
-              "
-            />
-            <button v-if="conversation?.summary" class="text-button" @click="largeView = 'summary'">
-              大视图阅读总结
-            </button>
-            <button
-              v-if="conversation?.summary"
-              class="text-button"
-              :disabled="working"
-              @click="editSummary"
-            >
-              修正总结
-            </button></template
-          >
-          <template v-else
-            ><label>核对后的总结<textarea v-model="summaryText" rows="5" maxlength="8000" /></label>
-            <div class="toolbar-actions">
-              <button
-                class="button primary"
-                :disabled="working || !summaryText.trim()"
-                @click="saveSummary"
-              >
-                保存总结</button
-              ><button class="button" :disabled="working" @click="editingSummary = false">
-                取消
-              </button>
-            </div></template
-          >
-          <ul v-if="conversation?.unknowns.length" class="muted">
-            <li v-for="item in conversation.unknowns" :key="item">待核对：{{ item }}</li>
-          </ul>
-        </details>
+        <button class="ai-job-summary" @click="largeView = 'summary'">
+          当前总结
+          <span class="muted">{{
+            conversation?.compressedMessages
+              ? `· 已归纳 ${conversation.compressedMessages} 条较早消息`
+              : '· 每次对话自动带入'
+          }}</span>
+          <span class="muted">打开大视图 ↗</span>
+        </button>
         <div ref="messages" class="ai-job-messages" aria-label="近期对话">
           <div v-if="!conversation?.messages.length" class="ai-job-empty">
             <Sparkles :size="25" />
@@ -418,6 +469,28 @@ async function continueApplication() {
             rows="3"
             placeholder="补充现象、说明不能改变的业务逻辑，或提出修复要求…"
           />
+          <div
+            v-if="consentRequest"
+            class="notice ai-job-consent"
+            role="group"
+            aria-label="确认本轮外部发送"
+          >
+            <p>向“{{ model?.name }}”发送本轮脱敏上下文后继续分析？</p>
+            <p class="muted">
+              包含作业总结、近期对话、当前 SQL、受限配置、事件{{
+                includeLogs && canReadLogs ? '及所选容器日志' : ''
+              }}。每轮单独授权，确认前不会发送或追加消息。
+            </p>
+            <div class="toolbar-actions">
+              <button class="button primary" :disabled="!ready" @click="allowAndAsk">
+                允许并发送本轮
+              </button>
+              <button class="button" @click="consentRequest = undefined">取消发送</button>
+            </div>
+          </div>
+          <p v-else-if="model?.external && !allowExternal" class="muted ai-job-consent-hint">
+            外部模型每轮需授权；点击发送后可确认继续。
+          </p>
           <div class="ai-job-actions">
             <button class="button" :disabled="!ready || !!pendingApplication" @click="ask('chat')">
               <ArrowUp :size="14" />{{
@@ -607,7 +680,41 @@ async function continueApplication() {
       "
       @close="largeView = undefined"
     >
-      <AiRichText v-if="largeView === 'summary'" :text="conversation?.summary || ''" />
+      <template v-if="largeView === 'summary'">
+        <template v-if="!editingSummary">
+          <AiRichText
+            :text="
+              conversation?.summary ||
+              '开始分析后，AI 会总结已知事实、用户约束、尝试结果和待核对事项。'
+            "
+          />
+          <ul v-if="conversation?.unknowns.length" class="muted">
+            <li v-for="item in conversation.unknowns" :key="item">待核对：{{ item }}</li>
+          </ul>
+          <button
+            v-if="conversation?.summary"
+            class="button"
+            :disabled="working"
+            @click="editSummary"
+          >
+            修正总结
+          </button>
+        </template>
+        <template v-else>
+          <label>核对后的总结<textarea v-model="summaryText" rows="12" maxlength="8000" /></label>
+          <div class="toolbar-actions">
+            <button
+              class="button primary"
+              :disabled="working || !summaryText.trim()"
+              @click="saveSummary"
+            >
+              保存总结
+            </button>
+            <button class="button" :disabled="working" @click="editingSummary = false">取消</button>
+          </div>
+        </template>
+        <p v-if="failure" class="notice error" role="alert">{{ failure }}</p>
+      </template>
       <AiEvidenceView
         v-else-if="largeView === 'evidence' && conversation?.evidence"
         :evidence="conversation.evidence"
@@ -641,7 +748,7 @@ async function continueApplication() {
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0 0 0 auto;
-  width: min(1840px, 98vw);
+  width: 1180px;
   height: 100dvh;
   max-height: 100dvh;
   max-width: 100vw;
@@ -657,6 +764,29 @@ async function continueApplication() {
 }
 .ai-analysis-drawer::backdrop {
   background: #15223866;
+}
+.ai-drawer-resizer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  display: grid;
+  place-items: center;
+  outline-offset: -2px;
+}
+.ai-drawer-resizer span {
+  height: 64px;
+  width: 3px;
+  background: var(--line);
+  border-radius: 4px;
+}
+.ai-drawer-resizer:hover,
+.ai-drawer-resizer:focus-visible {
+  background: #edf3ff;
+}
+.ai-drawer-resizer:hover span {
+  background: var(--blue);
 }
 .ai-job-heading {
   flex: none;
@@ -768,6 +898,27 @@ async function continueApplication() {
 }
 .ai-job-summary {
   background: var(--color-background);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ai-job-summary > span:last-child {
+  margin-left: auto;
+}
+.ai-job-consent-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.ai-job-consent {
+  display: block;
+  margin: 8px 0 0;
+}
+.ai-job-consent p {
+  margin: 0 0 8px;
 }
 .ai-job-summary summary,
 .ai-job-evidence summary {
@@ -955,27 +1106,24 @@ async function continueApplication() {
     animation: none;
   }
 }
-@media (max-width: 1000px) {
-  .ai-analysis-drawer {
-    width: 100%;
-    padding: 16px;
-  }
-  .ai-job-has-plan {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-  .ai-job-has-plan .ai-job-conversation {
-    min-height: 520px;
-  }
-  .ai-job-plan {
-    overflow: visible;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding: 16px 0;
-  }
-  .ai-job-resizer {
-    display: none;
-  }
+.ai-drawer-narrow {
+  padding: 16px;
+}
+.ai-drawer-narrow .ai-job-has-plan {
+  grid-template-columns: 1fr;
+  overflow: auto;
+}
+.ai-drawer-narrow .ai-job-has-plan .ai-job-conversation {
+  min-height: 520px;
+}
+.ai-drawer-narrow .ai-job-plan {
+  overflow: visible;
+  border-left: 0;
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+.ai-drawer-narrow .ai-job-resizer {
+  display: none;
 }
 @media (max-width: 540px) {
   .ai-job-comparison {

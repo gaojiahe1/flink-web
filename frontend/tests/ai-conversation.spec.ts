@@ -96,6 +96,32 @@ async function discuss(page: Page, text = '按订单统计已支付金额') {
   await expect(panel.getByRole('button', { name: /确认总结并.*SQL/ })).toBeEnabled()
 }
 
+test('AI 助手反复展开收起不残留面板，不改变 SQL 编辑器和辅助栏布局', async ({ page }) => {
+  const f = await fixture(page)
+  const warnings: string[] = []
+  page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()) })
+  const panel = await openAssistant(page)
+  await discuss(page, '保留当前 SQL 业务逻辑')
+  const toggle = page.getByRole('button', { name: 'AI 助手', exact: true })
+  for (let i = 0; i < 3; i++) {
+    await toggle.click()
+    await expect(panel).toBeHidden()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    const rail = (await page.getByRole('navigation', { name: 'SQL 辅助面板' }).boundingBox())!
+    const bench = (await page.locator('.sql-workbench').boundingBox())!
+    const editor = (await page.getByRole('textbox', { name: 'SQL 编辑器', exact: true }).boundingBox())!
+    expect(Math.abs(rail.x + rail.width - bench.x - bench.width)).toBeLessThan(3)
+    expect(editor.height).toBeGreaterThan(350)
+    await toggle.click()
+    await expect(panel).toBeVisible()
+    await expect(panel.locator('.ai-chat-message')).toHaveCount(2)
+  }
+  expect(warnings.filter(message => /non-element root|Extraneous non-props|directives/.test(message))).toEqual([])
+  expect(f.submissions).toHaveLength(1)
+  expect(f.writes).toHaveLength(0)
+  expect(f.errors).toEqual([])
+})
+
 test('只有三个步骤，对话和内嵌总结持久化，确认后生成并显式应用', async ({ page }) => {
   const f = await fixture(page), panel = await openAssistant(page)
   const nav = page.getByRole('navigation', { name: 'SQL 需求向导' })

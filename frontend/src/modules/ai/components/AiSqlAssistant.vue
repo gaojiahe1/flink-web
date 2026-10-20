@@ -658,10 +658,10 @@ onBeforeUnmount(() => {
         </section>
       </div>
     </dialog>
+    <AiContentDialog v-if="summaryLarge" title="作业总结" @close="summaryLarge = false"
+      ><AiRichText :text="conversation?.summary || ''"
+    /></AiContentDialog>
   </aside>
-  <AiContentDialog v-if="summaryLarge" title="作业总结" @close="summaryLarge = false"
-    ><AiRichText :text="conversation?.summary || ''"
-  /></AiContentDialog>
 </template>
 <style scoped>
 .ai-sql-panel {
