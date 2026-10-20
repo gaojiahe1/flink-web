@@ -1,6 +1,6 @@
 # 作业生命周期
 
-更新：2026-10-15。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-20。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：作业查询/纳管、身份绑定、启动停止、快照、诊断和只读 Flink UI。调用链由 controller → query/management/operation/stop 服务 → repository/collector/KubernetesClient；前端 JobsView/工作台按需发起。
 
@@ -13,6 +13,8 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 2026-10-13：Session 复用相同 Pod/事件/日志投影与抽屉，先由 SessionClusterService.observedResource 校验 Session 标签/UID，再校验 Pod 所有者链；新增共享基础设施入口不需要伪造作业草稿。Session 日志只允许管理员/运维，UI 代理沿用敏感路径和配置脱敏边界；事件二次读取也重新核对 Pod 归属。
 
 已知边界：本轮本地回归通过；现场保存点恢复历史仅验证过特定 test2/Flink 1.20.5，不能推及所有版本。修改停止流程需优先检查 WorkbenchIntegrationTest 与 KubernetesClientTest。
+
+2026-10-20 SQL例外：启动/恢复先核对保存SQL是否已发布。SQL的已发布参数与实际资源或停止快照不同，具备平台开发角色和作业编辑权限时使用最新已发布完整草稿，避免启动旧SQL；仅运维权限拒绝替换。stateless新SQL启动不附加旧自动保存点，显式恢复的选择路径仍保留；普通JAR与未变SQL继续复用原快照。实现及验证入口见[SQL模块](sql-session.md)，此项补充下方“仅ServiceAccount例外”的历史规则。
 
 ## 定位代码与验证
 

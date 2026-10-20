@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import forge from 'node-forge'
-import { ArrowUp, Check, ChevronRight, MessageSquare, Sparkles, X } from '@lucide/vue'
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  LoaderCircle,
+  MessageSquare,
+  Sparkles,
+  X,
+} from '@lucide/vue'
 import AiModelSelect from './AiModelSelect.vue'
 import AiResultReport from './AiResultReport.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
@@ -45,6 +54,7 @@ const localError = ref(''),
   loading = ref(false),
   mutation = ref(false)
 const editingSummary = ref(false),
+  summaryExpanded = ref(false),
   summaryText = ref(''),
   applying = ref(false)
 const suggestion = ref<AiTask>(),
@@ -65,6 +75,25 @@ const result = computed(() =>
   suggestion.value?.state === 'SUCCEEDED' ? suggestion.value.result : undefined,
 )
 const blocked = computed(() => loading.value || mutation.value || busy.value || !props.editable)
+const processing = computed(() => loading.value || mutation.value || busy.value)
+const activity = computed(() =>
+  loading.value
+    ? '正在同步对话…'
+    : busy.value
+      ? 'AI 正在思考，请稍候…'
+      : mutation.value
+        ? '正在提交…'
+        : '',
+)
+const confirmationHint = computed(() =>
+  !conversation.value?.summary
+    ? '先发送需求，AI 回答后会整理总结。'
+    : !summaryCurrent.value
+      ? 'SQL 或需求已变化，请先整理本次对话。'
+      : conversation.value.unknowns.length
+        ? '确认将按已知内容生成；未确定条件保持现状，不自动扩展。'
+        : '核对总结后即可确认生成 SQL。',
+)
 const summaryCurrent = computed(
   () =>
     !!conversation.value?.summary &&
@@ -117,6 +146,10 @@ watch(modelId, () => {
   allowExternal.value = false
   epoch++
   if (busy.value) void cancel()
+})
+watch([busy, () => conversation.value?.messages.length], async () => {
+  await nextTick()
+  if (thread.value) thread.value.scrollTop = thread.value.scrollHeight
 })
 watch(
   () => props.active,
@@ -256,6 +289,7 @@ async function confirmAndGenerate() {
     const value = await aiApi.confirm(props.sqlId, {
       revision: conversation.value!.revision,
       sql: props.sql,
+      acceptCurrentScope: true,
     })
     if (disposed || version !== epoch) return
     conversation.value = value
@@ -285,6 +319,7 @@ async function saveSummary() {
 function editSummary() {
   summaryText.value = conversation.value?.summary || ''
   editingSummary.value = true
+  summaryExpanded.value = true
 }
 function applySql() {
   if (!result.value || !canApply.value) return
@@ -332,10 +367,13 @@ onBeforeUnmount(() => {
       <button class="button primary" @click="emit('create')">新建 SQL 草稿</button>
     </div>
     <template v-else>
-      <div v-if="busy || uncertain" class="ai-task-status" role="status">
-        <span>{{ uncertain ? '任务状态待核对' : 'AI 正在处理本次对话…' }}</span
+      <div v-if="processing || uncertain" class="ai-task-status" role="status" aria-live="polite">
+        <LoaderCircle v-if="!uncertain" class="ai-spinner" :size="16" aria-hidden="true" />
+        <span>{{ uncertain ? '任务状态待核对' : activity }}</span
         ><button v-if="uncertain" class="text-button" @click="retry">核对原任务并重试</button
-        ><button class="text-button" @click="cancel">{{ uncertain ? '重试取消' : '取消' }}</button>
+        ><button v-if="busy || uncertain" class="text-button" @click="cancel">
+          {{ uncertain ? '重试取消' : '取消' }}
+        </button>
       </div>
       <div v-show="step === 1" class="ai-chat-body">
         <div class="ai-chat-settings">
@@ -356,15 +394,25 @@ onBeforeUnmount(() => {
           <span>{{
             loading
               ? '正在恢复会话…'
-              : conversation?.messages.length
-                ? '当前作业对话已保存'
-                : '尚无对话记录'
+              : processing
+                ? activity
+                : task?.state === 'SUCCEEDED'
+                  ? 'AI 已回答 · 当前对话已保存'
+                  : conversation?.messages.length
+                    ? '当前作业对话已保存'
+                    : '尚无对话记录'
           }}</span
           ><button class="text-button" :disabled="loading || busy || mutation" @click="load(true)">
             重新加载
           </button>
         </div>
-        <div ref="thread" class="ai-thread" aria-label="当前作业 AI 对话" aria-live="polite">
+        <div
+          ref="thread"
+          class="ai-thread"
+          aria-label="当前作业 AI 对话"
+          aria-live="polite"
+          :aria-busy="busy"
+        >
           <div v-if="!conversation?.messages.length && !loading" class="ai-empty">
             <MessageSquare :size="25" />
             <h4>{{ sql.trim() ? '从现有 SQL 开始聊' : '从一句需求开始' }}</h4>
@@ -394,6 +442,9 @@ onBeforeUnmount(() => {
               <p>{{ message.content }}</p>
             </div>
           </article>
+          <div v-if="busy" class="ai-waiting" role="status">
+            <LoaderCircle class="ai-spinner" :size="16" aria-hidden="true" />AI 正在思考，请稍候…
+          </div>
         </div>
         <section class="ai-inline-summary" aria-label="本次会话总结">
           <div class="ai-summary-heading">
@@ -408,6 +459,17 @@ onBeforeUnmount(() => {
             ><HelpTip
               text="总结综合本次会话的全部记录。请核对后确认，再生成或修改 SQL；继续补充或修改 SQL 会使旧确认与建议失效。"
             /><button
+              v-if="conversation?.summary"
+              class="text-button ai-summary-toggle"
+              :aria-expanded="summaryExpanded"
+              @click="summaryExpanded = !summaryExpanded"
+            >
+              <ChevronDown :size="14" :class="{ rotated: summaryExpanded }" />{{
+                summaryExpanded ? '收起总结' : '展开总结'
+              }}{{
+                conversation?.unknowns.length ? ` · ${conversation.unknowns.length} 项待核对` : ''
+              }}</button
+            ><button
               v-if="conversation?.summary && !editingSummary"
               class="text-button"
               :disabled="blocked"
@@ -416,24 +478,26 @@ onBeforeUnmount(() => {
               修改总结
             </button>
           </div>
-          <textarea
-            v-if="editingSummary"
-            v-model="summaryText"
-            aria-label="编辑需求总结"
-            rows="5"
-            maxlength="8000"
-            :disabled="blocked"
-          />
-          <p v-else class="ai-summary-text">
-            {{ conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。' }}
-          </p>
-          <ul v-if="conversation?.unknowns.length" class="ai-unknowns">
-            <li v-for="item in conversation.unknowns" :key="item">待补充：{{ item }}</li>
-          </ul>
+          <div class="ai-summary-content" :class="{ expanded: summaryExpanded || editingSummary }">
+            <textarea
+              v-if="editingSummary"
+              v-model="summaryText"
+              aria-label="编辑需求总结"
+              rows="4"
+              maxlength="8000"
+              :disabled="blocked"
+            />
+            <p v-else class="ai-summary-text">
+              {{ conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。' }}
+            </p>
+            <ul v-if="conversation?.unknowns.length" class="ai-unknowns">
+              <li v-for="item in conversation.unknowns" :key="item">待核对：{{ item }}</li>
+            </ul>
+          </div>
           <div class="ai-summary-footer">
             <span
               ><Check v-if="conversation?.summary" :size="13" />{{
-                summaryCurrent ? '总结已保存' : '补充或 SQL 变化后需重新整理'
+                summaryCurrent ? confirmationHint : '补充或 SQL 变化后需重新整理'
               }}</span
             ><template v-if="editingSummary"
               ><button class="button" :disabled="mutation" @click="editingSummary = false">
@@ -455,7 +519,7 @@ onBeforeUnmount(() => {
                 整理本次对话</button
               ><button
                 class="button primary"
-                :disabled="blocked || !summaryCurrent || !!conversation?.unknowns.length"
+                :disabled="blocked || !summaryCurrent"
                 @click="confirmAndGenerate"
               >
                 确认总结并{{ mode === 'error' ? '修改' : '生成' }} SQL<ChevronRight
@@ -490,7 +554,7 @@ onBeforeUnmount(() => {
                 : '继续补充需求，例如：只统计已支付订单，金额保留两位小数…'
             "
             aria-label="与 AI 对话"
-            rows="3"
+            rows="2"
             maxlength="8000"
             :disabled="!editable || mutation"
             @keydown.ctrl.enter.prevent="send()"
@@ -584,10 +648,11 @@ onBeforeUnmount(() => {
 .ai-sql-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 16px !important;
+  padding: 12px !important;
 }
 .ai-panel-heading,
 .ai-panel-heading h3,
@@ -615,9 +680,9 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 .ai-chat-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 8px;
   flex: 1;
   min-height: 0;
 }
@@ -631,12 +696,22 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .ai-chat-settings :deep(.ai-model-field) {
-  flex: 0 1 340px;
+  flex: 0 1 auto;
+  align-items: center;
   min-width: 180px;
   margin: 0;
 }
-.ai-chat-settings :deep(label) {
-  min-width: 130px;
+.ai-chat-settings :deep(.ai-model-field label) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: none;
+  white-space: nowrap;
+}
+.ai-chat-settings :deep(select) {
+  width: 210px;
+  max-width: 100%;
 }
 .ai-external {
   display: flex;
@@ -644,6 +719,8 @@ onBeforeUnmount(() => {
   gap: 5px;
   font-size: 11px !important;
   margin: 0 !important;
+  flex-wrap: wrap;
+  min-height: 34px;
 }
 .ai-external input {
   width: auto;
@@ -659,7 +736,7 @@ onBeforeUnmount(() => {
 }
 .ai-thread {
   flex: 1;
-  min-height: 100px;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -731,7 +808,8 @@ onBeforeUnmount(() => {
   background: var(--surface-soft, #f8faff);
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 11px 12px;
+  padding: 9px 10px;
+  min-width: 0;
 }
 .ai-summary-heading {
   display: flex;
@@ -741,8 +819,33 @@ onBeforeUnmount(() => {
   font-size: 12px;
   margin-bottom: 8px;
 }
-.ai-summary-heading > .text-button {
+.ai-summary-heading > .ai-summary-toggle {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-summary-toggle .rotated {
+  transform: rotate(180deg);
+}
+.ai-summary-content {
+  max-height: 38px;
+  overflow: hidden;
+}
+.ai-summary-content.expanded {
+  max-height: clamp(100px, 22vh, 200px);
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.ai-summary-content:not(.expanded) .ai-summary-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ai-summary-content textarea {
+  min-height: 82px;
+  resize: vertical;
 }
 .ai-summary-heading .badge {
   font-size: 10px;
@@ -753,8 +856,8 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.65;
-  max-height: 145px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   margin: 0;
   scrollbar-width: thin;
 }
@@ -764,7 +867,7 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 7px;
-  margin-top: 10px;
+  margin-top: 7px;
 }
 .ai-summary-footer > span {
   display: flex;
@@ -773,6 +876,7 @@ onBeforeUnmount(() => {
   color: var(--muted);
   font-size: 11px;
   margin-right: auto;
+  flex: 1 1 200px;
 }
 .ai-summary-footer .button {
   min-height: 30px;
@@ -784,14 +888,12 @@ onBeforeUnmount(() => {
   color: #9b621d;
   margin: 7px 0 0;
   padding-left: 18px;
-  max-height: 80px;
-  overflow: auto;
 }
 .ai-composer {
   flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: 7px;
-  padding: 9px 11px;
+  padding: 8px 10px;
   background: var(--surface, #fff);
 }
 .ai-compose-modes {
@@ -808,9 +910,10 @@ onBeforeUnmount(() => {
 .ai-composer textarea {
   border: 0;
   padding: 3px 0;
-  min-height: 68px;
-  max-height: 150px;
-  resize: vertical;
+  height: 58px;
+  min-height: 58px;
+  max-height: 58px;
+  resize: none;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -836,6 +939,44 @@ onBeforeUnmount(() => {
   background: var(--surface-soft, #f4f7fc);
   padding: 8px 10px;
   font-size: 12px;
+  flex-shrink: 0;
+}
+.ai-spinner {
+  animation: ai-spin 1s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (min-width: 1001px) and (max-height: 800px) {
+  .ai-inline-summary {
+    padding: 7px 9px;
+  }
+  .ai-summary-content:not(.expanded) {
+    max-height: 20px;
+  }
+  .ai-summary-content:not(.expanded) .ai-summary-text {
+    -webkit-line-clamp: 1;
+  }
+  .ai-summary-heading {
+    margin-bottom: 4px;
+  }
+  .ai-composer textarea {
+    height: 38px;
+    min-height: 38px;
+    max-height: 38px;
+  }
+}
+.ai-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  color: var(--blue);
+  font-size: 12px;
+  flex-shrink: 0;
 }
 .ai-task-status > span {
   margin-right: auto;
@@ -906,25 +1047,21 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 1000px) {
   .ai-sql-panel {
+    height: 720px;
     min-height: 620px;
-    max-height: 850px;
   }
   .ai-thread {
-    min-height: 120px;
-    max-height: 300px;
-    flex: auto;
+    min-height: 0;
+    max-height: none;
   }
   .ai-full-review {
     height: 88vh;
-  }
-  .ai-summary-text {
-    max-height: 180px;
   }
 }
 @media (max-width: 600px) {
   .ai-sql-panel {
     padding: 12px !important;
-    max-height: none;
+    height: 760px;
   }
   .ai-panel-heading {
     flex-wrap: wrap;
@@ -946,8 +1083,19 @@ onBeforeUnmount(() => {
   .ai-chat-settings {
     align-items: flex-start;
   }
-  .ai-summary-text {
-    max-height: 170px;
+  .ai-chat-settings :deep(.ai-model-field) {
+    width: 100%;
+  }
+  .ai-chat-settings :deep(.ai-model-field label) {
+    width: 100%;
+  }
+  .ai-chat-settings :deep(select) {
+    min-width: 0;
+    flex: 1;
+    width: 0;
+  }
+  .ai-summary-toggle {
+    font-size: 11px;
   }
 }
 </style>

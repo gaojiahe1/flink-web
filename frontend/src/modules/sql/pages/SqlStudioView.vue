@@ -15,6 +15,7 @@ import {
 } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
 import SqlDraftCreateDialog from '../components/SqlDraftCreateDialog.vue'
+import SqlDeploymentAudit from '../components/SqlDeploymentAudit.vue'
 import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
 import SqlVerificationResults from '../components/SqlVerificationResults.vue'
 import type { WizardTable } from '../../ai/utils/wizard'
@@ -129,7 +130,8 @@ const initialRuntime = (): Runtime => ({
 })
 const form = reactive({ name: '', description: '', sql: '', revision: 0 })
 const creating = ref(false),
-  newRuntime = ref<Runtime>()
+  newRuntime = ref<Runtime>(),
+  auditOpen = ref(false)
 const runtime = reactive<Runtime>(initialRuntime())
 const podOptions = computed<PodTemplateOptions>({
   get: () => ({
@@ -504,6 +506,7 @@ async function open(record: SqlDraft, force = false) {
   catalogPreview.value = ''
   error.value = ''
   message.value = ''
+  await nextTick()
   savedSnapshot.value = snapshot()
 }
 async function reloadRestoredSql() {
@@ -675,6 +678,13 @@ function render() {
     })
     preview.value = result.yaml
     message.value = result.message
+  })
+}
+function auditPreview(signal: AbortSignal) {
+  return request<{ yaml: string }>('/api/sql/preview', {
+    method: 'POST',
+    signal,
+    ...jsonBody(payload()),
   })
 }
 async function publish(deploy: boolean) {
@@ -998,6 +1008,13 @@ watch(
             @click="render"
           >
             预览 YAML
+          </button>
+          <button
+            class="text-button"
+            :disabled="!selected || busy || loading"
+            @click="auditOpen = true"
+          >
+            核对部署 SQL
           </button>
         </div>
         <span class="muted">{{ bytes.toLocaleString() }} / 32,768 B</span>
@@ -1475,6 +1492,14 @@ watch(
     :runtime="newRuntime"
     @close="creating = false"
     @created="created"
+  />
+  <SqlDeploymentAudit
+    v-if="auditOpen"
+    :sql="form.sql"
+    :job-id="linkedJob"
+    :context-key="aiContextVersion"
+    :preview="auditPreview"
+    @close="auditOpen = false"
   />
   <SqlVerificationResults
     v-if="verification"

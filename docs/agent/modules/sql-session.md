@@ -1,6 +1,6 @@
 # SQL 与 Session
 
-更新：2026-10-19。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-20。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 
@@ -39,6 +39,10 @@ SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 
 2026-10-15：验证结果面板移出 workbench 的裁剪容器，单表滚动/固定表头、多 Sink 切换及工具栏/结果区停止。Runner 在展开变量前剥离显式 INSERT 目标表的连接选项，保留字段/主键作映射，再生成单 STRING 字段 Print 表；JSON 携带 columns/cells/keys/target，保留 RowKind、NULL 和大整数精度。源表加 SELECT 无需 Sink，CTAS 不执行；Application 普通 prepare 不变。后端只扩展内存事件结构，原1000条/两分钟、取消/UID/游标保护保留。前端按主键 upsert 或无主键多重集合并撤回，仅显示最终输出字段；未匹配撤回及旧 Runner 结构缺失明确提示，不猜测旧文本。新版 Runner 须下载、上传并重新选择，旧选择不自动覆盖。
 
 已知边界：实际 Planner/Connector 语义由 Flink 执行；普通 Session 停止可能等待其任务结束；本轮 Parser1.20.3/1.20.5、Runner1.20.3 API、Flink1.20.5/JDK17 Application/Session 实测不代表其他版本、生产集群或所有连接器已验证。
+
+2026-10-20：修复配置编辑器回填被当作输入引起JSON序列化变化的假脏状态，切换SQL/打开配置不再误报，真实编辑仍保护。发布在metadata.annotations记录`flink-web/sql-sha256`（原始SQL UTF-8摘要）及`flink-web/sql-revision`。启动/恢复前拒绝已保存但未发布SQL；已有部署/停止快照的SQL参数与新发布草稿不同时，有平台开发角色及作业编辑权限才用最新已发布完整配置，stateless启动不复用旧自动恢复路径，显式恢复仍按指定保存点。普通JAR/未变SQL沿用原停止快照边界；运维不能借启动发布新SQL。旧无注解SQL在有编辑权限时按本地Catalog+脚本编译参数比较。
+
+新增“核对部署SQL”只在打开或三秒冷却后手动刷新，解码比较当前待发布、已发布草稿和本次集群声明的`spec.job.args`；展示源修订/摘要及逐来源错误，不猜测旧协议。集群声明一致只证明提交参数，不证明Planner/业务结果或RUNNING。语法用SQL检查，数据结果用专用Session的SQL验证。[源绑定](../../../backend/src/main/java/com/flinkweb/service/sql/support/SqlDeploymentSource.java)、[核对窗口](../../../frontend/src/modules/sql/components/SqlDeploymentAudit.vue)、[协议回归](../../../frontend/tests/deployment-sql.spec.ts)、[启动回归](../../../backend/src/test/java/com/flinkweb/WorkbenchIntegrationTest.java)。
 
 ## 定位代码与验证
 

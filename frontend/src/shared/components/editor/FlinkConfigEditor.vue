@@ -16,7 +16,8 @@ const host = ref<HTMLElement>(),
   error = ref(''),
   editability = new Compartment()
 let view: EditorView | undefined,
-  lastEmitted = ''
+  lastEmitted = '',
+  syncing = false
 function complete(context: CompletionContext) {
   const line = context.state.doc.lineAt(context.pos),
     before = line.text.slice(0, context.pos - line.from)
@@ -66,7 +67,7 @@ onMounted(() => {
           { delay: 150 },
         ),
         EditorView.updateListener.of((update) => {
-          if (!update.docChanged) return
+          if (!update.docChanged || syncing) return
           const result = parseFlinkConfig(update.state.doc.toString())
           error.value = result.issues.map((e) => '第 ' + e.line + ' 行：' + e.message).join('；')
           emit('valid', !error.value)
@@ -98,8 +99,16 @@ watch(
     if (host.value?.parentElement) clearValidationErrors(host.value.parentElement)
     if (!view || JSON.stringify(value) === lastEmitted) return
     const text = formatFlinkConfig(value)
-    if (text !== view.state.doc.toString())
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+    if (text !== view.state.doc.toString()) {
+      syncing = true
+      try {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+        error.value = ''
+        emit('valid', true)
+      } finally {
+        syncing = false
+      }
+    }
   },
   { deep: true },
 )

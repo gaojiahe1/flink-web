@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-19。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-20。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 ## 1. 部署拓扑与前置条件
 
@@ -104,7 +104,7 @@ npm run format:check
 
 从项目根目录构建镜像，再按部署流程推送：
 
-当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新摘要与瘦身数据见 [本轮发布](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
+当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新摘要见 [本轮发布](#ai-布局与-sql-发布修复2026-10-20)，瘦身基线见 [BES记录](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
 
 2026-10-09 Operator 与日志兼容说明：版本识别支持 `1.9.0-xxxxx`、`1.9.1-xxxx` 等发行前缀。FlinkStateSnapshot 从 [Operator 1.10](https://flink.apache.org/2024/10/25/apache-flink-kubernetes-operator-1.10.0-release-announcement/) 引入，按实际 CRD 可用性处理，不单凭镜像版本假设存在。列表中部署与快照请求独立处理错误，快照 CRD 缺失兼容旧版状态，快照读取失败仅显示局部提示，已有作业状态与 YAML 仍返回；Savepoint 停止继续要求有效完成凭据，读取失败不直接删除作业。
 
@@ -642,8 +642,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:41a7834b231535d09987512b203d9de7ea0d3592e7cd78101df2a9f2bc329599 |
-| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:9fb159dc57fc8921a9a5aefc04df16eb573d5475211152db44d8dd6b927beea9 |
+| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:d6f1370809471b38cb178d41f4dd07b35d1c6abc3e69c1a39ae9fda834059da0 |
+| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:0570eb81d9d25dfe45dcaffa544aea7f3e624444e4356c8d713e22ca5c4c03bf |
 | 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -673,3 +673,10 @@ app/web继续覆盖0.0.7，上方“当前镜像”摘要已更新；downloader�
 AI对话和总结复用元数据集合，无新表迁移；更新后保留数据库及原加密主密钥。新建SQL为空并先确认不可变名称，默认升级策略stateless，已有显式策略不覆盖。未显式选择Runner时，SQL及验证专用Session使用默认对象键`artifacts/shared/sql-runner/flink-web-sql-runner.jar`（跟随配置rootPrefix）。管理员须将匹配的Runner上传到该共享目录；内置下载入口继续提供文件，平台不自动替换共享对象、显式选择或运行中Session。文件不存在/S3未配置/读取失败仍报错，不退回另一份Runner。
 
 后端243项均实际执行通过（包含补跑的两版Parser及真实隔离MinIO），最终Web42项相关回归和真实BES加密登录/持久化会话/确认生成/报错修复/保存重进/默认Runner/YAML/发布跳转通过；Web代理恢复通过。指定仓库manifest正文/响应摘要、config及全部10/8层压缩SHA-256、大小和解压diff_id与已测试镜像一致。[具体验收范围](agent/validation.md#ai-三步对话与-sql-默认值2026-10-19)。未更新现场Kubernetes、原数据库或共享Runner文件；模型使用隔离协议替身，不宣称真实厂商或生产Planner认证。
+## AI 布局与 SQL 发布修复（2026-10-20）
+
+app/web覆盖0.0.7，最新manifest见“当前镜像”表；app config `sha256:ed16e4e2f40244c75e0e6426e1a651a3e658c91b406ac0848666a5b71e57c4a6`，web config `sha256:c289890b0b06483139e679c863a5f8dd147dc09cf47f8da045e15bad3936c9ca`。本轮沿用正式Dockerfile和已验证命名context，从干净Kylin基础重建，不继承业务镜像；app逻辑585,016,127字节/10层，web逻辑310,973,245字节/8层。通过原registry的localhost:15000映射推送，从192.168.68.1:5000核对manifest正文/响应摘要、config以及全部压缩层大小/SHA-256和解压diff_id，与已测试镜像一致。downloader保持原0.0.7，不更新latest，未应用到实际Kubernetes。
+
+SQL编辑后仍须保存并生成部署草稿（或部署并启动）。启动遇到保存但未发布的新SQL会明确拒绝，最新已发布SQL不再被旧停止快照覆盖；仅有运维权限不能借启动替换SQL。“核对部署SQL”直接解码Runner的`--statement` Base64参数，比较当前待发布/已发布/集群声明；源注解为`flink-web/sql-sha256`及`flink-web/sql-revision`，旧部署无注解时明确显示旧版本。集群声明一致仅证明参数已提交，实际语法/结果仍通过SQL检查/专用Session验证及运行观测确认。
+
+后端246项、最终Web49项、真实非root只读BES/AI持久化和显式确认/SQL发布核对/代理恢复均通过，详见[验收](agent/validation.md#ai-布局与-sql-发布修复2026-10-20)。无数据库迁移，保留原主密钥；未替换共享Runner、未连接现场Kubernetes，模型为隔离协议替身。更新运行环境需按授权流程重新拉取0.0.7，发布不自动重启现有Pod。

@@ -27,14 +27,16 @@ const router = createRouter({
         {
           path: 'jar',
           component: () => import('../../modules/job-creation/pages/JarDevelopmentView.vue'),
-        },
-        {
-          path: 'jar/new',
-          component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
-        },
-        {
-          path: 'jar/:id/edit',
-          component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
+          children: [
+            {
+              path: 'new',
+              component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
+            },
+            {
+              path: ':id/edit',
+              component: () => import('../../modules/job-creation/pages/JobEditorView.vue'),
+            },
+          ],
         },
         {
           path: 'sessions',

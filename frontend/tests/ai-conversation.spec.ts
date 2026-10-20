@@ -1,12 +1,13 @@
 import { test, expect, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
+import { stringify } from 'yaml'
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
 const sql = "CREATE TABLE source_events (id STRING) WITH ('connector'='datagen'); CREATE TABLE sink_events (id STRING) WITH ('connector'='print'); INSERT INTO sink_events SELECT id FROM source_events;"
 const runtime = { imageId: 'flink', runnerArtifactId: '', workspaceId: 'workspace', parallelism: 1, slots: 1, flinkConfiguration: {}, podTemplate: {}, dependencyArtifactIds: [] }
 const model = { id: 'private', name: '团队模型', model: 'test-model', enabled: true, external: false, purposes: ['sql'], revision: 1 }
 async function fixture(page: Page) {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message))
-  const submissions: any[] = [], writes: any[] = [], operations: string[] = []
+  const submissions: any[] = [], writes: any[] = [], confirmations: any[] = [], operations: string[] = []
   const drafts: Record<string, any> = { 'sql-draft': { id: 'sql-draft', name: 'sql-draft', description: '', sql, runtime, revision: 1 } }
   const conversations: Record<string, any> = {}, tasks: Record<string, any> = {}, inputs: Record<string, any> = {}
   let models: any[] = [model], pending = false, loseResponse = false, generated = sql + '\n-- AI 建议', unknowns: string[] = []
@@ -45,7 +46,7 @@ async function fixture(page: Page) {
           conv.messages.push({ id: body.messageId, role: 'user', content: body.content, mode: body.mode, createdAt: new Date().toISOString() }); conv.contentVersion++; conv.confirmedVersion = -1; conv.revision++
         } else if (path.endsWith('/summary')) {
           conv.contentVersion++; Object.assign(conv, { summary: body.summary, summaryVersion: conv.contentVersion, summarySqlHash: hash(body.sql), confirmedVersion: -1 }); conv.revision++
-        } else if (path.endsWith('/confirm')) { conv.confirmedVersion = conv.contentVersion; conv.revision++ }
+        } else if (path.endsWith('/confirm')) { confirmations.push(body); conv.confirmedVersion = conv.contentVersion; conv.revision++ }
       }
       data = conv
     } else if (path === '/api/ai/tasks' && method === 'POST') {
@@ -76,7 +77,7 @@ async function fixture(page: Page) {
     else if (path === '/api/development/links') data = {}
     return route.fulfill({ json: { data, error: null } })
   })
-  return { submissions, writes, operations, drafts, conversations, errors, loseNextResponse: () => { loseResponse = true },
+  return { submissions, writes, confirmations, operations, drafts, conversations, errors, loseNextResponse: () => { loseResponse = true },
     setModels: (value: any[]) => { models = value }, setPending: (value: boolean) => { pending = value },
     setGenerated: (value: string) => { generated = value }, setUnknowns: (value: string[]) => { unknowns = value } }
 }
@@ -146,17 +147,21 @@ test('旧 SQL 无对话时可解释整理，报错保存到对话再确认修复
   await expect.poll(() => f.submissions.at(-1)?.mode).toBe('repair')
 })
 
-test('有待补事项不允许确认生成，人工总结可编辑并持久化', async ({ page }) => {
+test('待确认可按已知范围生成，未回答事项保留，人工总结可编辑并持久化', async ({ page }) => {
   const f = await fixture(page), panel = await openAssistant(page)
   f.setUnknowns(['请确认输入表字段'])
   await panel.getByRole('textbox', { name: '与 AI 对话' }).fill('统计金额')
   await panel.getByRole('button', { name: '发送', exact: true }).click()
-  await expect(panel).toContainText('待补充：请确认输入表字段')
-  await expect(panel.getByRole('button', { name: /确认总结并生成 SQL/ })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: /展开总结/ })).toContainText('1 项待核对')
+  await expect(panel.getByRole('button', { name: /确认总结并生成 SQL/ })).toBeEnabled()
   await panel.getByRole('button', { name: '修改总结', exact: true }).click()
   await panel.getByRole('textbox', { name: '编辑需求总结' }).fill('人工核对后的完整口径')
   await panel.getByRole('button', { name: '保存总结', exact: true }).click()
   await expect.poll(() => f.conversations['sql-draft'].summary).toBe('人工核对后的完整口径')
+  await panel.getByRole('button', { name: /确认总结并生成 SQL/ }).click()
+  await expect.poll(() => f.confirmations.length).toBe(1)
+  expect(f.confirmations[0].acceptCurrentScope).toBe(true)
+  expect(f.conversations['sql-draft'].unknowns).toEqual(['请确认输入表字段'])
 })
 
 test('外部模型先授权，取消后回复不能加入对话', async ({ page }) => {
@@ -168,7 +173,7 @@ test('外部模型先授权，取消后回复不能加入对话', async ({ page 
   expect(f.submissions).toHaveLength(0)
   await panel.getByRole('checkbox').check()
   await panel.getByRole('button', { name: '发送', exact: true }).click()
-  await expect(panel).toContainText('正在处理')
+  await expect(panel.locator('.ai-task-status')).toContainText('正在思考')
   await panel.getByRole('button', { name: '取消', exact: true }).click()
   await expect(panel.locator('.ai-chat-message')).toHaveCount(1)
 })
@@ -219,12 +224,89 @@ test('完整审阅可查看第 1001 行之后的修改', async ({ page }) => {
   await expect(editor).toContainText('AI_TAIL_CHANGE')
 })
 
+test('长总结默认收起，短屏下对话和输入不被遮挡，调用中旋转并明确完成', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const f = await fixture(page), panel = await openAssistant(page)
+  await discuss(page)
+  const conv = f.conversations['sql-draft']
+  conv.summary = '保留现有来源、字段和输出；可选优化需用户决定。\n'.repeat(100)
+  conv.unknowns = ['是否增加过滤条件', '是否扩展新的数据来源', '是否增加聚合窗口']
+  await panel.getByRole('button', { name: '重新加载', exact: true }).click()
+  await expect(panel.getByRole('button', { name: /展开总结/ })).toHaveAttribute('aria-expanded', 'false')
+  const thread = await panel.locator('.ai-thread').boundingBox()
+  expect(thread!.height).toBeGreaterThan(180)
+  const composer = await panel.locator('.ai-composer').boundingBox(), outer = await panel.boundingBox()
+  expect(composer!.y + composer!.height).toBeLessThanOrEqual(outer!.y + outer!.height)
+  await panel.getByRole('button', { name: /展开总结/ }).click()
+  await expect(panel.locator('.ai-unknowns')).toBeVisible()
+  const expanded = await panel.locator('.ai-composer').boundingBox()
+  expect(expanded!.y + expanded!.height).toBeLessThanOrEqual(outer!.y + outer!.height)
+  await panel.getByRole('button', { name: /收起总结/ }).click()
+  await page.screenshot({ path: test.info().outputPath('ai-layout-desktop.png'), fullPage: true })
+  f.setPending(true)
+  await panel.getByRole('textbox', { name: '与 AI 对话' }).fill('保持当前逻辑')
+  await panel.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(panel.locator('.ai-task-status .ai-spinner')).toBeVisible()
+  await expect(panel.locator('.ai-thread')).toHaveAttribute('aria-busy', 'true')
+  await expect(panel.getByRole('button', { name: '发送', exact: true })).toBeDisabled()
+  await expect(panel.locator('.ai-spinner').first()).toHaveCSS('animation-name', /ai-spin/)
+  f.setPending(false)
+  await expect(panel.locator('.ai-conversation-state')).toContainText('AI 已回答', { timeout: 10000 })
+  await expect(panel.locator('.ai-task-status')).toBeHidden()
+  await expect(panel.locator('.ai-thread')).toHaveAttribute('aria-busy', 'false')
+  await page.setViewportSize({ width: 1440, height: 720 })
+  await expect.poll(async () => (await panel.locator('.ai-composer').boundingBox())!.y + (await panel.locator('.ai-composer').boundingBox())!.height).toBeLessThanOrEqual(720)
+  await page.screenshot({ path: test.info().outputPath('ai-layout-short.png'), fullPage: true })
+})
+
 test('生成部署草稿后跳转作业列表', async ({ page }) => {
   const f = await fixture(page); await page.goto('/#/sql?draft=sql-draft')
   await page.getByRole('button', { name: '部署配置', exact: true }).click()
   await page.getByRole('button', { name: '生成部署草稿', exact: true }).click()
   await expect(page).toHaveURL(/#\/jobs$/)
   expect(f.operations).toEqual(['/api/sql/jobs/sql-draft/publish'])
+})
+
+test('仅切换 SQL 草稿和展开配置不会误报修改，真实 SQL 编辑仍须确认', async ({ page }) => {
+  const f = await fixture(page)
+  f.drafts['sql-draft'].runtime = { ...runtime, flinkConfiguration: { 'pipeline.name': 'first', 'parallelism.default': '2' } }
+  f.drafts['second-sql'] = { ...f.drafts['sql-draft'], id: 'second-sql', name: 'second-sql', sql: sql + '\n-- second', runtime: { ...runtime, flinkConfiguration: { 'pipeline.name': 'second', 'parallelism.default': '3' } } }
+  await page.goto('/#/sql?draft=sql-draft')
+  const files = page.getByLabel('SQL 草稿列表')
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  await files.locator('.sql-file').filter({ hasText: 'second-sql' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })).toContainText('-- second')
+  await files.locator('.sql-file').filter({ hasText: 'sql-draft' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const editor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
+  await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n-- user change')
+  await files.locator('.sql-file').filter({ hasText: 'second-sql' }).click()
+  await expect(page.getByRole('dialog')).toContainText('未保存')
+  await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
+  await expect(editor).toContainText('-- user change')
+})
+
+test('核对部署 SQL 对比当前、已发布和集群声明，仅主动打开时查询', async ({ page }) => {
+  const f = await fixture(page)
+  f.drafts['sql-draft'].jobId = 'audit-job'
+  const encoded = (text: string) => stringify({ kind: 'FlinkDeployment', metadata: { annotations: { 'flink-web/sql-revision': '7' } }, spec: { job: { args: ['--statement', Buffer.from(text).toString('base64')] } } })
+  let refreshes = 0
+  await page.route('**/api/sql/preview', route => route.fulfill({ json: { data: { yaml: encoded('INSERT INTO sink VALUES (2)') } } }))
+  await page.route('**/api/jobs/audit-job', route => route.fulfill({ json: { data: { yaml: encoded('INSERT INTO sink VALUES (2)') } } }))
+  await page.route('**/api/jobs/refresh', route => { refreshes++; return route.fulfill({ json: { data: { items: [{ jobId: 'audit-job', managed: true, jobState: 'SUSPENDED', yaml: encoded('INSERT INTO sink VALUES (1)') }] } } }) })
+  await page.goto('/#/sql?draft=sql-draft')
+  expect(refreshes).toBe(0)
+  await page.getByRole('button', { name: '核对部署 SQL', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '核对部署 SQL', exact: true })
+  await expect(dialog).toContainText('与当前待发布 SQL 不一致')
+  await expect(dialog.getByRole('button', { name: /已发布部署草稿 SQL/ })).toContainText('与当前待发布 SQL 一致')
+  await dialog.getByRole('button', { name: /集群声明 SQL/ }).click()
+  await expect(dialog.getByRole('textbox', { name: '集群声明 SQL' })).toContainText('VALUES (1)')
+  await expect(dialog).toContainText('不代表 Flink 已完成升级')
+  expect(refreshes).toBe(1)
+  await dialog.getByRole('button', { name: '关闭 SQL 核对' }).click()
+  await expect(dialog).toHaveCount(0)
 })
 
 test('部署受理后跳转作业列表，保留受理与运行的区分', async ({ page }) => {
@@ -251,10 +333,10 @@ test('生成时修改 SQL 会取消任务，迟到回复不能成为可应用建
   const f = await fixture(page), panel = await openAssistant(page)
   await discuss(page); f.setPending(true)
   await panel.getByRole('button', { name: /确认总结并生成 SQL/ }).click()
-  await expect(panel).toContainText('正在处理')
+  await expect(panel.locator('.ai-task-status')).toContainText('正在思考')
   const editor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
   await editor.click(); await page.keyboard.press('Control+End'); await page.keyboard.type('\n-- changed during generation')
-  await expect(panel.getByText('AI 正在处理本次对话…', { exact: true })).toBeHidden()
+  await expect(panel.locator('.ai-task-status')).toBeHidden()
   f.setPending(false)
   await expect(page.getByRole('navigation', { name: 'SQL 需求向导' }).getByRole('button', { name: /查看 SQL/ })).toBeDisabled()
   await expect(editor).toContainText('changed during generation')

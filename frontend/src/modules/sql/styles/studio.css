@@ -538,7 +538,7 @@
 .sql-workbench.with-inspector.ai-guided {
   grid-template-columns: minmax(300px, var(--inspector-width)) 8px minmax(260px, 1fr) 42px;
   height: calc(100vh - 248px);
-  min-height: 620px;
+  min-height: 480px;
 }
 .ai-guided > .sql-explorer {
   display: none;

@@ -324,6 +324,66 @@ class WorkbenchIntegrationTest {
     assertThat(stops.restartResource(job.id()).toString()).contains("deployed-secret-at-stop");
   }
 
+  /** 构造带发布修订和脚本摘要的 SQL 部署，不依赖外部制品或集群。 */
+  JobDraft sqlDeploymentDraft(String script) {
+    var job = draft();
+    var source = yaml.parse(job.yaml());
+    source.withObject("/metadata/labels").put("flink-web/job-type", "sql").put("flink-web/sql-id", job.name());
+    source.withObject("/spec/job").put("entryClass", "com.flinkweb.sql.SqlRunner").put("upgradeMode", "stateless")
+        .putArray("args").add("--statement").add(java.util.Base64.getEncoder().encodeToString(script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    com.flinkweb.service.sql.support.SqlDeploymentSource.stamp(source, 1, script);
+    var record = mapper.createObjectNode().put("name", job.name()).put("sql", script).put("jobId", job.id());
+    record.putObject("runtime");
+    records.save("sql_jobs", job.name(), record, 0);
+    return jobs.update(job.id(), new DraftRequest(job.name(), "SQL test", job.flinkVersion(), yaml.dump(source), job.revision()));
+  }
+
+  /** 新 SQL 发布后，停止快照或现有挂起资源不得把启动参数恢复成旧脚本。 */
+  @Test
+  void sqlStartUsesLatestPublishedScriptForMissingAndExistingResources() {
+    for (boolean present : java.util.List.of(false, true)) {
+      var job = sqlDeploymentDraft("INSERT INTO sink VALUES (2)");
+      var old = live(job, "SUSPENDED", "suspended");
+      old.withObject("/spec/job").putArray("args").add("--statement").add("b2xkLXNxbA==");
+      var intent = mapper.createObjectNode().put("phase", "DONE").put("savepointPath", "s3://old-state/path");
+      intent.set("deployment", old);
+      records.save("stop-intents", job.id(), intent, 0);
+      when(kubernetes.base()).thenReturn("/cr");
+      when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(present ? old : MissingNode.getInstance());
+      when(kubernetes.call(eq("POST"), anyString(), any())).thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+      when(kubernetes.call(eq("PUT"), anyString(), any())).thenAnswer(i -> ((ObjectNode) i.getArgument(2)).deepCopy());
+      var result = operations.execute(job.id(), "start", command(job), () -> "admin");
+      assertThat(result.path("state").asText()).isEqualTo("ACCEPTED");
+      var sent = org.mockito.ArgumentCaptor.forClass(com.fasterxml.jackson.databind.JsonNode.class);
+      verify(kubernetes).call(eq(present ? "PUT" : "POST"), eq(present ? "/cr/" + job.deploymentName() : "/cr"), sent.capture());
+      assertThat(sent.getValue().at("/spec/job/args")).isEqualTo(yaml.parse(job.yaml()).at("/spec/job/args"));
+      assertThat(sent.getValue().at("/spec/job/initialSavepointPath").isMissingNode()).isTrue();
+      assertThat(sent.getValue().at("/metadata/annotations").path("flink-web/sql-sha256").asText())
+          .isEqualTo(com.flinkweb.service.sql.support.SqlDeploymentSource.hash("INSERT INTO sink VALUES (2)"));
+      org.mockito.Mockito.reset(kubernetes);
+    }
+  }
+
+  /** 已保存但未发布的 SQL 明确拒绝启动；运维角色不得隐式发布新的 SQL。 */
+  @Test
+  void sqlStartRejectsUnpublishedChangesAndOperatorSourceReplacement() {
+    var job = sqlDeploymentDraft("INSERT INTO sink VALUES (1)");
+    var record = records.require("sql_jobs", job.name());
+    records.save("sql_jobs", job.name(), record.put("sql", "INSERT INTO sink VALUES (2)"), record.path("revision").asLong());
+    when(kubernetes.base()).thenReturn("/cr");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(MissingNode.getInstance());
+    assertThat(operations.execute(job.id(), "start", command(job), () -> "admin").path("message").asText()).contains("尚未发布");
+    verify(kubernetes, never()).call(eq("POST"), anyString(), any());
+    record = records.require("sql_jobs", job.name());
+    records.save("sql_jobs", job.name(), record.put("sql", "INSERT INTO sink VALUES (1)"), record.path("revision").asLong());
+    var old = live(job, "SUSPENDED", "suspended");
+    old.withObject("/spec/job").putArray("args").add("--statement").add("b2xk");
+    when(kubernetes.call(eq("GET"), anyString(), isNull())).thenReturn(old);
+    actor("admin", "OPERATOR");
+    assertThat(operations.execute(job.id(), "start", command(job), () -> "admin").path("message").asText()).contains("开发者");
+    verify(kubernetes, never()).call(eq("PUT"), anyString(), any());
+  }
+
   /** SQL 保存历史恢复形成新修订且不更改另一个 SQL 草稿。 */
   @Test
   void sqlRestoreCreatesANewRevisionWithoutPublishing() {

@@ -516,7 +516,8 @@ public class AiTaskServiceImpl implements AiTaskService {
         + "返回 reply:string, summary:string, unknowns:string[], risks:string[], evidence:string[], steps:string[]。"
         + "summary必须综合conversation.messages全部历史与用户人工修订总结，形成一份完整、可核对的当前需求，不能只概括最后一句。"
         + "包括已有SQL逻辑、输入输出、字段/连接信息、处理口径、时间窗口、消费位置、重复处理及报错修复目标；不擅自增加业务规则。"
-        + "缺少生成所需字段、连接参数或业务口径时明确提问，列入unknowns；已知参数保留，密码只用平台引用。"
+        + "unknowns只列当前任务缺少的必要字段、连接参数或业务口径；未来扩展、可选取值优化放入risks，不阻碍现有SQL需求。已知参数保留，密码只用平台引用。"
+        + "conversation.scopeAccepted=true表示用户确认仅按总结已知范围生成；unknowns仍未回答，不得据此猜测。保留现有SQL行为，不添加未确定的新条件；缺少必要参数时说明缺失，不编造参数或凭据。"
         + (Set.of("generate", "repair").contains(mode)
             ? "本轮总结已由用户确认，增加sql:string，返回完整可审阅Flink SQL，包括必要表定义和INSERT或查询。"
                 + "只允许CREATE TABLE/VIEW、INSERT INTO/OVERWRITE、SELECT/WITH/VALUES，不输出SET、DROP、ALTER、Catalog、函数注册或CTAS。"

@@ -37,6 +37,7 @@ public class OperationServiceImpl implements OperationService {
   private final AccessService access;
   private final ReleaseService releases;
   private final com.flinkweb.client.storage.S3StorageClient storage;
+  private final com.flinkweb.service.sql.support.SqlDeploymentSource sqlSource;
 
   /** 注入作业、渲染、集群、幂等记录及身份校验服务。 */
   public OperationServiceImpl(
@@ -52,7 +53,9 @@ public class OperationServiceImpl implements OperationService {
       JobOwnershipService ownership,
       AccessService access,
       ReleaseService releases,
-      com.flinkweb.client.storage.S3StorageClient storage) {
+      com.flinkweb.client.storage.S3StorageClient storage,
+      com.flinkweb.service.sql.support.SqlDeploymentSource sqlSource) {
+    this.sqlSource = sqlSource;
     this.jobs = jobs;
     this.jobRepository = jobRepository;
     this.stops = stops;
@@ -172,6 +175,11 @@ public class OperationServiceImpl implements OperationService {
     try {
       JsonNode existing = client.call("GET", client.base() + "/" + job.deploymentName(), null);
       if (!existing.isMissingNode()) ownership.assertManaged(existing, id);
+      var publishedSource = yaml.parse(job.yaml());
+      boolean canEditSource = auth != null && auth.getAuthorities().stream()
+          .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") || a.getAuthority().equals("ROLE_DEVELOPER"))
+          && access.allowed(id, "edit");
+      if (Set.of("start", "restore").contains(action)) sqlSource.requirePublished(publishedSource, canEditSource);
       if (action.equals("stop") || action.equals("suspend")) {
         String progress = stops.stop(id, request.path("upgradeMode").asText("savepoint"), existing);
         operation.put("state", "ACCEPTED").put("message", progress);
@@ -239,9 +247,12 @@ public class OperationServiceImpl implements OperationService {
       } else {
         ObjectNode resource;
         RenderedDeployment rendered = null;
+        boolean updatedSql = Set.of("start", "restore").contains(action) && sqlSource.isSql(publishedSource)
+            && sqlSource.changed(publishedSource, existing.isMissingNode() ? stops.restartResource(id) : existing);
+        if (updatedSql && !canEditSource) fail("已发布的 SQL 已更新，请由有编辑权限的开发者部署或启动最新版本；本次未恢复旧 SQL");
         if (action.equals("deploy")
-            || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
-          ObjectNode stoppedResource = action.equals("deploy") ? null : stops.restartResource(id);
+            || updatedSql || (Set.of("start", "restore").contains(action) && existing.isMissingNode())) {
+          ObjectNode stoppedResource = action.equals("deploy") || updatedSql ? null : stops.restartResource(id);
           if (stoppedResource != null) {
             rendered = variables.render(stoppedResource);
             resource = rendered.deployment();
@@ -270,7 +281,7 @@ public class OperationServiceImpl implements OperationService {
             String path =
                 action.equals("restore")
                     ? request.path("savepointPath").asText()
-                    : stops.restorePath(id);
+                    : updatedSql && "stateless".equals(resource.at("/spec/job/upgradeMode").asText()) ? "" : stops.restorePath(id);
             if (!path.isBlank()) {
               if (action.equals("restore")
                   && !storage.checkSnapshot(path).path("exists").asBoolean())

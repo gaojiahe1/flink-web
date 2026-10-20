@@ -72,7 +72,7 @@ public class AiConversationServiceImpl implements AiConversationService {
       fail("AI_CONVERSATION_LIMIT", "当前会话内容已达上限，本条未发送；已有对话记录完整保留");
     value.withArray("messages").addObject().put("id", id).put("role", "user")
         .put("content", content).put("mode", mode).put("createdAt", Instant.now().toString());
-    value.put("contentVersion", value.path("contentVersion").asLong() + 1).put("confirmedVersion", -1);
+    value.put("contentVersion", value.path("contentVersion").asLong() + 1).put("confirmedVersion", -1).put("scopeAccepted", false);
     return save(value);
   }
 
@@ -89,7 +89,7 @@ public class AiConversationServiceImpl implements AiConversationService {
     guard.requireSafe(sql);
     long version = value.path("contentVersion").asLong() + 1;
     value.put("contentVersion", version).put("summaryVersion", version)
-        .put("confirmedVersion", -1).put("summary", text).put("summarySqlHash", hash(sql));
+        .put("confirmedVersion", -1).put("scopeAccepted", false).put("summary", text).put("summarySqlHash", hash(sql));
     return save(value);
   }
 
@@ -103,11 +103,12 @@ public class AiConversationServiceImpl implements AiConversationService {
     if (value.path("summary").asText().isBlank()
         || value.path("summaryVersion").asLong(-1) != version)
       fail("AI_SUMMARY_STALE", "请先整理本次全部对话，再核对并确认总结");
-    if (!value.path("unknowns").isEmpty()) fail("AI_REQUIREMENTS_INCOMPLETE", "请先在对话中补充待确认事项");
+    if (!value.path("unknowns").isEmpty() && !input.path("acceptCurrentScope").asBoolean())
+      fail("AI_REQUIREMENTS_INCOMPLETE", "请补充待核对事项，或明确按当前总结中已知范围确认");
     guard.requireSafe(input.path("sql").asText());
     if (!hash(input.path("sql").asText()).equals(value.path("summarySqlHash").asText()))
       fail("AI_SQL_CONTEXT_CHANGED", "SQL 已变化，请重新整理对话后再确认");
-    value.put("confirmedVersion", version);
+    value.put("confirmedVersion", version).put("scopeAccepted", input.path("acceptCurrentScope").asBoolean());
     return save(value);
   }
 
@@ -142,7 +143,7 @@ public class AiConversationServiceImpl implements AiConversationService {
       String text = result.path("summary").asText();
       if (text.isBlank() || text.length() > 8000) fail("AI_INVALID_OUTPUT", "模型未返回完整需求总结或总结过长");
       value.put("summary", text).put("summaryVersion", version).put("summarySqlHash", sqlHash)
-          .put("confirmedVersion", -1);
+          .put("confirmedVersion", -1).put("scopeAccepted", false);
       value.set("unknowns", result.path("unknowns").deepCopy());
     }
     save(value);

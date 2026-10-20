@@ -10,8 +10,8 @@ import {
   clearValidationErrors,
 } from '../../../shared/utils/fieldValidation'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { parseDocument } from 'yaml'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
@@ -33,6 +33,8 @@ type Catalog = {
   flinkVersion?: string
   repository?: string
 }
+const props = defineProps<{ embedded?: boolean }>()
+const emit = defineEmits<{ opened: [string] }>()
 const route = useRoute(),
   router = useRouter(),
   id = computed(() => (typeof route.params.id === 'string' ? route.params.id : undefined))
@@ -155,18 +157,64 @@ const busy = ref(false),
   preview = ref(''),
   submitted = ref(false),
   formElement = ref<HTMLFormElement>()
+const savedEditor = ref('')
+let navigating = false
+let disposed = false
+onBeforeUnmount(() => {
+  disposed = true
+})
+const editorSnapshot = () =>
+  JSON.stringify({
+    name: form.name,
+    description: form.description,
+    flinkVersion: form.flinkVersion,
+    yaml: form.yaml,
+    options,
+    args: args.value,
+    config: config.value,
+    pods: pods.value,
+    method: method.value,
+  })
+async function canLeave() {
+  if (!props.embedded || navigating) return true
+  if (!savedEditor.value && (loading.value || switchingMethod.value)) return true
+  if (
+    busy.value ||
+    loading.value ||
+    uploading.value ||
+    stateConfigBusy.value ||
+    switchingMethod.value
+  ) {
+    message.value = '正在加载或处理配置，请完成后再切换草稿。'
+    return false
+  }
+  return (
+    !savedEditor.value ||
+    savedEditor.value === editorSnapshot() ||
+    (await confirmDialog('当前 JAR 草稿有未保存的修改，确认切换？'))
+  )
+}
+function allowNavigation() {
+  navigating = true
+}
+defineExpose({ canLeave, allowNavigation })
+onBeforeRouteLeave(canLeave)
+onBeforeRouteUpdate((to, from) => (to.path === from.path ? true : canLeave()))
 onMounted(async () => {
   try {
     const result = await Promise.all(
       ['templates', 'images'].map((type) => request<any[]>('/api/catalog/' + type)),
     )
+    if (disposed) return
     templates.value = result[0]!
     images.value = result[1]!
 
     if (id.value) {
       const saved = await jobsApi.get(id.value)
+      if (disposed) return
       const links =
         await request<Record<string, { type: string; sqlId?: string }>>('/api/development/links')
+      if (disposed) return
       if (links[saved.id]?.type === 'sql') {
         const sqlId = links[saved.id]?.sqlId
         if (!sqlId) throw new Error('对应 SQL 草稿不存在或没有访问权限，请从 SQL 开发检查关联。')
@@ -175,6 +223,7 @@ onMounted(async () => {
       }
       if (currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)))
         await request('/api/development/jar/jobs/' + saved.id + '/open', { method: 'POST' })
+      if (disposed) return
       deploymentName.value = saved.deploymentName
       workspaceId.value = saved.id
       method.value = 'yaml'
@@ -185,12 +234,18 @@ onMounted(async () => {
         images.value.find((i) => imageAddress(i) === currentYamlImage.value)?.id || ''
     }
   } catch (e) {
+    if (disposed) return
     error.value = showValidationError((e as Error).message)
   } finally {
     loading.value = false
   }
+  if (disposed) return
   if ((route.query.editor === 'jar' || (id.value && !yamlOnly.value)) && !error.value)
     await switchMethod('form')
+  if (disposed) return
+  await nextTick()
+  savedEditor.value = editorSnapshot()
+  if (id.value) emit('opened', id.value)
 })
 async function switchMethod(next: string) {
   if (
@@ -220,6 +275,7 @@ async function switchMethod(next: string) {
         const storage = await request<{ bucket: string; rootPrefix: string }>(
           '/api/artifacts/defaults',
         ).catch(() => undefined)
+        if (disposed) return
         const mapped = hydrateJar(form.yaml, images.value, storage)
         Object.assign(options, mapped.options)
         pods.value = readPodTemplates(parseDocument(form.yaml).toJS()?.spec)
@@ -407,6 +463,8 @@ async function save(deploy = false) {
       : await jobsApi.create({ ...form, workspaceId: workspaceId.value })
     Object.assign(form, saved)
     deploymentName.value = saved.deploymentName
+    savedEditor.value = editorSnapshot()
+    navigating = true
     if (deploy) {
       await router.replace('/jar/' + saved.id + '/edit')
       const result = await request<{ state: string; message: string }>(
@@ -420,12 +478,15 @@ async function save(deploy = false) {
     error.value = showValidationError((e as Error).message)
   } finally {
     busy.value = false
+    navigating = false
   }
 }
 </script>
 <template>
-  <RouterLink to="/jar" class="back-link">← 返回 JAR 开发</RouterLink>
-  <PageHeader eyebrow="JOB DEVELOPMENT"
+  <RouterLink v-if="!embedded" to="/jar" class="back-link">← 返回 JAR 开发</RouterLink>
+  <PageHeader
+    :eyebrow="embedded ? undefined : 'JOB DEVELOPMENT'"
+    :class="{ 'embedded-editor-title': embedded }"
     ><template #title>{{
       id ? '编辑作业' : method === 'form' ? '新建 JAR 作业' : '新建作业'
     }}</template

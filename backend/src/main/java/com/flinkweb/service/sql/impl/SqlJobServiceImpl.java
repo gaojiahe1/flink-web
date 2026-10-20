@@ -201,6 +201,7 @@ public class SqlJobServiceImpl implements SqlJobService {
       args.add("--statement");
       args.add(Base64.getEncoder().encodeToString(statement.getBytes(StandardCharsets.UTF_8)));
     }
+    com.flinkweb.service.sql.support.SqlDeploymentSource.stamp(resource, input.revision(), input.sql());
     return rendered.put("yaml", yaml.dump(resource)).put("message", checked.message());
   }
 

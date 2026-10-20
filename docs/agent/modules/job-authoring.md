@@ -1,6 +1,6 @@
 # 作业配置与表单
 
-更新：2026-10-13。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-20。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：JAR 开发映射、表单/YAML 双向编辑、模板/镜像、程序入口与资源配置。数据流：JobEditorView → jarForm/hydrateJar → render-form/FormServiceImpl → YamlServiceImpl.validate；最终发布另走生命周期/ReleaseService。
 
@@ -15,6 +15,8 @@ JAR 表单写 editor=jar-v1；既有/纳管 YAML 转换须明确 allowFormRewrit
 2026-10-13：SQL/Session 表单与 YAML 共用部署渲染，后端从 YAML 重新回填公共资源字段；`baseYaml` 作为表单合并基底保留未知配置。新增模式/固定副本字段只在请求显式提供时写入；未配置的既有 JAR/Session 保持原规则。转换前后均校验资源身份及所选 Runner/托管下载器，语法错误保留原文。前端 [deploymentYaml.ts](../../../frontend/src/shared/utils/deploymentYaml.ts) 仅做原文结构检查，不替代后端安全校验。
 
 YAML 省略的 JM/TM 资源字段保持省略；configuration 的可选 `formIssue` 指出缺少显式账号/资源或无法表示的内存单位。页面在回填前拦截并保留原文，YAML 保存不因此被禁用，避免表单默认值改变已有配置。
+
+2026-10-20：`/jar`改为左侧草稿列表、右侧嵌入JobEditorView，子路由`new`与`:id/edit`按路径重建编辑器，旧`/jobs`编辑入口保留。列表可搜索/折叠/主动刷新，窄屏列表在上，编辑区按实际容器宽度切换单列；保存发布规则不变。真实修改离开需确认；初始加载可切换，卸载后的迟到请求不回填或打开旧草稿。共享FlinkConfigEditor仅用户文档编辑发出model更新，程序回填不改变业务快照。代码及回归：[JAR工作台](../../../frontend/src/modules/job-creation/pages/JarDevelopmentView.vue)、[页面用例](../../../frontend/tests/jar-workspace.spec.ts)。
 
 ## 定位代码与验证
 

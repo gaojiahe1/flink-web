@@ -119,6 +119,30 @@ class AiAssistantIntegrationTest {
         .with(csrf()).contentType(MediaType.APPLICATION_JSON).content(message.toString())).andExpect(status().isForbidden());
   }
 
+  /** 用户可明确确认已知范围，未回答事项保留且后续补充撤销本轮确认。 */
+  @Test
+  void conversationCanConfirmKnownScopeWithoutInventingUnknownAnswers() throws Exception {
+    String id = conversationDraft();
+    conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", 0).put("content", "保持现有 SQL，后续扩展暂未决定").put("mode", "requirement"));
+    answer.set("{\"reply\":\"当前逻辑已整理\",\"summary\":\"保持现有 SQL\",\"unknowns\":[\"是否增加过滤条件\"]}");
+    assertThat(await(tasks.create(conversationTask(id, 1, "chat")).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+    var current = conversations.get(id);
+    var confirmation = mapper.createObjectNode().put("revision", current.path("revision").asLong()).put("sql", "SELECT 1;");
+    assertThatThrownBy(() -> conversations.confirm(id, confirmation)).hasMessageContaining("已知范围");
+    current = conversations.confirm(id, confirmation.put("acceptCurrentScope", true));
+    assertThat(current.path("scopeAccepted").asBoolean()).isTrue();
+    assertThat(current.path("unknowns").get(0).asText()).isEqualTo("是否增加过滤条件");
+    answer.set("{\"sql\":\"SELECT 1;\",\"summary\":\"保留现状\",\"unknowns\":[]}");
+    assertThat(await(tasks.create(conversationTask(id, 1, "generate")).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(received.get()).contains("scopeAccepted", "是否增加过滤条件");
+    current = conversations.get(id);
+    current = conversations.append(id, mapper.createObjectNode().put("messageId", UUID.randomUUID().toString())
+        .put("revision", current.path("revision").asLong()).put("content", "现在增加过滤条件").put("mode", "requirement"));
+    assertThat(current.path("confirmedVersion").asInt()).isEqualTo(-1);
+    assertThat(current.path("scopeAccepted").asBoolean()).isFalse();
+  }
+
   /** 整理途中继续补充时旧回复不得持久化，报错消息和原确认也不能被覆盖。 */
   @Test
   void lateConversationResponseCannotOverwriteFollowupOrCancellation() throws Exception {
