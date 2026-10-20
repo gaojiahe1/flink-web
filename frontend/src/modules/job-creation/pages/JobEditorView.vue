@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DraftCreateDialog from '../../../shared/components/form/DraftCreateDialog.vue'
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { hydrateJar } from '../jarForm'
@@ -63,6 +64,31 @@ const options = reactive({
 })
 const pods = ref(emptyPodTemplates()),
   podValid = ref(true)
+const splitRatio = ref(62)
+const splitArea = ref<HTMLFormElement>()
+function moveSplit(event: PointerEvent) {
+  if (!(event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) return
+  const bounds = splitArea.value?.getBoundingClientRect()
+  if (bounds)
+    splitRatio.value = Math.min(
+      75,
+      Math.max(45, ((event.clientX - bounds.left) / bounds.width) * 100),
+    )
+}
+function beginSplit(event: PointerEvent) {
+  event.preventDefault()
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  moveSplit(event)
+}
+function endSplit(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement
+  if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
+}
+const nameConfirmed = ref(false)
+function confirmName(value: string) {
+  form.name = value
+  nameConfirmed.value = true
+}
 const workspaceId = ref(requestId())
 const entryClasses = ref<string[]>([]),
   inspectingEntry = ref(false),
@@ -483,6 +509,12 @@ async function save(deploy = false) {
 }
 </script>
 <template>
+  <DraftCreateDialog
+    v-if="!id && !nameConfirmed"
+    kind="JAR"
+    @named="confirmName"
+    @close="router.push('/jar')"
+  />
   <RouterLink v-if="!embedded" to="/jar" class="back-link">← 返回 JAR 开发</RouterLink>
   <PageHeader
     :eyebrow="embedded ? undefined : 'JOB DEVELOPMENT'"
@@ -513,7 +545,13 @@ async function save(deploy = false) {
     此作业来自既有资源。可切换到 JAR 表单，但生成内容可能改变原 YAML；保存前请检查配置。
   </p>
   <form
-    ref="formElement"
+    :ref="
+      (el) => {
+        formElement = el as HTMLFormElement
+        splitArea = el as HTMLFormElement
+      }
+    "
+    :style="{ '--jar-form-width': splitRatio + 'fr', '--jar-yaml-width': 100 - splitRatio + 'fr' }"
     class="job-editor-form"
     :class="{ submitted: submitted, 'jar-split': method === 'form' }"
     @submit.prevent="save(false)"
@@ -532,7 +570,7 @@ async function save(deploy = false) {
               required
               pattern="[a-z0-9]([\-a-z0-9]*[a-z0-9])?"
               maxlength="63"
-              :disabled="!!id || loading"
+              :disabled="!!id || nameConfirmed || loading"
               placeholder="order-stream" /><HelpTip
               text="小写字母、数字、连字符；名称唯一，保存后自动分配编号，资源名为 flink-编号。"
           /></label>
@@ -719,6 +757,24 @@ async function save(deploy = false) {
         </section>
       </template>
     </div>
+    <div
+      v-if="method === 'form'"
+      class="jar-resizer"
+      role="separator"
+      aria-label="调整表单与 YAML 宽度"
+      aria-orientation="vertical"
+      tabindex="0"
+      :aria-valuenow="Math.round(splitRatio)"
+      :aria-valuemin="45"
+      :aria-valuemax="75"
+      @pointerdown="beginSplit"
+      @pointermove="moveSplit"
+      @pointerup="endSplit"
+      @pointercancel="endSplit"
+      @keydown.left.prevent="splitRatio = Math.max(45, splitRatio - 2)"
+      @keydown.right.prevent="splitRatio = Math.min(75, splitRatio + 2)"
+      @keydown.home.prevent="splitRatio = 62"
+    ></div>
     <section class="panel yaml-panel">
       <div class="panel-toolbar">
         <h3>{{ method === 'form' ? '生成后的 YAML' : 'FlinkDeployment YAML' }}</h3>

@@ -316,12 +316,26 @@ public class S3StorageClient implements AutoCloseable {
       if (required) configured();
       return;
     }
+    // 部分对象服务把文件夹标记保存为不带末尾斜杠的独立对象；只删精确键。
+    deleteMarker(bucket, objects.substring(0, objects.length() - 1));
     deletePrefix(bucket, objects, true);
+    String legacy = prefix + id + "/";
+    deleteMarker(bucket, legacy.substring(0, legacy.length() - 1));
+    deletePrefix(bucket, legacy, true);
     if (stateBucket != null) {
       URI location = URI.create(jobStateRoot(id));
       deletePrefix(stateBucket, location.getPath().replaceFirst("^/", ""), true);
     }
     log.info("Job storage deleted jobId={}", id);
+  }
+
+  /** 清理已验证 UUID 的精确目录标记，不使用前缀匹配，兼容目录不存在的重试。 */
+  private void deleteMarker(String targetBucket, String key) {
+    try {
+      client.deleteObject(DeleteObjectRequest.builder().bucket(targetBucket).key(key).build());
+    } catch (S3Exception error) {
+      if (error.statusCode() != 404) throw unavailable(error, "DeleteObject", targetBucket);
+    }
   }
 
   /** 分页递归删除专属前缀，检查批量响应中的单项错误，支持失败后幂等重试。 */

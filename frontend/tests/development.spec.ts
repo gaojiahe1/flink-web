@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 
 async function login(page: Page) {
@@ -21,8 +22,7 @@ test('JAR form preserves container JAR and arguments without artifact registrati
   await catalog(page,'images',image,{name:'Browser Flink',repository:'registry.test/flink',version:'1.20',flinkVersion:'1.20'})
   await page.goto('/#/jar')
   await page.getByRole('link',{name:'＋ 新建 JAR 作业',exact:true}).click()
-  await expect(page.getByRole('heading',{name:'新建 JAR 作业'})).toBeVisible()
-  await page.getByLabel('作业名称',{exact:false}).first().fill('jar-e2e-'+suffix)
+  await confirmJarName(page, 'jar-e2e-'+suffix)
   await page.getByLabel('镜像版本',{exact:false}).selectOption(image)
   await page.getByLabel('入口类',{exact:false}).fill('com.example.Main')
   await page.getByLabel('程序参数',{exact:false}).fill('--message\nhello world')

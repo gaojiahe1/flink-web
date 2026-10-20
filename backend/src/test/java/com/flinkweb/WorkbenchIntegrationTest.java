@@ -69,6 +69,41 @@ class WorkbenchIntegrationTest {
   @Autowired ReleaseService releases;
   @Autowired SqlJobService sql;
   @Autowired OperationService operations;
+  @Autowired org.springframework.jdbc.core.JdbcTemplate historyJdbc;
+
+  /** 升级前的小数位不同的时间戳按真实时间排序，而非字符串顺序。 */
+  @Test
+  void legacyHistoryPrecisionDoesNotEvictNewerVersions() {
+    String subject = UUID.randomUUID().toString();
+    var times = List.of("00", "00.1", "00.11", "00.111", "00.2", "00.22", "00.222");
+    for (int index = 0; index < times.size(); index++) {
+      String id = UUID.randomUUID().toString(), stamp = "2026-10-20T01:00:" + times.get(index) + "Z";
+      var node = mapper.createObjectNode().put("id", id).put("sqlId", subject).put("createdAt", stamp).put("order", index);
+      historyJdbc.update("INSERT INTO platform_records(collection,id,payload,revision) VALUES (?,?,?,1)", "sql_versions", id, node.toString());
+      historyJdbc.update("INSERT INTO platform_record_subjects(collection,record_id,subject_id,created_at) VALUES (?,?,?,?)", "sql_versions", id, subject, stamp);
+    }
+    assertThat(records.listForSubject("sql_versions", subject).stream().map(n -> n.path("order").asInt()).toList()).containsExactly(6, 5, 4, 3, 2);
+  }
+
+  /** 两种可恢复历史各按作业保留五份，淘汰后不能绕过列表读取旧版本。 */
+  @Test
+  void retainedVersionsAreBoundedPerJobAndCollection() {
+    String first = UUID.randomUUID().toString(), second = UUID.randomUUID().toString();
+    for (String collection : List.of("releases", "sql_versions")) {
+      var ids = new ArrayList<String>();
+      String field = collection.equals("sql_versions") ? "sqlId" : "jobId";
+      for (int index = 0; index < 8; index++) {
+        String recordId = UUID.randomUUID().toString();
+        ids.add(recordId);
+        records.save(collection, recordId, mapper.createObjectNode().put(field, first).put("order", index), 0);
+      }
+      records.save(collection, UUID.randomUUID().toString(), mapper.createObjectNode().put(field, second), 0);
+      assertThat(records.listForSubject(collection, first)).hasSize(5);
+      assertThat(records.listForSubject(collection, first).stream().map(n -> n.path("order").asInt()).toList()).containsExactly(7, 6, 5, 4, 3);
+      assertThat(records.find(collection, ids.get(0))).isNull();
+      assertThat(records.listForSubject(collection, second)).hasSize(1);
+    }
+  }
   @Autowired com.flinkweb.service.job.runtime.StopService stops;
   @Autowired YamlService yaml;
   @Autowired DiagnosticService diagnostics;

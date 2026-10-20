@@ -340,6 +340,9 @@ class S3ServiceTest {
     var objects = new java.util.LinkedHashSet<String>();
     for (int i = 0; i < 1001; i++) objects.add("test-bucket/" + prefix + "file-" + i);
     objects.add("test-bucket/artifacts/shared/shared.jar");
+    objects.add("test-bucket/" + prefix.substring(0, prefix.length() - 1));
+    objects.add("test-bucket/artifacts/" + id + "/nested/legacy.jar");
+    objects.add("test-bucket/artifacts/" + id);
     objects.add("test-bucket/" + prefix.substring(0, prefix.length() - 1) + "-other/file");
     objects.add("state-bucket/checkpoints/" + id + "/ha/data");
     when(client.listObjectsV2(
@@ -375,12 +378,18 @@ class S3ServiceTest {
               return software.amazon.awssdk.services.s3.model.DeleteObjectsResponse.builder()
                   .build();
             });
+    when(client.deleteObject(any(software.amazon.awssdk.services.s3.model.DeleteObjectRequest.class)))
+        .thenAnswer(inv -> {
+          var request = (software.amazon.awssdk.services.s3.model.DeleteObjectRequest) inv.getArgument(0);
+          objects.remove(request.bucket() + "/" + request.key());
+          return software.amazon.awssdk.services.s3.model.DeleteObjectResponse.builder().build();
+        });
     service.deleteJobStorage(id, true);
     assertThat(objects).hasSize(2).contains("test-bucket/artifacts/shared/shared.jar");
-    verify(client, times(3))
+    verify(client, times(4))
         .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
     service.deleteJobStorage(id, true);
-    verify(client, times(3))
+    verify(client, times(4))
         .deleteObjects(any(software.amazon.awssdk.services.s3.model.DeleteObjectsRequest.class));
     assertThatThrownBy(() -> service.deleteJobStorage("../shared", true))
         .isInstanceOf(com.flinkweb.exception.common.BusinessException.class);

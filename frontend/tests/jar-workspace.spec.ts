@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 import { stringify } from 'yaml'
 async function fixture(page: Page) {
@@ -12,6 +13,9 @@ async function fixture(page: Page) {
     if (path === '/api/auth/me') data = { username: 'admin', roles: ['ROLE_ADMIN'] }
     else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
     else if (path === '/api/system') data = { namespace: 'team' }
+    else if (path === '/api/jobs/name-availability') data = { available: new URL(req.url()).searchParams.get('name') !== 'first-job' }
+    else if (path === '/api/jobs') data = jobs
+    else if (path === '/api/jobs/refresh') data = { items: [], stopProgress: { 'first-job': { phase: 'DONE' } }, queriedAt: new Date().toISOString() }
     else if (path === '/api/development/jar/jobs') data = jobs
     else if (path === '/api/development/jar/deployment-status') data = { 'first-job': 'UNDEPLOYED', 'second-job': 'DEPLOYED' }
     else if (path === '/api/development/links') data = Object.fromEntries(jobs.map(j => [j.id, { type: 'jar' }]))
@@ -69,10 +73,53 @@ test('旧 JAR 尚在加载时可新建，迟到响应不回填或打开旧草稿
   await page.route('**/api/jobs/first-job', async route => { await held; await route.fallback() })
   await page.goto('/#/jar/first-job/edit')
   await page.getByRole('link', { name: '＋ 新建 JAR 作业', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '新建 JAR 作业' })).toBeVisible()
+  await expect(page.getByRole('dialog')).toContainText('新建 JAR 作业')
   release()
-  await expect(page.getByLabel('作业名称', { exact: false }).first()).toHaveValue('')
+  await confirmJarName(page, 'new-jar-test')
+  await expect(page.getByLabel('作业名称', { exact: false }).first()).toHaveValue('new-jar-test')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page).toHaveURL(/#\/jar\/new$/)
   expect(f.calls).not.toContain('POST /api/development/jar/jobs/first-job/open')
+})
+
+test('JAR 命名弹窗查重并锁定名称，表单默认更宽且支持拖动和键盘', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/jar/new')
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('新草稿作业名称').fill('first-job')
+  await expect(dialog).toContainText('作业名称已存在')
+  await dialog.getByRole('checkbox').check()
+  await expect(dialog.getByRole('button', { name: '确认并创建' })).toBeDisabled()
+  await confirmJarName(page, 'new-job')
+  await expect(page.getByLabel('作业名称', { exact: false }).first()).toBeDisabled()
+  const form = page.locator('.editor-form-column'), yaml = page.locator('.yaml-panel'), bar = page.getByRole('separator', { name: '调整表单与 YAML 宽度' })
+  expect((await form.boundingBox())!.width).toBeGreaterThan((await yaml.boundingBox())!.width)
+  const width = (await form.boundingBox())!.width, bounds = (await bar.boundingBox())!
+  await page.mouse.move(bounds.x + 4, bounds.y + 30)
+  await page.mouse.down(); await page.mouse.move(bounds.x - 100, bounds.y + 30); await page.mouse.up()
+  expect((await form.boundingBox())!.width).toBeLessThan(width - 50)
+  await bar.focus(); await bar.press('Home'); await expect(bar).toHaveAttribute('aria-valuenow', '62')
+  await bar.press('ArrowRight'); await expect(bar).toHaveAttribute('aria-valuenow', '64')
+  await page.screenshot({ path: test.info().outputPath('jar-split.png'), fullPage: true })
+  await page.setViewportSize({ width: 1024, height: 900 })
+  await expect(bar).toBeHidden()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024)
+})
+
+test('作业管理、JAR 和 SQL 草稿共用已停止状态，查询失败显示未知', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/jobs')
+  await expect(page.locator('.jobs-panel tbody tr').filter({ hasText: 'first-job' })).toContainText('已停止')
+  await page.goto('/#/jar')
+  await expect(page.getByRole('button', { name: /^first-job/ })).toContainText('已停止')
+  await page.route('**/api/sql/jobs', route => route.fulfill({ json: { data: [{ id: 'first-sql', name: 'first-sql', sql: '', description: '', revision: 1, jobId: 'first-job', runtime: { imageId: 'flink' } }] } }))
+  await page.goto('/#/sql?draft=first-sql')
+  await expect(page.locator('.sql-file').filter({ hasText: 'first-sql' })).toContainText('已停止 · 1.20.5')
+  const sqlList = page.locator('.sql-explorer')
+  expect((await sqlList.boundingBox())!.width).toBeGreaterThan(200)
+  await page.screenshot({ path: test.info().outputPath('sql-list.png'), fullPage: true })
+  await page.route('**/api/jobs/refresh', route => route.fulfill({ status: 503, json: { message: '临时不可用' } }))
+  await page.goto('/#/jar/first-job/edit')
+  await expect(page.getByRole('button', { name: /^first-job/ })).toContainText('状态未知')
+  await expect(page.getByRole('alert').filter({ hasText: '状态查询失败' })).toBeVisible()
 })

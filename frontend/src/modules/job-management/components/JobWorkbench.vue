@@ -237,7 +237,7 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
     <div class="workbench-body" v-if="tab === 'releases'">
       <div v-if="releases.length" class="toolbar-actions release-controls">
         <label
-          >发布版本<select data-field="releaseId" v-model="releaseId">
+          >发布版本（最近 5 次）<select data-field="releaseId" v-model="releaseId">
             <option v-for="release in releases" :key="release.id" :value="release.id">
               {{ time(release.createdAt) }} · {{ release.actor }} · 草稿 {{ release.draftRevision }}
             </option>

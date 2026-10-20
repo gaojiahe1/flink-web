@@ -16,6 +16,8 @@ Savepoint 入口 `StopServiceImpl.stop` 记录意图及加密实际配置，`adv
 
 2026-10-20 SQL例外：启动/恢复先核对保存SQL是否已发布。SQL的已发布参数与实际资源或停止快照不同，具备平台开发角色和作业编辑权限时使用最新已发布完整草稿，避免启动旧SQL；仅运维权限拒绝替换。stateless新SQL启动不附加旧自动保存点，显式恢复的选择路径仍保留；普通JAR与未变SQL继续复用原快照。实现及验证入口见[SQL模块](sql-session.md)，此项补充下方“仅ServiceAccount例外”的历史规则。
 
+2026-10-20追加：作业管理/JAR/SQL列表共享observedJobStatus；读取同一jobs/refresh的资源、身份冲突、healthState、deleting和stopProgress，资源消失且停止DONE显示“已停止”，查询失败显示未知。开发页查询仍遵守进入一次/三秒手动规则；统一观测也复用已有授权停止推进，不新增后台采集。发布历史每作业仅保留最近5次，SQL保存版本同一策略，详见[元数据模块](metadata-security.md)。
+
 ## 定位代码与验证
 
 - [StopServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/job/runtime/impl/StopServiceImpl.java)

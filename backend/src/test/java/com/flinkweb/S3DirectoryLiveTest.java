@@ -56,7 +56,12 @@ class S3DirectoryLiveTest {
       try (var stream = storage.download(storage.jobPrefix(to) + "nested/未引用 配置.txt")) {
         assertThat(stream.readAllBytes()).containsExactly(1, 2, 3);
       }
+      storage.mkdir(storage.jobPrefix(from));
+      for (String key : java.util.List.of(storage.jobPrefix(from).replaceAll("/$", ""), "artifacts/" + from, "artifacts/" + from + "/nested/legacy.jar"))
+        client.putObject(PutObjectRequest.builder().bucket(bucket).key(key).build(), software.amazon.awssdk.core.sync.RequestBody.fromBytes(new byte[] {7}));
       storage.deleteJobStorage(from, true);
+      assertThat(storage.list("artifacts/", null).toString()).doesNotContain(from);
+      assertThat(storage.list("artifacts/jobs/", null).toString()).doesNotContain(from);
       assertThat(storage.list(storage.jobPrefix(from), null).path("objects")).isEmpty();
       assertThat(storage.list(storage.jobPrefix(to), null).path("objects")).hasSize(1);
       assertThat(storage.list("artifacts/shared/", null).path("objects")).hasSize(1);

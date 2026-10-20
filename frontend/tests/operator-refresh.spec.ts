@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 async function login(page: Page) {
   await page.goto('/')
@@ -50,6 +51,12 @@ test('single JAR entry and matching filter, S3 and SQL control heights',async({p
   await page.screenshot({path:'test-results/sql-consistent-controls.png',fullPage:true})
 })
 test('operator status and version filtered image selection',async({page})=>{
+  await page.route('**/api/system/operator', route => route.fulfill({ json: { data: {
+    found: true, namespace: 'flink-jobs', deployment: 'flink-kubernetes-operator', queriedAt: new Date().toISOString(),
+    image: 'operator:1.12.0', replicas: 1, readyReplicas: 1,
+    compatibility: { known: true, version: '1.12.0', supported: ['1.19', '1.20'], accepted: ['1.19', '1.20'] },
+    pods: [{ name: 'operator-e2e', phase: 'Running', ready: true, containers: [] }],
+  } } }))
   await login(page)
   await page.goto('/#/settings')
   await expect(page.getByText('operator-e2e',{exact:true})).toBeVisible()
@@ -64,6 +71,7 @@ test('operator status and version filtered image selection',async({page})=>{
     expect(response.ok()).toBeTruthy()
   }
   await page.goto('/#/jobs/jar/new')
+ await confirmJarName(page, 'image-check-'+Date.now())
   await expect(page.getByText(/Operator 1.12.0 · 支持 Flink/)).toBeVisible()
   await expect(page.locator('option[value="supported-'+suffix+'"]')).toHaveCount(1)
   await expect(page.locator('option[value="unsupported-'+suffix+'"]')).toHaveCount(0)

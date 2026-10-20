@@ -71,7 +71,7 @@ async function restore() {
       <h3>SQL 历史</h3>
       <ManualRefreshButton :action="load" :disabled="busy" label="刷新记录" />
     </div>
-    <p class="muted">保存产生历史版本，恢复只更新草稿。</p>
+    <p class="muted">保存产生历史版本，仅保留最近 5 次；恢复只更新草稿。</p>
     <div v-if="error" class="notice error">{{ error }}</div>
     <select data-field="selected" v-model="selected" aria-label="SQL 历史版本">
       <option v-for="version in versions" :key="version.id" :value="version.id">

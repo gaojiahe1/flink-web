@@ -18,6 +18,8 @@ YAML 省略的 JM/TM 资源字段保持省略；configuration 的可选 `formIss
 
 2026-10-20：`/jar`改为左侧草稿列表、右侧嵌入JobEditorView，子路由`new`与`:id/edit`按路径重建编辑器，旧`/jobs`编辑入口保留。列表可搜索/折叠/主动刷新，窄屏列表在上，编辑区按实际容器宽度切换单列；保存发布规则不变。真实修改离开需确认；初始加载可切换，卸载后的迟到请求不回填或打开旧草稿。共享FlinkConfigEditor仅用户文档编辑发出model更新，程序回填不改变业务快照。代码及回归：[JAR工作台](../../../frontend/src/modules/job-creation/pages/JarDevelopmentView.vue)、[页面用例](../../../frontend/tests/jar-workspace.spec.ts)。
 
+2026-10-20追加：JAR新建先复用[命名弹窗](../../../frontend/src/shared/components/form/DraftCreateDialog.vue)检查名称并确认，表单锁定名称；保存时仍由服务端唯一约束兜底，尚未保存的JAR配置不会仅因命名确认就生成部署。表单/YAML默认62/38，分隔条支持指针拖动、方向键和Home复位，45–75%边界；窄容器上下排列。SQL列表采用同一230px桌面宽度、搜索/刷新、图标/状态/版本与行间距。三处列表共用[状态投影](../../../frontend/src/modules/job-management/utils/runtimeStatus.ts)，开发入口进入一次及手动三秒刷新时调用同一作业观测接口，不把发布关联当作运行状态，不启用后台轮询。
+
 ## 定位代码与验证
 
 - [podTemplates.ts](../../../frontend/src/shared/utils/podTemplates.ts)

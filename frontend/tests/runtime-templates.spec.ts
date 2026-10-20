@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 import { stringify, parse } from 'yaml'
 import { hydrateJar } from '../src/modules/job-creation/jarForm'
@@ -62,6 +63,7 @@ test('回填保留 serviceAccount、三处 PodTemplate 和资源字段', () => {
 test('新 JAR 默认账号来自 namespace，模板可识别三处且默认折叠', async ({ page }) => {
   await fixture(page)
   await page.goto('/#/jar/new')
+  await confirmJarName(page, 'new-jar-test')
   await expect(page.getByLabel('ServiceAccount', { exact: false })).toHaveValue('team-flink')
   await expect(page.locator('.pod-template-field[open]')).toHaveCount(0)
   await page.getByLabel('默认模板', { exact: false }).selectOption('template')
@@ -113,6 +115,7 @@ test('Session 保存三个 YAML 模板和自定义账号，重新编辑能回填
 test('Ctrl+F 搜索与替换面板统一控件样式并在窄屏正常换行', async ({ page }) => {
   await fixture(page)
   await page.goto('/#/jar/new')
+  await confirmJarName(page, 'new-jar-test')
   await page.getByRole('button', { name: 'YAML 编辑', exact: true }).click()
   const editor = page.getByRole('textbox', { name: 'YAML 编辑器', exact: true })
   await editor.fill('kind: FlinkDeployment\nmetadata:\n  name: find-me')

@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect } from '@playwright/test'
 test('login, independent manual refresh, catalog and YAML job workflow', async ({ page, context }) => {
   let refreshes = 0
@@ -40,9 +41,9 @@ test('login, independent manual refresh, catalog and YAML job workflow', async (
   await page.getByRole('link',{name:'作业管理'}).click()
   await page.goto('/#/jar')
   await page.getByRole('link',{name:'＋ 新建 JAR 作业'}).click()
-  await page.getByRole('button',{name:'YAML 编辑',exact:true}).click()
   const name='e2e-job-'+Date.now()
-  await page.getByLabel('作业名称').fill(name)
+  await confirmJarName(page, name)
+  await page.getByRole('button',{name:'YAML 编辑',exact:true}).click()
   await page.getByLabel('默认模板').selectOption('application-basic')
   const editor=page.getByRole('textbox',{name:'YAML 编辑器',exact:true})
   const yaml=(await editor.innerText()).replace('name: example-job','name: '+name)

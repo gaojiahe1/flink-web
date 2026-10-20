@@ -44,14 +44,19 @@ public class RecordRepository {
   }
 
   /** 使用普通列索引读取某个作业的历史；排序稳定，不依赖 JSON 方言。 */
+  @org.springframework.transaction.annotation.Transactional
   public List<ObjectNode> listForSubject(String collection, String subject) {
-    return jdbc.query(
+    pruneHistory(collection, subject);
+    var result = jdbc.query(
         "SELECT r.payload,r.revision FROM platform_record_subjects s JOIN platform_records r ON"
             + " r.collection=s.collection AND r.id=s.record_id WHERE s.collection=? AND"
             + " s.subject_id=? ORDER BY s.created_at DESC,s.record_id DESC",
         (rs, row) -> read(rs.getString(1), rs.getLong(2)),
         collection,
         subject);
+    if (java.util.Set.of("releases", "sql_versions").contains(collection))
+      return result.stream().sorted(java.util.Comparator.comparing((ObjectNode n) -> Instant.parse(n.path("createdAt").asText())).thenComparing(n -> n.path("id").asText()).reversed()).toList();
+    return result;
   }
 
   /** 查找指定记录，不存在时返回空值。 */
@@ -128,9 +133,22 @@ public class RecordRepository {
             id,
             subject,
             node.path("createdAt").asText(""));
+      pruneHistory(collection, subject);
     }
     node.put("revision", expected + 1);
     return node;
+  }
+
+  /** SQL 保存版本和作业发布版本按作业各留最新五次，旧记录读取时也执行收敛。 */
+  private void pruneHistory(String collection, String subject) {
+    if (!java.util.Set.of("releases", "sql_versions").contains(collection) || subject.isBlank()) return;
+    // Instant 的小数位可变，字符串比较会把同一秒内较早的短时间戳排到前面。
+    var history = jdbc.query("SELECT record_id,created_at FROM platform_record_subjects WHERE collection=? AND subject_id=?", (rs, row) -> java.util.Map.entry(rs.getString(1), Instant.parse(rs.getString(2))), collection, subject);
+    var ids = history.stream().sorted(java.util.Comparator.comparing((java.util.Map.Entry<String, Instant> entry) -> entry.getValue()).thenComparing(java.util.Map.Entry::getKey).reversed()).map(java.util.Map.Entry::getKey).toList();
+    for (String id : ids.stream().skip(5).toList()) {
+      jdbc.update("DELETE FROM platform_records WHERE collection=? AND id=?", collection, id);
+      jdbc.update("DELETE FROM platform_record_subjects WHERE collection=? AND record_id=?", collection, id);
+    }
   }
 
   /** 按集合、标识和修订号删除元数据，拒绝并发覆盖。 */

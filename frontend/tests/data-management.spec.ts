@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 async function login(page: Page) {
  await page.goto('/')
@@ -73,9 +74,9 @@ test('SQL draft list is compact scrollable and displays help only on demand',asy
  for(const width of [1920,1440,1280]) {
   await page.setViewportSize({width,height:900})
   const bounds=await page.locator('.sql-explorer').boundingBox()
-  expect(bounds!.width).toBeLessThanOrEqual(144)
+  expect(bounds!.width).toBeLessThanOrEqual(230)
   const file=await page.locator('.sql-file').first().boundingBox()
-  expect(file!.height).toBeLessThanOrEqual(44)
+  expect(file!.height).toBeLessThanOrEqual(64)
   expect(await page.locator('.sql-file-list').evaluate(e=>e.scrollHeight>e.clientHeight)).toBeTruthy()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
  }
@@ -88,6 +89,7 @@ test('image selectors show Flink version when closed and tags in choices without
  const id='image-'+Date.now()
  await write(page,'/api/catalog/images/'+id,{name:'生产 SQL 镜像',repository:'registry/flink',version:'1.20.3-prod-v8',flinkVersion:'1.20.3',revision:0})
  await page.goto('/#/jobs/jar/new')
+ await confirmJarName(page, 'image-check-'+Date.now())
  await page.getByLabel('镜像版本',{exact:true}).selectOption(id)
  await expect(page.locator('.image-selection')).toHaveText('Flink 1.20.3')
  await expect(page.getByLabel('镜像版本',{exact:true}).locator('option:checked')).toContainText('tag: 1.20.3-prod-v8')

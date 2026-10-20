@@ -122,9 +122,7 @@ public class ReleaseServiceImpl implements ReleaseService {
   /** 返回指定作业的不可变版本，新版本优先。 */
   public List<ObjectNode> list(String id) {
     access.require(id, "read");
-    return records.listForSubject("releases", id).stream()
-        .sorted(Comparator.comparing((ObjectNode n) -> n.path("createdAt").asText()).reversed())
-        .toList();
+    return records.listForSubject("releases", id);
   }
 
   /** 验证发布版本确实属于当前作业，防止跨作业恢复。 */

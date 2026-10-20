@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { showValidationError, clearValidationErrors } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
-import { Trash2 } from '@lucide/vue'
+import { useDevelopmentStatus } from '../../../shared/composables/useDevelopmentStatus'
+import { Trash2, Box, ChevronLeft, ChevronRight } from '@lucide/vue'
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
@@ -439,6 +440,10 @@ watch(
   },
   { immediate: true },
 )
+const { loadStatus, statusError, status } = useDevelopmentStatus()
+async function refreshDrafts() {
+  await Promise.all([load(), loadStatus()])
+}
 async function load() {
   records.value = await request<SqlDraft[]>('/api/sql/jobs')
   if (selected.value) {
@@ -447,6 +452,7 @@ async function load() {
   }
 }
 onMounted(async () => {
+  void loadStatus()
   try {
     const result = await Promise.all([
       request<Catalog[]>('/api/catalog/images'),
@@ -889,13 +895,13 @@ watch(
       'inspector-resizing': resizing,
     }"
   >
-    <aside class="sql-explorer">
+    <aside class="sql-explorer development-explorer">
       <button
         class="explorer-toggle text-button"
         :aria-label="explorerCollapsed ? '展开草稿栏' : '收起草稿栏'"
         @click="explorerCollapsed = !explorerCollapsed"
       >
-        {{ explorerCollapsed ? '›' : '‹ 收起' }}
+        <ChevronRight v-if="explorerCollapsed" :size="16" /><ChevronLeft v-else :size="16" />
       </button>
       <div v-show="!explorerCollapsed" class="explorer-content">
         <div class="explorer-title">
@@ -906,19 +912,23 @@ watch(
         </div>
         <button
           v-if="editable"
-          class="button primary full-width"
+          class="button full-width"
           :disabled="busy || artifactUploading || stateConfigBusy || loading"
           @click="create"
         >
           ＋ 新建 SQL
         </button>
-        <input
-          data-field="query"
-          v-model="query"
-          class="sql-search"
-          placeholder="搜索 SQL 草稿"
-          aria-label="搜索 SQL 草稿"
-        />
+        <div class="development-list-tools">
+          <input
+            data-field="query"
+            v-model="query"
+            class="sql-search"
+            placeholder="搜索 SQL 草稿"
+            aria-label="搜索 SQL 草稿"
+          />
+          <ManualRefreshButton :action="refreshDrafts" :disabled="busy || loading" />
+        </div>
+        <p v-if="statusError" class="development-list-note" role="alert">{{ statusError }}</p>
         <div class="sql-file-list" aria-label="SQL 草稿列表">
           <p v-if="loading" class="muted">正在加载…</p>
           <p v-else-if="!filtered.length" class="muted empty-tree">
@@ -932,10 +942,13 @@ watch(
               :disabled="busy"
               @click="open(record)"
             >
-              <span class="sql-file-icon">SQL</span
-              ><span
+              <Box :size="15" /><span
                 >{{ record.name
-                }}<small>{{ record.jobId ? '已生成部署' : '开发草稿' }}</small></span
+                }}<small>{{
+                  status(record.jobId) +
+                  ' · ' +
+                  (images.find((i) => i.id === record.runtime?.imageId)?.flinkVersion || '未选版本')
+                }}</small></span
               >
             </button>
             <button

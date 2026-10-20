@@ -44,6 +44,8 @@ SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 
 
 新增“核对部署SQL”只在打开或三秒冷却后手动刷新，解码比较当前待发布、已发布草稿和本次集群声明的`spec.job.args`；展示源修订/摘要及逐来源错误，不猜测旧协议。集群声明一致只证明提交参数，不证明Planner/业务结果或RUNNING。语法用SQL检查，数据结果用专用Session的SQL验证。[源绑定](../../../backend/src/main/java/com/flinkweb/service/sql/support/SqlDeploymentSource.java)、[核对窗口](../../../frontend/src/modules/sql/components/SqlDeploymentAudit.vue)、[协议回归](../../../frontend/tests/deployment-sql.spec.ts)、[启动回归](../../../backend/src/test/java/com/flinkweb/WorkbenchIntegrationTest.java)。
 
+2026-10-20追加：SQL草稿列表改为JAR列表样式并提供手动刷新，状态复用作业管理观测，已关联但停止的SQL显示“已停止”，不再用“已生成部署”替代运行状态。无关联草稿为未部署，查询失败保留未知；身份冲突通过关联部署名匹配。SQL历史在服务端每草稿保留最近5次，恢复也占新版本，不改变草稿并发修订。命名弹窗提取为共享组件，SQL创建语义不变。
+
 ## 定位代码与验证
 
 - [SqlJobServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/sql/impl/SqlJobServiceImpl.java)

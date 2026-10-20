@@ -1,3 +1,4 @@
+import { confirmJarName } from './draft-name'
 import {test,expect,type Page} from '@playwright/test'
 async function login(page:Page) {
  await page.goto('/');await page.getByLabel('用户名').fill(process.env.E2E_USERNAME!)
@@ -16,7 +17,7 @@ test('configuration editor suggests keys, rejects duplicates and preserves colon
  await write(page,'/api/catalog/images/'+id,{name:'配置测试',repository:'registry.test/flink',version:'1.20.3',flinkVersion:'1.20.3',revision:0})
  await page.goto('/#/jar')
  await page.getByRole('link',{name:'＋ 新建 JAR 作业',exact:true}).click()
- await page.getByLabel('作业名称',{exact:false}).fill(id)
+ await confirmJarName(page, id)
  await page.getByLabel('镜像版本',{exact:false}).selectOption(id)
  await page.getByRole('checkbox',{name:'启用状态存储与 Checkpoint'}).uncheck()
  await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
@@ -73,7 +74,7 @@ test('SQL copies PodTemplate, uses installed parser and restores history without
  await page.getByRole('button',{name:'恢复此版本',exact:true}).click()
  await page.getByRole('dialog',{name:'确认操作'}).getByRole('button',{name:'确定',exact:true}).click()
  await expect(sql).toContainText('VALUES (1)')
- expect(clusterCalls).toBe(0)
+ expect(clusterCalls).toBe(1)
  await page.screenshot({path:'test-results/sql-history-workbench.png',fullPage:true})
 })
 test('running and suspended jobs prohibit draft deletion but can both be stopped',async({page})=>{

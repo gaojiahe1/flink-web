@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDevelopmentStatus } from '../../../shared/composables/useDevelopmentStatus'
 import { Box, ChevronLeft, ChevronRight, Trash2 } from '@lucide/vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
@@ -19,16 +20,9 @@ const jobs = ref<JobDraft[]>([]),
   query = ref(''),
   collapsed = ref(false)
 const editor = ref<{ canLeave: () => Promise<boolean>; allowNavigation: () => void }>()
-const deployments = ref<Record<string, string>>({}),
-  statusError = ref('')
+const { loadStatus, statusError, status } = useDevelopmentStatus()
 let requestVersion = 0,
   disposed = false
-const deploymentLabels: Record<string, string> = {
-  DEPLOYED: '已部署',
-  UNDEPLOYED: '未部署',
-  CONFLICT: '资源冲突',
-  UNKNOWN: '状态未知',
-}
 const editable = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
 )
@@ -51,14 +45,7 @@ async function load() {
     jobs.value = records
     loading.value = false
     await openFirst()
-    deployments.value = {}
-    statusError.value = ''
-    try {
-      const status = await request<Record<string, string>>('/api/development/jar/deployment-status')
-      if (current()) deployments.value = status
-    } catch (cause) {
-      if (current()) statusError.value = '部署状态查询失败：' + (cause as Error).message
-    }
+    await loadStatus()
   } catch (cause) {
     if (current()) error.value = (cause as Error).message
   } finally {
@@ -164,8 +151,7 @@ onBeforeUnmount(() => {
               <Box :size="15" /><span
                 ><strong :title="job.name">{{ job.name }}</strong
                 ><small
-                  >{{ deploymentLabels[deployments[job.id] || 'UNKNOWN'] }} ·
-                  {{ job.flinkVersion }}</small
+                  >{{ status(job.id, job.deploymentName) }} · {{ job.flinkVersion }}</small
                 ></span
               >
             </button>
@@ -363,7 +349,10 @@ onBeforeUnmount(() => {
   bottom: 0;
   box-shadow: 0 -3px 12px #14243e08;
 }
-@container jar-editor (max-width:1080px) {
+@container jar-editor (max-width:900px) {
+  .jar-edit-pane :deep(.jar-resizer) {
+    display: none;
+  }
   .jar-edit-pane :deep(.job-editor-form.jar-split) {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -12,6 +12,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
 import { requestId } from '../../../shared/utils/requestId'
+import { observedJobStatus } from '../utils/runtimeStatus'
 import { jobsApi } from '../api/jobs'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../../permission/stores/auth'
@@ -428,11 +429,12 @@ function desired(job: JobDraft) {
   return state(job)?.desiredState || '—'
 }
 function observed(job: JobDraft) {
-  if (state(job)?.registrationConflict) return '资源身份冲突'
-  if (state(job)?.healthState === 'ERROR') return '部署异常'
-  if (state(job)?.deleting) return '删除中'
-  if (!state(job) && stopProgress.value[job.id]?.phase === 'DONE') return '已停止'
-  return state(job)?.jobState || (queriedAt.value ? '未部署' : '未查询')
+  return queriedAt.value
+    ? observedJobStatus(job.id, job.deploymentName, {
+        items: runtime.value,
+        stopProgress: stopProgress.value,
+      })
+    : '未查询'
 }
 function canStart(job: JobDraft) {
   const live = state(job)
