@@ -60,6 +60,7 @@ const editingSummary = ref(false),
   summaryExpanded = ref(false),
   summaryText = ref(''),
   applying = ref(false)
+const unknownsText = ref('')
 const suggestion = ref<AiTask>(),
   baseline = ref(-1),
   appliedVersion = ref(-1)
@@ -311,6 +312,10 @@ async function saveSummary() {
       revision: conversation.value!.revision,
       summaryRevision: conversation.value!.summaryRevision,
       summary: summaryText.value,
+      unknowns: unknownsText.value
+        .split('\n')
+        .map((text) => text.trim())
+        .filter(Boolean),
       sql: props.sql,
     })
     if (disposed || version !== epoch) return
@@ -323,6 +328,7 @@ async function saveSummary() {
 }
 function editSummary() {
   summaryText.value = conversation.value?.summary || ''
+  unknownsText.value = conversation.value?.unknowns.join('\n') || ''
   editingSummary.value = true
   summaryExpanded.value = true
 }
@@ -456,7 +462,7 @@ onBeforeUnmount(() => {
         </div>
         <section class="ai-inline-summary" aria-label="本次会话总结">
           <div class="ai-summary-heading">
-            <strong>本次会话总结</strong
+            <strong>本次会话总结 · {{ sqlId }}</strong
             ><span class="badge">{{
               !summaryCurrent
                 ? '待整理'
@@ -475,7 +481,9 @@ onBeforeUnmount(() => {
               <ChevronDown :size="14" :class="{ rotated: summaryExpanded }" />{{
                 summaryExpanded ? '收起总结' : '展开总结'
               }}{{
-                conversation?.unknowns.length ? ` · ${conversation.unknowns.length} 项待核对` : ''
+                conversation?.unknowns.length
+                  ? ` · 本作业 ${conversation.unknowns.length} 项待核对`
+                  : ''
               }}</button
             ><button
               v-if="conversation?.summary && !editingSummary"
@@ -506,7 +514,15 @@ onBeforeUnmount(() => {
               class="ai-summary-text"
               :text="conversation?.summary || '开始对话后，AI 会将本次会话整理为可核对的需求总结。'"
             />
-            <ul v-if="conversation?.unknowns.length" class="ai-unknowns">
+            <label v-if="editingSummary"
+              >本作业待核对事项（每行一项，已解决或不相关项可删除）<textarea
+                v-model="unknownsText"
+                aria-label="编辑本作业待核对事项"
+                rows="4"
+                :disabled="blocked"
+              />
+            </label>
+            <ul v-else-if="conversation?.unknowns.length" class="ai-unknowns">
               <li v-for="item in conversation.unknowns" :key="item">待核对：{{ item }}</li>
             </ul>
           </div>

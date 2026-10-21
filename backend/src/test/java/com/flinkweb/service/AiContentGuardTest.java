@@ -12,6 +12,16 @@ import org.junit.jupiter.api.Test;
 
 /** 请求局部密钥快照保留逐叶脱敏结果并避免重复解密。 */
 class AiContentGuardTest {
+  /** 裸引用和嵌套叶子不被误判；引用后拼接明文赋值不能借此绕过检查。 */
+  @Test
+  void platformSecretReferencesSurviveLeafSanitization() throws Exception {
+    var mapper=new ObjectMapper();var guard=new AiContentGuard(mock(RecordRepository.class),mock(SecretCipher.class));
+    var input=mapper.readTree("{\"secret\":\"{{secret:stored-key}}\",\"nested\":[\"引用 {{secret:other-key}}\",\"{{config:runtime-sa}}\"]}");
+    assertThat(guard.sanitize(input)).isEqualTo(input);
+    assertThatCode(()->guard.requireSafe("{{secret:stored-key}}" )).doesNotThrowAnyException();
+    assertThatThrownBy(()->guard.requireSafe("{{secret:stored-key}}password=plain-value")).hasMessageContaining("明文凭据");
+    assertThatThrownBy(()->guard.requireSafe("password=plain-value")).hasMessageContaining("明文凭据");
+  }
   /** 多字段只解密各密钥一次，后一次调用仍读取更新后的密钥。 */
   @Test
   void snapshotIsSharedOnlyWithinOneSanitizeCall() throws Exception {

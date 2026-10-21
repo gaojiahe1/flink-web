@@ -80,6 +80,27 @@ const loading = ref(true),
   selected = ref<JobDraft | null>(null)
 const podJob = ref<JobDraft | null>(null)
 const aiJob = ref<JobDraft | null>(null)
+async function aiRestarted() {
+  const id = aiJob.value?.id
+  aiJob.value = null
+  query.value = ''
+  statusFilter.value = ''
+  versionFilter.value = ''
+  message.value =
+    '修复已保存，启动 / 重启请求已受理；请手动刷新核对实际运行状态。再次打开助手将开始新一轮排障。'
+  try {
+    await load()
+  } catch (e) {
+    error.value = '请求已受理，列表暂时刷新失败：' + (e as Error).message
+    return
+  }
+  const index = filtered.value.findIndex((job) => job.id === id)
+  if (index >= 0) page.value = Math.floor(index / pageSize.value) + 1
+  await nextTick()
+  document
+    .querySelector<HTMLElement>('[data-job-id="' + id + '"]')
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 const snapshotNotice = ref('')
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
@@ -715,6 +736,7 @@ function resetFilters() {
           <tr
             v-for="job in visible"
             :key="job.id"
+            :data-job-id="job.id"
             :class="{
               'failed-row':
                 state(job)?.healthState === 'ERROR' || state(job)?.jobState === 'FAILED',
@@ -1123,6 +1145,7 @@ function resetFilters() {
     :error="state(aiJob)?.error"
     :can-read-logs="mayOperate(aiJob)"
     @changed="load"
+    @restarted="aiRestarted"
     @close="aiJob = null"
   />
   <PodStatusDrawer

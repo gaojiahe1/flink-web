@@ -25,6 +25,7 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
     revision: 1,
   }
   const memory: any = {
+    current: { baseline: { jobRevision: 1, sqlRevision: 1 }, draftYaml: 'metadata:\n  name: orders\nspec:\n  serviceAccount: "{{config:job-sa}}"', sql: 'SELECT 1', publishedSql: 'SELECT 1', referenceNote: '{{secret:...}} 为平台合法引用，脱敏标记不能写回配置。' },
     id: 'conversation',
     revision: 0,
     contentVersion: 0,
@@ -38,6 +39,8 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
   let currentTask: any,
     latestApplication: any,
     loseResponse = false
+  let autoPlan = false
+  const evidenceQueries: string[] = []
   await page.route('**/api/**', async (route) => {
     const req = route.request(),
       path = new URL(req.url()).pathname
@@ -69,6 +72,11 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
     else if (path === '/api/runtime/jobs') data = []
     else if (path === '/api/ai/models') data = [model]
     else if (path === '/api/ai/jobs/job-ai/conversation') data = memory
+    else if (path === '/api/ai/jobs/job-ai/evidence') {
+      const category = req.postDataJSON().category
+      evidenceQueries.push(category)
+      data = memory.evidence = { queriedAt: new Date().toISOString(), category, baseline: { jobRevision: 1 }, unavailable: category === 'podMetrics' ? ['metrics-server不可用，不能视为0'] : [], documents: memory.current, diagnostics: { pods: [{ name: 'tm-one' }], events: [] }, logs: [], podDetails: category === 'pods' ? [{ name: 'tm-one', yaml: 'kind: Pod\nmetadata:\n  name: tm-one' }] : [] }
+    }
     else if (path === '/api/ai/jobs/job-ai/messages') {
       const input = req.postDataJSON()
       memory.messages.push({
@@ -104,6 +112,7 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
         })
         memory.revision++
         memory.evidence = {
+          runtimeError: '本次重新取到的运行异常',
           queriedAt: new Date().toISOString(),
           baseline: { jobRevision: 1 },
           resourceExists: true,
@@ -117,7 +126,7 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
             },
           ],
         }
-        if (tasks.at(-1).mode === 'repair')
+        if (tasks.at(-1).mode === 'repair' || autoPlan)
           memory.plan = {
             id: currentTask.id,
             canApply: true,
@@ -130,6 +139,7 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
             baseline: { jobRevision: 1 },
             changes: [{ path: '/spec/taskManager/resource/memory', value: '2048m' }],
           }
+        if (autoPlan) Object.assign(memory.plan, { sqlChanged: true, beforeSql: 'SELECT 1', sql: 'SELECT 2' })
         currentTask = { ...currentTask, state: 'SUCCEEDED', result: { summary: memory.summary } }
       }
       data = currentTask
@@ -149,6 +159,15 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
       memory.application = latestApplication
       memory.plan.applicationId = latestApplication.id
       memory.plan.canApply = false
+      if (input.mode === 'restart') {
+        memory.messages = []
+        delete memory.plan
+        delete memory.evidence
+        delete memory.application
+        memory.revision++
+        memory.contentVersion++
+        memory.round = { roundId: 'new-round', startedAt: new Date().toISOString(), reason: '作业已重新提交，已开始新一轮排障；历史总结仅作参考。' }
+      }
       if (loseResponse) {
         loseResponse = false
         return route.abort('failed')
@@ -167,6 +186,8 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
     tasks,
     applications,
     errors,
+    evidenceQueries,
+    automaticPlan: () => { autoPlan = true },
     loseResponse: () => {
       loseResponse = true
     },
@@ -176,6 +197,7 @@ async function fixture(page: Page, role = 'ROLE_ADMIN', external = false) {
 async function generate(f: Awaited<ReturnType<typeof fixture>>) {
   await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first().click()
   await expect(f.drawer).toContainText('AI 已回答')
+  await expect(f.drawer).toContainText('本轮尚未生成可应用的 SQL / 配置候选')
   await f.drawer.getByRole('button', { name: '生成修复方案', exact: true }).click()
   await expect(f.drawer.getByRole('heading', { name: '修复方案与完整对比' })).toBeVisible()
 }
@@ -210,13 +232,29 @@ test('重启需要恢复方式、影响和完整变更确认，受理不显示�
   await f.drawer.getByLabel('已核对恢复方式，接受作业中断及可能的处理进度变化').check()
   await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
   await apply.click()
-  await expect(f.drawer).toContainText('操作已受理，待观察')
+  await expect(f.drawer).toHaveCount(0)
+  await expect(page.getByText(/再次打开助手将开始新一轮排障/)).toBeVisible()
   expect(f.applications[0]).toMatchObject({
     mode: 'restart',
     restoreMode: 'stateless',
     confirmed: true,
     acceptImpact: true,
   })
+  expect(f.errors).toEqual([])
+})
+
+test('重启已受理但列表刷新失败时仍关闭助手并保留明确回执', async ({ page }) => {
+  const f = await fixture(page)
+  await generate(f)
+  await f.drawer.getByLabel('保存、发布并启动 / 重启作业').check()
+  await f.drawer.getByLabel('恢复方式', { exact: true }).selectOption('stateless')
+  await f.drawer.getByLabel('已核对恢复方式，接受作业中断及可能的处理进度变化').check()
+  await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
+  await page.route('**/api/jobs', route => route.abort('failed'))
+  await f.drawer.getByRole('button', { name: '确认保存并启动 / 重启', exact: true }).click()
+  await expect(f.drawer).toHaveCount(0)
+  await expect(page.getByRole('alert').filter({ hasText: '列表暂时刷新失败' }).first()).toBeVisible()
+  expect(f.applications).toHaveLength(1)
   expect(f.errors).toEqual([])
 })
 
@@ -297,7 +335,7 @@ test('平台重启后保存中的应用沿用原请求继续完成', async ({ pa
   expect(f.errors).toEqual([])
 })
 
-test('重启仍失败后保留总结和对话，每轮可明确授权继续取证', async ({ page }) => {
+test('重启受理后关闭助手并定位作业，仍失败时新轮次保留总结并重新取证', async ({ page }) => {
   const f = await fixture(page, 'ROLE_ADMIN', true)
   const consent = f.drawer.getByRole('checkbox', { name: /允许本次/ })
   await consent.check()
@@ -311,16 +349,16 @@ test('重启仍失败后保留总结和对话，每轮可明确授权继续取�
   await f.drawer.getByLabel('已核对恢复方式，接受作业中断及可能的处理进度变化').check()
   await f.drawer.getByLabel('我已审阅完整修改、影响和前置检查').check()
   await f.drawer.getByRole('button', { name: '确认保存并启动 / 重启', exact: true }).click()
-  await expect(f.drawer).toContainText('操作已受理，待观察')
-  await f.drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
+  await expect(f.drawer).toHaveCount(0)
   await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
-  await expect(f.drawer.locator('.ai-job-message')).toHaveCount(4)
+  await expect(f.drawer.locator('.ai-job-message')).toHaveCount(0)
+  await expect(f.drawer).toContainText('已开始新一轮排障')
   await f.drawer.getByLabel('问题或补充说明', { exact: true }).fill('重启后仍然报错，请根据最新证据继续分析')
-  await f.drawer.getByRole('button', { name: '发送并更新证据', exact: true }).click()
+  await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).last().click()
   expect(f.tasks).toHaveLength(2)
   await expect(f.drawer.getByLabel('问题或补充说明', { exact: true })).toHaveValue('重启后仍然报错，请根据最新证据继续分析')
   await f.drawer.getByRole('button', { name: '允许并发送本轮', exact: true }).click()
-  await expect(f.drawer.locator('.ai-job-message')).toHaveCount(6)
+  await expect(f.drawer.locator('.ai-job-message')).toHaveCount(2)
   expect(f.tasks).toHaveLength(3)
   expect(f.tasks.at(-1)).toMatchObject({ allowExternal: true, includeLogs: true, mode: 'chat' })
   await expect(consent).not.toBeChecked()
@@ -328,7 +366,33 @@ test('重启仍失败后保留总结和对话，每轮可明确授权继续取�
   await f.drawer.getByRole('button', { name: '发送并更新证据', exact: true }).click()
   await f.drawer.getByRole('button', { name: '取消发送', exact: true }).click()
   expect(f.tasks).toHaveLength(3)
-  expect(f.memory.messages).toHaveLength(6)
+  expect(f.memory.messages).toHaveLength(2)
+  expect(f.errors).toEqual([])
+})
+
+test('普通分析自动给出明确的SQL修改候选，分类取证可以独立刷新而不调用模型', async ({ page }) => {
+  const f = await fixture(page)
+  f.automaticPlan()
+  await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first().click()
+  await expect(f.drawer).toContainText('已生成 SQL 修改建议')
+  await expect(f.drawer.locator('.ai-job-current-error')).toContainText('本次重新取到的运行异常')
+  await expect(f.drawer).toContainText('待你审阅确认，尚未保存或重启')
+  expect(f.tasks).toHaveLength(1)
+  expect(f.applications).toHaveLength(0)
+  await f.drawer.getByRole('button', { name: /本轮证据/ }).click()
+  const evidence = page.getByRole('dialog', { name: '本轮证据详情' })
+  await evidence.getByRole('button', { name: 'Pod 配置', exact: true }).click()
+  await expect(evidence).toContainText('本快照未采集此类别')
+  await evidence.getByRole('button', { name: '按需采集此类证据', exact: true }).click()
+  await expect(evidence.locator('pre')).toContainText('kind: Pod')
+  await evidence.getByRole('button', { name: '部署配置', exact: true }).click()
+  await expect(evidence).toContainText('{{config:job-sa}}')
+  await evidence.getByRole('button', { name: 'Pod 资源用量', exact: true }).click()
+  await evidence.getByRole('button', { name: '按需采集此类证据', exact: true }).click()
+  await expect(evidence).toContainText('metrics-server不可用，不能视为0')
+  expect(f.evidenceQueries).toEqual(['pods', 'podMetrics'])
+  expect(f.tasks).toHaveLength(1)
+  expect(f.applications).toHaveLength(0)
   expect(f.errors).toEqual([])
 })
 

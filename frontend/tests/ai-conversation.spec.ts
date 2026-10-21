@@ -45,7 +45,7 @@ async function fixture(page: Page) {
         if (path.endsWith('/messages') && !conv.messages.some((m: any) => m.id === body.messageId)) {
           conv.messages.push({ id: body.messageId, role: 'user', content: body.content, mode: body.mode, createdAt: new Date().toISOString() }); conv.contentVersion++; conv.confirmedVersion = -1; conv.revision++
         } else if (path.endsWith('/summary')) {
-          conv.contentVersion++; Object.assign(conv, { summary: body.summary, summaryVersion: conv.contentVersion, summarySqlHash: hash(body.sql), confirmedVersion: -1 }); conv.revision++
+          conv.contentVersion++; Object.assign(conv, { summary: body.summary, summaryVersion: conv.contentVersion, summarySqlHash: hash(body.sql), confirmedVersion: -1, ...(body.unknowns ? { unknowns: body.unknowns } : {}) }); conv.revision++
         } else if (path.endsWith('/confirm')) { confirmations.push(body); conv.confirmedVersion = conv.contentVersion; conv.revision++ }
       }
       data = conv
@@ -188,6 +188,26 @@ test('待确认可按已知范围生成，未回答事项保留，人工总结�
   await expect.poll(() => f.confirmations.length).toBe(1)
   expect(f.confirmations[0].acceptCurrentScope).toBe(true)
   expect(f.conversations['sql-draft'].unknowns).toEqual(['请确认输入表字段'])
+})
+
+test('待核对事项标明当前SQL作业，可人工移除，不带入另一作业', async ({ page }) => {
+  const f = await fixture(page)
+  f.drafts['second-sql'] = { ...f.drafts['sql-draft'], id: 'second-sql', name: 'second-sql', revision: 1 }
+  const panel = await openAssistant(page)
+  f.setUnknowns(['仅属于第一作业的条件'])
+  await discuss(page)
+  await expect(panel.locator('.ai-summary-heading')).toContainText('sql-draft')
+  await expect(panel.getByRole('button', { name: /展开总结/ })).toContainText('本作业 1 项待核对')
+  await panel.getByRole('button', { name: '修改总结', exact: true }).click()
+  await panel.getByLabel('编辑本作业待核对事项', { exact: true }).fill('')
+  await panel.getByRole('button', { name: '保存总结', exact: true }).click()
+  await expect.poll(() => f.conversations['sql-draft'].unknowns).toEqual([])
+  await page.goto('/#/sql?draft=second-sql')
+  if (await page.getByRole('button', { name: 'AI 助手', exact: true }).getAttribute('aria-expanded') !== 'true') await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  await expect(panel.locator('.ai-summary-heading')).toContainText('second-sql')
+  await expect(panel).not.toContainText('仅属于第一作业的条件')
+  await expect(panel.getByRole('button', { name: /项待核对/ })).toHaveCount(0)
+  expect(f.errors).toEqual([])
 })
 
 test('外部模型先授权，取消后回复不能加入对话', async ({ page }) => {

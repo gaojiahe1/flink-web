@@ -31,6 +31,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.*;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** 使用真实 SQLite、作业保存和运行编排，覆盖持续诊断、有限记忆和显式应用边界。 */
@@ -41,7 +42,7 @@ class AiJobIntegrationTest {
   static final Path DATABASE;
   static {try {DATABASE=Files.createTempDirectory("flink-ai-job-").resolve("test.db");}catch(Exception e){throw new RuntimeException(e);}}
   @Autowired ObjectMapper mapper;
-  @Autowired RecordRepository records;
+  @MockitoSpyBean RecordRepository records;
   @Autowired JobService jobs;
   @Autowired YamlService yaml;
   @Autowired AiJobService conversations;
@@ -54,6 +55,7 @@ class AiJobIntegrationTest {
   @MockitoBean AiModelClient model;
   @MockitoBean KubernetesClient kubernetes;
   @MockitoBean DiagnosticService diagnostics;
+  @MockitoBean com.flinkweb.client.flink.AiFlinkEvidenceClient flink;
   @MockitoBean S3StorageClient storage;
   JobDraft job;
   ObjectNode live;
@@ -92,10 +94,11 @@ class AiJobIntegrationTest {
     var detail=mapper.createObjectNode().put("error","OOMKilled password=hidden-test");
     detail.putArray("pods").addObject().put("name","tm-one").putArray("states").addObject().put("name","flink-main-container").put("restarts",2);
     when(diagnostics.inspect(job.id())).thenReturn(detail);
-    when(diagnostics.log(eq(job.id()),anyString(),anyString(),eq(120),eq(true))).thenReturn(mapper.createObjectNode().put("text","container memory pressure"));
+    when(diagnostics.redactEvidence(eq(job.id()),any())).thenAnswer(call->call.getArgument(1,com.fasterxml.jackson.databind.JsonNode.class).deepCopy());
+    when(diagnostics.log(eq(job.id()),anyString(),anyString(),eq(600),eq(true))).thenReturn(mapper.createObjectNode().put("text","container memory pressure"));
     answer=mapper.createObjectNode().put("reply","容器内存不足可能导致退出，需结合证据核对").put("summary","保留业务逻辑；已确认容器被终止，待核对流量峰值");
     answer.putArray("unknowns");answer.putArray("risks");
-    when(model.complete(any(),anyString(),anyString(),anyString())).thenAnswer(call->{received.set(call.getArgument(3));return answer.deepCopy();});
+    when(model.complete(any(),anyString(),anyString(),anyString())).thenAnswer(call->{assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();received.set(call.getArgument(3));return answer.deepCopy();});
     modelId="model-"+UUID.randomUUID();
     var config=mapper.createObjectNode().put("name","诊断替身").put("model","test").put("baseUrl","https://example.com/v1").put("external",false).put("enabled",true);
     config.putArray("purposes").add("diagnosis");models.save(modelId,config);
@@ -120,6 +123,74 @@ class AiJobIntegrationTest {
 
   /** 构造显式确认的原应用请求。 */
   private ObjectNode application(String mode) {return mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("mode",mode).put("confirmed",true).put("restoreMode","stateless").put("acceptImpact",true);}
+
+  /** 任务末次写入后失败时，回复、总结、方案和成功状态全部回滚，下一轮仍可执行。 */
+  @Test
+  void terminalSaveFailureRollsBackJobCompletion() throws Exception {
+    var before=conversations.get(job.id());
+    var failed=new AtomicBoolean();
+    doAnswer(call->{
+      var node=call.getArgument(2,ObjectNode.class);
+      var saved=call.callRealMethod();
+      if(node.path("jobId").asText().equals(job.id()) && node.path("state").asText().equals("SUCCEEDED") && failed.compareAndSet(false,true)) {
+        assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+        throw new IllegalStateException("injected terminal save failure");
+      }
+      return saved;
+    }).when(records).save(eq("ai_tasks"),anyString(),any(),anyLong());
+    answer.putArray("changes").addObject().put("path","/spec/taskManager/resource/memory").put("value","2048m");
+    var task=turn("分析并修复","repair");
+    assertThat(task.path("state").asText()).isEqualTo("FAILED");assertThat(task.has("result")).isFalse();
+    var after=conversations.get(job.id());
+    assertThat(after.path("messages")).hasSize(1);assertThat(after.path("summary")).isEqualTo(before.path("summary"));
+    assertThat(after.has("plan")).isFalse();assertThat(records.listForSubject("ai_job_plans",job.id())).isEmpty();
+    assertThat(turn("重新核对","repair").path("state").asText()).isEqualTo("SUCCEEDED");
+  }
+
+  /** 字面点号不可匹配近似配置键，非法候选不保存方案或配置。 */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings={"executionXcheckpointingXinterval","parallelismXdefault","taskmanagerXnumberOfTaskSlots"})
+  void nearMatchConfigurationKeysAreRejected(String key) throws Exception {
+    String before=jobs.get(job.id()).yaml();
+    answer.putArray("changes").addObject().put("path","/spec/flinkConfiguration/"+key).put("value","1000");
+    assertThat(turn("检查配置修复","repair").path("state").asText()).isEqualTo("SUCCEEDED");
+    var current=conversations.get(job.id());
+    assertThat(current.path("proposalWarning").asText()).contains("不允许");assertThat(current.has("plan")).isFalse();
+    assertThat(jobs.get(job.id()).yaml()).isEqualTo(before);
+  }
+
+  /** 合法的精确配置键仍可形成待审阅方案。 */
+  @Test
+  void exactConfigurationKeysRemainAllowed() throws Exception {
+    var changes=answer.putArray("changes");
+    for(String key:List.of("execution.checkpointing.interval","execution.checkpointing.timeout","parallelism.default","taskmanager.numberOfTaskSlots"))
+      changes.addObject().put("path","/spec/flinkConfiguration/"+key).put("value","1000");
+    assertThat(turn("检查精确配置键","repair").path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(conversations.get(job.id()).path("plan").path("changes")).hasSize(4);
+  }
+
+  /** 当前running优先本实例，等待重启优先previous，不可用时明确回退且不超预算。 */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"running,false,false","waiting,true,false","waiting,true,true","terminated,false,false"})
+  void logSourceFollowsCurrentContainerState(String phase,boolean previous,boolean unavailable) throws Exception {
+    var detail=mapper.createObjectNode();
+    detail.putArray("pods").addObject().put("name","tm-one").putArray("states").addObject()
+        .put("name","flink-main-container").put("state",phase).put("restarts",2);
+    when(diagnostics.inspect(job.id())).thenReturn(detail);
+    when(diagnostics.log(eq(job.id()),anyString(),anyString(),eq(600),anyBoolean())).thenAnswer(call->{
+      boolean old=call.getArgument(4);
+      if(old && unavailable)throw new IllegalStateException("previous unavailable");
+      return mapper.createObjectNode().put("text",old?"old instance":"current instance");
+    });
+    assertThat(turn("核对最新日志","chat").path("state").asText()).isEqualTo("SUCCEEDED");
+    var current=conversations.get(job.id()).path("evidence");
+    assertThat(current.path("logs")).hasSize(1);
+    assertThat(current.at("/logs/0/source").asText()).isEqualTo(previous&&!unavailable?"previous":"current");
+    assertThat(current.at("/logs/0/queriedAt").asText()).isNotBlank();
+    assertThat(current.at("/logs/0/fallback").asBoolean()).isEqualTo(unavailable);
+    verify(diagnostics,times(unavailable?2:1)).log(eq(job.id()),anyString(),anyString(),eq(600),anyBoolean());
+    if(unavailable)assertThat(current.path("unavailable").toString()).contains("previous","尝试");
+  }
 
   /** 建立真实 SQL 保存发布链路，只将下载文件和集群替换为不联网的登记。 */
   private String sqlJob() {
@@ -171,7 +242,7 @@ class AiJobIntegrationTest {
     var confirmed=sqlConversations.confirm(id,mapper.createObjectNode().put("revision",updated.path("revision").asLong()).put("summaryRevision",updated.path("summaryRevision").asLong()).put("sql",sql.path("sql").asText()).put("acceptCurrentScope",true));
     assertThat(confirmed.path("messages")).isEmpty();
     assertThat(sqlConversations.context(id,confirmed.path("contentVersion").asLong(),"generate",sql.path("sql").asText()).path("conversation").path("summary").asText()).contains("修复已核对");
-    assertThatThrownBy(()->sqlConversations.complete(id,old.path("contentVersion").asLong(),UUID.randomUUID().toString(),"chat",AiConversationServiceHash(sql.path("sql").asText()),old.path("summaryRevision").asLong(),answer)).hasMessageContaining("另一入口更新");
+    assertThatThrownBy(()->sqlConversations.complete(id,old.path("contentVersion").asLong(),UUID.randomUUID().toString(),"chat",AiConversationServiceHash(sql.path("sql").asText()),old.path("summaryRevision").asLong(),answer,()->{})).hasMessageContaining("另一入口更新");
     assertThat(records.list("ai_summaries").stream().filter(s->job.id().equals(s.path("jobId").asText()))).hasSize(1);
   }
 
@@ -199,7 +270,7 @@ class AiJobIntegrationTest {
   /** 测试复用实际SQL摘要算法，避免通过字符串顺序推断修订。 */
   private String AiConversationServiceHash(String text) {return com.flinkweb.service.ai.impl.AiConversationServiceImpl.hash(text);}
 
-  /** 当前修订稳定运行才清空旧排障；同一运行实例中的新对话不会被反复清空。 */
+  /** 重启受理即清空旧轮次，未知提交不清，保留唯一总结和SQL创作对话。 */
   @Test
   void confirmedRunningResetsDiagnosticRoundAndKeepsSharedSummary() throws Exception {
     String sqlId=sqlJob();var first=sqlConversations.get(sqlId);
@@ -207,20 +278,17 @@ class AiJobIntegrationTest {
     answer.putArray("changes").addObject().put("path","/spec/job/parallelism").put("value",2);
     assertThat(turn("分析并评估修复","repair").path("state").asText()).isEqualTo("SUCCEEDED");
     var old=conversations.get(job.id());assertThat(old.has("plan")).isTrue();String summary=old.path("summary").asText();
-    var row=mapper.createObjectNode().put("jobId",job.id()).put("managed",true).put("jobState","RUNNING").put("healthState","RUNNING").put("lifecycleState","UPGRADING").put("runIdentity","uid-one:run-one").put("runningRevisionConfirmed",true);
-    aiState.observed(row);assertThat(conversations.get(job.id()).path("messages")).hasSize(2);
-    row.put("lifecycleState","STABLE").put("runningRevisionConfirmed",false);aiState.observed(row);
-    assertThat(conversations.get(job.id()).path("messages")).hasSize(2);
     var intent=records.save("ai_job_applications",UUID.randomUUID().toString(),mapper.createObjectNode().put("jobId",job.id()).put("owner","admin").put("mode","restart").put("state","UNKNOWN"),0);
-    row.put("runningRevisionConfirmed",true);aiState.observed(row);
+    assertThat(conversations.get(job.id()).path("messages")).hasSize(2);
+    records.save("operations",UUID.randomUUID().toString(),mapper.createObjectNode().put("jobId",job.id()).put("action","restart").put("state","ACCEPTED"),0);
     assertThat(conversations.get(job.id()).path("messages")).hasSize(2);
     records.save("ai_job_applications",intent.path("id").asText(),intent.put("state","FAILED"),intent.path("revision").asLong());
-    aiState.observed(row);
     var fresh=conversations.get(job.id());assertThat(fresh.path("messages")).isEmpty();assertThat(fresh.has("plan")).isFalse();assertThat(fresh.has("evidence")).isFalse();assertThat(fresh.has("lastTask")).isFalse();
     assertThat(fresh.path("summary").asText()).isEqualTo(summary);assertThat(sqlConversations.get(sqlId).path("messages")).hasSize(1);
     conversations.append(job.id(),mapper.createObjectNode().put("messageId",UUID.randomUUID().toString()).put("revision",fresh.path("revision").asLong()).put("content","新的运行问题"));
-    aiState.observed(row);assertThat(conversations.get(job.id()).path("messages")).hasSize(1);
-    row.put("runIdentity","uid-one:run-two");aiState.observed(row);assertThat(conversations.get(job.id()).path("messages")).isEmpty();
+    live.withObject("/status/jobStatus").put("state","RUNNING");assertThat(conversations.get(job.id()).path("messages")).hasSize(1);
+    records.save("operations",UUID.randomUUID().toString(),mapper.createObjectNode().put("jobId",job.id()).put("action","restart").put("state","ACCEPTED"),0);
+    assertThat(conversations.get(job.id()).path("messages")).isEmpty();
   }
 
   /** 每轮包含总结、近期消息和受限证据，配置投影不发送 env。 */
@@ -230,7 +298,7 @@ class AiJobIntegrationTest {
     assertThat(turn("必须保留业务逻辑","chat").path("state").asText()).isEqualTo("SUCCEEDED");
     assertThat(turn("请继续分析","chat").path("state").asText()).isEqualTo("SUCCEEDED");
     assertThat(received.get()).contains("必须保留业务逻辑","保留业务逻辑","1024m","container memory pressure","[REDACTED]").doesNotContain("do-not-send-this","hidden-test");
-    verify(diagnostics,atLeastOnce()).log(eq(job.id()),eq("tm-one"),eq("flink-main-container"),eq(120),eq(true));
+    verify(diagnostics,atLeastOnce()).log(eq(job.id()),eq("tm-one"),eq("flink-main-container"),eq(600),eq(true));
     assertThat(writes.get()).isZero();
   }
 
@@ -243,12 +311,78 @@ class AiJobIntegrationTest {
     var tm=pods.addObject().put("name","tm-one").putArray("states");
     tm.addObject().put("name","fw-download");tm.addObject().put("name","flink-main-container");
     when(diagnostics.inspect(job.id())).thenReturn(detail);
-    when(diagnostics.log(eq(job.id()),anyString(),anyString(),eq(120),eq(false)))
+    when(diagnostics.log(eq(job.id()),anyString(),anyString(),eq(600),eq(false)))
         .thenAnswer(call->mapper.createObjectNode().put("text",call.getArgument(1,String.class)+" application output"));
     assertThat(turn("核对JM状态及TM输出","chat").path("state").asText()).isEqualTo("SUCCEEDED");
     assertThat(received.get()).contains("jm-one application output","tm-one application output");
     verify(diagnostics,never()).log(anyString(),anyString(),eq("fw-download"),anyInt(),anyBoolean());
     assertThat(conversations.get(job.id()).at("/evidence/logs")).hasSize(2);
+  }
+
+  /** 普通分析也直接产生可审阅SQL候选，不自动保存，不必再发一次生成请求。 */
+  @Test
+  void chatProducesSqlCandidateWithoutChangingDraft() throws Exception {
+    String id=sqlJob(),before=sqlJobs.get(id).path("sql").asText();
+    answer.put("sql",before.replace("SELECT id FROM","SELECT id + 1 FROM"));
+    assertThat(turn("修复当前SQL错误并给出完整SQL","chat").path("state").asText()).isEqualTo("SUCCEEDED");
+    var value=conversations.get(job.id());assertThat(value.at("/plan/sqlChanged").asBoolean()).isTrue();
+    assertThat(value.at("/plan/canApply").asBoolean()).isTrue();assertThat(sqlJobs.get(id).path("sql").asText()).isEqualTo(before);assertThat(writes.get()).isZero();
+  }
+
+  /** 手动编辑保存后旧证据与方案不再展示，最新SQL与已发布SQL清楚区分。 */
+  @Test
+  void manualSqlChangeStartsFreshRoundAndUsesLatestDraft() throws Exception {
+    String id=sqlJob();answer.putArray("changes").addObject().put("path","/spec/job/parallelism").put("value",2);turn("评估并行度","repair");var before=sqlJobs.get(id);String changed=before.path("sql").asText().replace("SELECT id FROM","SELECT id + 3 FROM");
+    sqlJobs.save(id,new com.flinkweb.dto.sql.SqlDraftRequest(before.path("name").asText(),"",changed,(ObjectNode)before.path("runtime"),before.path("revision").asLong()));
+    var fresh=conversations.get(job.id());assertThat(fresh.path("messages")).isEmpty();assertThat(fresh.has("plan")).isFalse();assertThat(fresh.has("evidence")).isFalse();
+    assertThat(fresh.at("/current/sql").asText()).contains("id + 3");assertThat(fresh.at("/current/publishedSql").asText()).doesNotContain("id + 3");
+    assertThat(fresh.path("summary").asText()).isNotBlank();answer.remove("changes");
+    assertThat(turn("核对我手动保存的新SQL","chat").path("state").asText()).isEqualTo("SUCCEEDED");assertThat(received.get()).contains("id + 3");
+  }
+
+  /** 模型失败也保留本次新取的证据，不能继续以旧快照冒充本轮。 */
+  @Test
+  void failedModelStillRefreshesEvidence() throws Exception {
+    turn("分析本轮错误","chat");String time=conversations.get(job.id()).at("/evidence/queriedAt").asText();
+    live.withObject("/metadata").put("resourceVersion","20");answer.put("summary","");
+    assertThat(turn("重启后仍失败，请更新证据","chat").path("state").asText()).isEqualTo("FAILED");
+    var value=conversations.get(job.id());assertThat(value.at("/evidence/resourceVersion").asText()).isEqualTo("20");assertThat(value.at("/evidence/queriedAt").asText()).isNotEqualTo(time);
+  }
+
+  /** 完整YAML只展示脱敏值，保留原Secret引用并不把Pod环境字面值发给模型。 */
+  @Test
+  void fullYamlPreservesReferencesAndMasksExpandedValues() {
+    live.withObject("/spec/flinkConfiguration").put("s3.access-key","unregistered-ak").put("s3.secret-key","unregistered-sk");
+    var container=live.withObject("/spec/podTemplate/spec").putArray("containers").addObject().put("name","flink-main-container");
+    container.putArray("env").addObject().put("name","BUSINESS_PRIVATE").put("value","do-not-publish");
+    container.withArray("env").addObject().put("name","REFERENCED").putObject("valueFrom").putObject("secretKeyRef").put("name","business-secret").put("key","password");
+    var value=conversations.evidence(job.id(),"configuration");String document=value.at("/documents/runtimeYaml").asText();
+    assertThat(document).contains("secretKeyRef","business-secret","flink-main-container").doesNotContain("unregistered-ak","unregistered-sk","do-not-publish");
+    assertThat(yaml.parse(document).at("/spec/podTemplate/spec/containers/0/env/1/valueFrom/secretKeyRef/name").asText()).isEqualTo("business-secret");
+    verify(flink,never()).read(anyString(),anyString());
+  }
+
+  /** 分类取证仅查被请求的JVM指标；GC名称从实际指标列表选择，不编造零值。 */
+  @Test
+  void explicitJvmEvidenceDiscoversGcWithoutReadingLogsOrCheckpoints() {
+    when(flink.read(anyString(),eq("overview"))).thenReturn(mapper.createObjectNode().put("taskmanagers",0));
+    var metricList=mapper.createArrayNode();metricList.addObject().put("id","Status.JVM.GarbageCollector.G1_Young_Generation.Count");
+    var metricValue=metricList.deepCopy();((ObjectNode)metricValue.get(0)).put("value","7");
+    when(flink.read(anyString(),eq("jobmanager/metrics"))).thenReturn(metricList);
+    when(flink.read(anyString(),startsWith("jobmanager/metrics?get="))).thenReturn(metricValue);
+    when(flink.read(anyString(),eq("taskmanagers"))).thenReturn(mapper.createObjectNode().set("taskmanagers",mapper.createArrayNode()));
+    var value=conversations.evidence(job.id(),"flinkMetrics");assertThat(value.at("/flink/jobManager/0/value").asText()).isEqualTo("7");
+    verify(flink,never()).read(anyString(),contains("checkpoints"));verify(flink,never()).read(anyString(),eq("jobmanager/log"));verify(diagnostics,never()).log(anyString(),anyString(),anyString(),anyInt(),anyBoolean());
+  }
+
+  /** 规范总结按SQL身份隔离，人工核对事项仅更新本作业。 */
+  @Test
+  void unknownItemsRemainScopedAndCanBeExplicitlyReviewed() throws Exception {
+    String first=sqlJob();answer.withArray("unknowns").add("仅第一作业的必要条件");turn("第一作业需求","chat");
+    String second=sqlJob();var secondValue=sqlConversations.get(second);assertThat(secondValue.path("unknowns")).isEmpty();
+    assertThat(secondValue.path("summaryId").asText()).isNotEqualTo(sqlConversations.get(first).path("summaryId").asText());
+    var firstValue=sqlConversations.get(first);var edit=mapper.createObjectNode().put("revision",firstValue.path("revision").asLong()).put("summaryRevision",firstValue.path("summaryRevision").asLong()).put("summary","已核对第一作业需求").put("sql",sqlJobs.get(first).path("sql").asText());edit.putArray("unknowns");
+    sqlConversations.summary(first,edit);assertThat(sqlConversations.get(first).path("unknowns")).isEmpty();assertThat(sqlConversations.get(second).path("summary").asText()).isEmpty();
   }
 
   /** 成功总结之后裁剪旧消息，任务记录同时有限保留。 */
@@ -309,7 +443,8 @@ class AiJobIntegrationTest {
     assertThatThrownBy(()->conversations.context(job.id(),current.path("contentVersion").asLong(),false)).hasMessageContaining("原应用尚未确认");
     assertThat(conversations.get(job.id()).at("/plan/id").asText()).isEqualTo(plan.path("id").asText());
     assertThat(conversations.apply(job.id(),plan.path("id").asText(),input,()->"admin").path("state").asText()).isEqualTo("ACCEPTED");
-    assertThat(conversations.append(job.id(),mapper.createObjectNode().put("messageId",UUID.randomUUID().toString()).put("revision",current.path("revision").asLong()).put("content","继续观察")).path("messages")).hasSize(3);
+    var next=conversations.get(job.id());
+    assertThat(conversations.append(job.id(),mapper.createObjectNode().put("messageId",UUID.randomUUID().toString()).put("revision",next.path("revision").asLong()).put("content","继续观察")).path("messages")).hasSize(1);
   }
 
   /** 修改总结后旧方案不可应用。 */
@@ -342,7 +477,8 @@ class AiJobIntegrationTest {
   @Test
   void untrustedPatchCannotModifyIdentity() throws Exception {
     answer.putArray("changes").addObject().put("path","/metadata/namespace").put("value","another-team");
-    assertThat(turn("给我修复配置","repair").path("state").asText()).isEqualTo("FAILED");
+    assertThat(turn("给我修复配置","repair").path("state").asText()).isEqualTo("SUCCEEDED");
+    assertThat(conversations.get(job.id()).path("proposalWarning").asText()).contains("建议未通过平台检查");
     assertThat(conversations.get(job.id()).has("plan")).isFalse();assertThat(writes.get()).isZero();
   }
 

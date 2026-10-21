@@ -93,7 +93,8 @@ public class AiConversationServiceImpl implements AiConversationService {
     value.put("contentVersion", version).put("summaryVersion", version)
         .put("confirmedVersion", -1).put("scopeAccepted", false).put("summary", text).put("summarySqlHash", hash(sql));
     memory.requireRevision(value.path("summaryRevision").asLong(),input.path("summaryRevision").asLong(value.path("summaryRevision").asLong()));
-    var shared=memory.update(memory.sql(sqlId),value.path("summaryRevision").asLong(),text,value.path("unknowns"),hash(sql));
+    var unknowns=memory.reviewedUnknowns(input,value.path("unknowns"));guard.requireSafe(unknowns.toString());
+    var shared=memory.update(memory.sql(sqlId),value.path("summaryRevision").asLong(),text,unknowns,hash(sql));
     value.put("summaryRevision",shared.path("revision").asLong());
     return save(value);
   }
@@ -135,7 +136,7 @@ public class AiConversationServiceImpl implements AiConversationService {
 
   /** 取消由任务终态锁保护；并发补充则以内容版本拒绝迟到回复。 */
   @Transactional
-  public void complete(String sqlId, long version, String taskId, String mode, String sqlHash, long summaryRevision, ObjectNode result) {
+  public void complete(String sqlId, long version, String taskId, String mode, String sqlHash, long summaryRevision, ObjectNode result, Runnable commitTask) {
     var value = get(sqlId);
     memory.requireRevision(value.path("summaryRevision").asLong(),summaryRevision);
     if (value.path("contentVersion").asLong() != version)
@@ -157,6 +158,7 @@ public class AiConversationServiceImpl implements AiConversationService {
       value.put("summaryRevision",shared.path("revision").asLong());
     }
     save(value);
+    commitTask.run();
   }
 
   /** 统计完整消息文本，达到边界明确拒绝，不静默截断会话。 */

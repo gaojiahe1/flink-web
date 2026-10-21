@@ -10,7 +10,8 @@ RUN yum install -y gcc make curl tar gzip openssl-devel bzip2-devel libffi-devel
     && make -j2 && make install \
     && /opt/python/bin/python3 -m pip install --no-cache-dir boto3==1.42.70
 COPY prepare-runtime.py /tmp/prepare-runtime.py
-RUN /opt/python/bin/python3 /tmp/prepare-runtime.py /opt/python \
+RUN printf 'flink-web dedicated Python runtime v1\n' > /opt/python/.flink-web-runtime-prefix \
+    && /opt/python/bin/python3 /tmp/prepare-runtime.py /opt/python \
     && strip --strip-unneeded /opt/python/bin/python3.12 \
     && find /opt/python/lib/python3.12/lib-dynload -name '*.so' -exec strip --strip-unneeded {} +
 

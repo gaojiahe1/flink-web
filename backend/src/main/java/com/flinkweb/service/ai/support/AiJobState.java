@@ -35,38 +35,55 @@ public class AiJobState {
   /** 通知模型任务中断；已删除记录不得由迟到回调重新创建。 */
   public record Deleted(String jobId) {}
 
-  /** 仅已核验身份且当前修订实际稳定运行时清理旧排障，保留唯一总结和SQL创作对话。 */
-  public void observed(com.fasterxml.jackson.databind.node.ObjectNode row) {
-    if(!row.path("managed").asBoolean() || row.path("deleting").asBoolean()
-        || !row.path("runningRevisionConfirmed").asBoolean() || !row.path("jobState").asText().equals("RUNNING")
-        || !row.path("healthState").asText().equals("RUNNING") || !row.path("lifecycleState").asText().equals("STABLE")
-        || row.path("runIdentity").asText().isBlank() || row.path("desiredState").asText().equals("stopped")) return;
-    String jobId=row.path("jobId").asText(),run=row.path("runIdentity").asText();
+  /** 重启受理或实际保存内容改变即结束旧轮次；未知应用保留原号恢复入口。 */
+  public com.fasterxml.jackson.databind.node.ObjectNode synchronize(String jobId,com.fasterxml.jackson.databind.node.ObjectNode baseline) {
     synchronized(monitor) {
       var previous=records.find("ai_job_runtime",jobId);
-      if(previous!=null && run.equals(previous.path("runIdentity").asText()))return;
       for(var application:records.listForSubject("ai_job_applications",jobId)) {
-        String state=application.path("state").asText();
+        String status=application.path("state").asText();
         var operation=records.find("operations",application.path("operationId").asText());
-        if(operation!=null)state=operation.path("state").asText();
-        if(List.of("SAVING","SUBMITTING","UNKNOWN").contains(state)
-            || (state.equals("SAVED") && application.path("mode").asText().equals("restart"))) return;
+        if(operation!=null)status=operation.path("state").asText();
+        if(List.of("SAVING","SUBMITTING","UNKNOWN").contains(status)
+            || (status.equals("SAVED") && application.path("mode").asText().equals("restart"))) return previous;
       }
+      var accepted=records.listForSubject("operations",jobId).stream()
+          .filter(r->"ACCEPTED".equals(r.path("state").asText()) && List.of("deploy","start","restart","restore").contains(r.path("action").asText()))
+          .max(java.util.Comparator.comparing(r->java.time.Instant.parse(r.path("createdAt").asText()))).orElse(null);
+      String operationId=accepted==null?"":accepted.path("id").asText();
+      var basis=baseline.deepCopy().without(List.of("jobRevision","sqlRevision"));
+      boolean changed=previous!=null && previous.has("basis")
+          && (!basis.equals(previous.path("basis")) || !operationId.equals(previous.path("operationId").asText()));
       var conversations=records.listForSubject("ai_job_conversations",jobId);
-      transaction.executeWithoutResult(status->{
-        if(!conversations.isEmpty())memory.job(jobId);
-        for(var conversation:conversations) {
-          if(run.equals(conversation.path("observedRunId").asText()))continue;
-          conversation.putArray("messages");conversation.remove(List.of("lastPlanId","lastTaskId","summary","unknowns"));
-          conversation.put("observedRunId",run).put("contentVersion",conversation.path("contentVersion").asLong()+1).put("compressedMessages",0);
-          records.save("ai_job_conversations",conversation.path("id").asText(),conversation,conversation.path("revision").asLong());
+      if(previous==null || !previous.has("basis")) {
+        for(var value:conversations) {
+          var old=records.find("ai_job_evidence",value.path("id").asText());
+          if(old!=null && old.path("baseline").isObject() && !basis.equals(((com.fasterxml.jackson.databind.node.ObjectNode)old.path("baseline")).deepCopy().without(List.of("jobRevision","sqlRevision"))))changed=true;
+          if(accepted!=null && java.time.Instant.parse(accepted.path("createdAt").asText()).isAfter(java.time.Instant.parse(value.path("updatedAt").asText())))changed=true;
         }
-        for(String collection:List.of("ai_job_evidence","ai_job_plans","ai_job_applications","ai_tasks"))
-          for(var record:records.listForSubject(collection,jobId)) records.delete(collection,record.path("id").asText(),record.path("revision").asLong());
-        events.publishEvent(new Deleted(jobId));
-        var marker=com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode().put("jobId",jobId).put("runIdentity",run);
-        records.save("ai_job_runtime",jobId,marker,previous==null?0:previous.path("revision").asLong());
+      } else if(!changed) return previous;
+      final boolean reset=changed;
+      final var oldMarker=previous;
+      return transaction.execute(status->{
+        if(reset) {
+          if(!conversations.isEmpty())memory.job(jobId);
+          for(var value:conversations) {
+            value.putArray("messages");value.remove(List.of("lastPlanId","lastTaskId","summary","unknowns"));
+            value.put("contentVersion",value.path("contentVersion").asLong()+1).put("compressedMessages",0);
+            records.save("ai_job_conversations",value.path("id").asText(),value,value.path("revision").asLong());
+          }
+          for(var record:records.listForSubject("ai_job_evidence",jobId)) records.delete("ai_job_evidence",record.path("id").asText(),record.path("revision").asLong());
+          // 已应用方案和终态应用保留有限条用于同号恢复，不再通过当前轮次展示。
+          for(var task:records.listForSubject("ai_tasks",jobId))
+            if(List.of("QUEUED","RUNNING").contains(task.path("state").asText())) records.save("ai_tasks",task.path("id").asText(),task.put("state","CANCELED").put("message","作业已重启或配置变化，旧轮次已结束"),task.path("revision").asLong());
+          events.publishEvent(new Deleted(jobId));
+        }
+        var marker=com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode().put("jobId",jobId)
+            .put("roundId",java.util.UUID.randomUUID().toString()).put("startedAt",java.time.Instant.now().toString())
+            .put("operationId",operationId).put("reason",reset?"作业已重新提交或 SQL / 配置已更新，已开始新一轮排障；历史总结仅作参考。":"");
+        marker.set("basis",basis);
+        return records.save("ai_job_runtime",jobId,marker,oldMarker==null?0:oldMarker.path("revision").asLong());
       });
     }
   }
+
 }

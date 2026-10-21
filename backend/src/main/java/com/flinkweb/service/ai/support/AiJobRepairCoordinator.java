@@ -60,7 +60,7 @@ public class AiJobRepairCoordinator {
       boolean resource=pointer.matches("/spec/(taskManager|jobManager)/resource/(memory|cpu)");
       boolean parallel=pointer.equals("/spec/job/parallelism");
       boolean config=pointer.startsWith("/spec/flinkConfiguration/")
-          && pointer.substring("/spec/flinkConfiguration/".length()).matches("(taskmanager\\.memory\\.[a-z.-]+|jobmanager\\.memory\\.[a-z.-]+|taskmanager.numberOfTaskSlots|parallelism.default|execution.checkpointing.(interval|timeout)|restart-strategy\\.[a-z.-]+|table\\.exec\\.[a-z.-]+)");
+          && pointer.substring("/spec/flinkConfiguration/".length()).matches("(taskmanager\\.memory\\.[a-z.-]+|jobmanager\\.memory\\.[a-z.-]+|taskmanager\\.numberOfTaskSlots|parallelism\\.default|execution\\.checkpointing\\.(interval|timeout)|restart-strategy\\.[a-z.-]+|table\\.exec\\.[a-z.-]+)");
       if(!change.isObject() || !paths.add(pointer) || !(resource||parallel||config)
           || value.isMissingNode() || value.isNull() || value.isContainerNode()
           || value.toString().length()>512) fail("AI_INVALID_PATCH","建议包含重复、非标量或不允许修改的配置字段");
@@ -73,7 +73,7 @@ public class AiJobRepairCoordinator {
       String parent=pointer.substring(0,separator), key=pointer.substring(separator+1).replace("~1","/").replace("~0","~");
       node.withObject(parent).set(key,value.deepCopy());
     }
-    yaml.validate(node.deepCopy(),node.at("/metadata/name").asText());
+    operations.validate(yaml.dump(node),node.at("/metadata/name").asText(),false);
     return node;
   }
 

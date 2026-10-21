@@ -46,6 +46,10 @@ COPY --from=java /extract/layers/spring-boot-loader/ ./
 COPY --from=java /extract/layers/snapshot-dependencies/ ./
 COPY --from=java /extract/layers/application/ ./
 COPY --from=artifacts /validators/ /opt/sql-validators/
+RUN for version in 1.20.3 1.20.5; do \
+      test -s "/opt/sql-validators/${version}/validator.jar" \
+        || { echo "Missing supported SQL Parser: ${version}/validator.jar" >&2; exit 1; }; \
+    done
 COPY --from=artifacts /runner.jar /opt/sql-runner/flink-web-sql-runner.jar
 ENV FLINK_WEB_SQL_VALIDATOR_DIR=/opt/sql-validators
 ENV FLINK_WEB_SQL_RUNNER_JAR=/opt/sql-runner/flink-web-sql-runner.jar

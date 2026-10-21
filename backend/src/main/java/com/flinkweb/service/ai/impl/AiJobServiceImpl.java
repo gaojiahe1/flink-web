@@ -42,10 +42,11 @@ public class AiJobServiceImpl implements AiJobService {
     this.evidence=evidence;this.repairs=repairs;this.transaction=new TransactionTemplate(manager);
   }
 
-  /** 生命周期身份绑定草稿创建时间，作业重启延续记忆，同名重建隔离旧记录。 */
+  /** 生命周期身份绑定草稿创建时间，重启延续统一总结但切换轮次，同名重建隔离旧记录。 */
   private ObjectNode load(String jobId) {
     access.require(jobId,"read");
     var job=jobs.get(jobId);
+    state.synchronize(jobId,evidence.baseline(job));
     String id=UUID.nameUUIDFromBytes((access.actor()+"\0"+jobId+"\0"+job.createdAt()).getBytes(StandardCharsets.UTF_8)).toString();
     var value=records.find("ai_job_conversations",id);
     if(value!=null) return memory.view(value,memory.job(jobId),false);
@@ -59,9 +60,21 @@ public class AiJobServiceImpl implements AiJobService {
   public ObjectNode get(String jobId) {
     synchronized(state.monitor()) {
       var value=load(jobId);prune(jobId);
+      value.set("current",evidence.current(jobs.get(jobId)));
+      var round=records.find("ai_job_runtime",jobId);
+      if(round!=null) value.set("round",round.deepCopy().without("basis"));
       var bundle=records.find("ai_job_evidence",value.path("id").asText());
-      if(bundle!=null) value.set("evidence",bundle);
+      if(bundle!=null && bundle.path("contentVersion").asLong()==value.path("contentVersion").asLong()
+          && evidence.matches(jobs.get(jobId),bundle.path("baseline"))) value.set("evidence",bundle);
       var plan=records.find("ai_job_plans",value.path("lastPlanId").asText());
+      if(plan==null)for(var pending:records.listForSubject("ai_job_applications",jobId)) {
+        if(!access.actor().equals(pending.path("owner").asText()))continue;
+        var operation=records.find("operations",pending.path("operationId").asText());
+        String status=operation==null?pending.path("state").asText():operation.path("state").asText();
+        if(Set.of("SAVING","SUBMITTING","UNKNOWN").contains(status) || (status.equals("SAVED") && pending.path("mode").asText().equals("restart"))) {
+          plan=records.find("ai_job_plans",pending.path("planId").asText());break;
+        }
+      }
       if(plan!=null) {
         boolean current=plan.path("contentVersion").asLong()==value.path("contentVersion").asLong()
             && evidence.matches(jobs.get(jobId),plan.path("baseline")) && !plan.hasNonNull("applicationId")
@@ -70,7 +83,8 @@ public class AiJobServiceImpl implements AiJobService {
         if(plan.hasNonNull("applicationId")) value.set("application",repairs.application(jobId,plan.path("applicationId").asText()));
       }
       var tasks=records.listForSubject("ai_tasks",jobId).stream().filter(t->jobId.equals(t.path("jobId").asText())
-          && access.actor().equals(t.path("owner").asText())).sorted(order()).toList();
+          && access.actor().equals(t.path("owner").asText())
+          && (round==null || Instant.parse(t.path("createdAt").asText()).compareTo(Instant.parse(round.path("startedAt").asText()))>=0)).sorted(order()).toList();
       if(!tasks.isEmpty()) value.set("lastTask",tasks.get(0).deepCopy().without("requestHash"));
       boolean developer=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication().getAuthorities().stream()
           .anyMatch(a->Set.of("ROLE_ADMIN","ROLE_DEVELOPER").contains(a.getAuthority()));
@@ -110,7 +124,8 @@ public class AiJobServiceImpl implements AiJobService {
       if(text.isBlank() || text.length()>8000) fail("AI_INVALID_SUMMARY","总结应为1到8000字符");
       guard.requireSafe(text);
       memory.requireRevision(value.path("summaryRevision").asLong(),input.path("summaryRevision").asLong(value.path("summaryRevision").asLong()));
-      var shared=memory.update(memory.job(jobId),value.path("summaryRevision").asLong(),text,value.path("unknowns"),sqlHash(jobId));
+      var unknowns=memory.reviewedUnknowns(input,value.path("unknowns"));guard.requireSafe(unknowns.toString());
+      var shared=memory.update(memory.job(jobId),value.path("summaryRevision").asLong(),text,unknowns,sqlHash(jobId));
       value.put("summaryRevision",shared.path("revision").asLong());
       value.put("summary",text).put("contentVersion",value.path("contentVersion").asLong()+1).put("manualSummary",true);
       save(value);return get(jobId);
@@ -119,10 +134,16 @@ public class AiJobServiceImpl implements AiJobService {
 
   /** 远端取证不持数据库事务；采集后再核对会话与草稿，拒绝已变化的上下文。 */
   public ObjectNode context(String jobId,long version,boolean includeLogs) {
+    return context(jobId,version,includeLogs,"auto");
+  }
+
+  /** 证据类别由白名单校验，按当前消息重新采集，不复用上次查询快照。 */
+  public ObjectNode context(String jobId,long version,boolean includeLogs,String category) {
     ObjectNode conversation;
     com.flinkweb.entity.job.JobDraft job;
     synchronized(state.monitor()) {conversation=load(jobId);requireSettledApplication(jobId);requireVersion(conversation,version);job=jobs.get(jobId);}
-    var bundle=evidence.collect(job,includeLogs);
+    String focus=conversation.path("messages").isEmpty()?"":conversation.withArray("messages").get(conversation.path("messages").size()-1).path("content").asText();
+    var bundle=evidence.collect(job,includeLogs,category,focus);
     synchronized(state.monitor()) {
       requireVersion(load(jobId),version);
       if(!evidence.matches(jobs.get(jobId),bundle.path("baseline"))) conflict("取证期间 SQL 或配置已变化，请重新发送");
@@ -131,15 +152,29 @@ public class AiJobServiceImpl implements AiJobService {
       var old=records.find("ai_job_evidence",id);
       records.save("ai_job_evidence",id,bundle,old==null?0:old.path("revision").asLong());
       var context=mapper.createObjectNode().put("jobId",jobId).put("jobName",job.name()).put("flinkVersion",job.flinkVersion());
-      context.set("conversation",conversation);context.set("evidence",bundle);
+      context.set("conversation",conversation);context.set("evidence",evidence.forModel(bundle));
       if(bundle.has("currentSql")) context.set("currentSql",bundle.get("currentSql"));
       if(context.toString().length()>90000) fail("AI_INPUT_TOO_LARGE","总结、近期对话及证据超过预算，请缩小本次问题范围");
       return context;
     }
   }
 
+  /** 手动分类取证绑定当前会话和配置；过期请求不得回写新轮次。 */
+  public ObjectNode evidence(String jobId,String category) {
+    ObjectNode value;com.flinkweb.entity.job.JobDraft job;
+    synchronized(state.monitor()) {value=load(jobId);job=jobs.get(jobId);}
+    var bundle=evidence.collectCategory(job,category);
+    synchronized(state.monitor()) {
+      var current=load(jobId);
+      if(current.path("contentVersion").asLong()!=value.path("contentVersion").asLong() || !evidence.matches(jobs.get(jobId),bundle.path("baseline")))conflict("取证期间配置或轮次已变化，请重新读取");
+      String id=value.path("id").asText();var old=records.find("ai_job_evidence",id);
+      bundle.put("jobId",jobId).put("owner",access.actor()).put("contentVersion",value.path("contentVersion").asLong());
+      return records.save("ai_job_evidence",id,bundle,old==null?0:old.path("revision").asLong());
+    }
+  }
+
   /** 成功回复与总结原子持久化；较早消息仅在总结覆盖后裁剪到最近八轮。 */
-  public void complete(String jobId,long version,String taskId,ObjectNode context,ObjectNode result) {
+  public void complete(String jobId,long version,String taskId,ObjectNode context,ObjectNode result,Runnable commitTask) {
     synchronized(state.monitor()) {
       var value=load(jobId);requireVersion(value,version);
       memory.requireRevision(value.path("summaryRevision").asLong(),context.at("/conversation/summaryRevision").asLong());
@@ -148,7 +183,10 @@ public class AiJobServiceImpl implements AiJobService {
       String summary=result.path("summary").asText(),reply=result.path("reply").asText();
       if(summary.isBlank() || summary.length()>8000 || reply.isBlank() || reply.length()>4000)
         fail("AI_INVALID_OUTPUT","模型须返回完整总结（最多8000字符）和回复（最多4000字符），原消息未压缩");
-      var plan="repair".equals(context.path("mode").asText())?repairs.propose(job,(ObjectNode)context.path("evidence"),result,version,access.actor()):null;
+      ObjectNode candidate=null;
+      try { if(result.has("sql") || result.path("changes").size()>0) candidate=repairs.propose(job,(ObjectNode)context.path("evidence"),result,version,access.actor()); }
+      catch(BusinessException error) { result.put("proposalWarning","建议未通过平台检查："+error.getMessage()+"。请继续补充或重新生成；当前配置未修改。"); }
+      final var plan=candidate;
       transaction.executeWithoutResult(status->{
         var shared=memory.update(memory.job(jobId),value.path("summaryRevision").asLong(),summary,result.path("unknowns"),sqlHash(jobId));
         value.put("summaryRevision",shared.path("revision").asLong());
@@ -158,6 +196,8 @@ public class AiJobServiceImpl implements AiJobService {
           value.put("lastPlanId",saved.path("id").asText());result.put("planId",saved.path("id").asText());
         }
         value.put("summary",summary).put("summaryThroughVersion",version).put("lastTaskId",taskId);
+        if(plan==null)value.remove("lastPlanId");
+        if(result.has("proposalWarning"))value.put("proposalWarning",result.path("proposalWarning").asText());else value.remove("proposalWarning");
         value.set("unknowns",result.path("unknowns").deepCopy());
         value.withArray("messages").addObject().put("id",taskId).put("role","assistant").put("content",reply).put("createdAt",Instant.now().toString());
         var messages=value.withArray("messages");
@@ -171,8 +211,9 @@ public class AiJobServiceImpl implements AiJobService {
           messages.remove(0);value.put("compressedMessages",value.path("compressedMessages").asInt()+1);
         }
         save(value);prune(jobId);
+        result.remove(List.of("changes","sql"));
+        commitTask.run();
       });
-      result.remove(List.of("changes","sql"));
     }
   }
 
@@ -184,6 +225,7 @@ public class AiJobServiceImpl implements AiJobService {
       if(!jobId.equals(plan.path("jobId").asText()) || !access.actor().equals(plan.path("owner").asText()))
         throw new BusinessException(HttpStatus.FORBIDDEN,"FORBIDDEN","无权应用其他用户的修复方案");
       if(records.find("ai_job_applications",input.path("requestId").asText())==null) {
+        if(plan.hasNonNull("applicationId"))conflict("本方案已提交应用，请核对原请求；再次修改需要重新分析并审阅");
         for(var pending:records.listForSubject("ai_job_applications",jobId))
           if(access.actor().equals(pending.path("owner").asText()) && Set.of("SAVING","SUBMITTING","UNKNOWN").contains(pending.path("state").asText())) {
             var operation=records.find("operations",pending.path("operationId").asText());
@@ -195,7 +237,9 @@ public class AiJobServiceImpl implements AiJobService {
         if(!input.path("confirmed").asBoolean()) fail("AI_CONFIRMATION_REQUIRED","请确认已审阅完整变更后再应用");
         memory.requireRevision(value.path("summaryRevision").asLong(),plan.path("summaryRevision").asLong());
       }
-      var application=repairs.apply(jobId,plan,input,actor);prune(jobId);return application;
+      var application=repairs.apply(jobId,plan,input,actor);
+      if(application.path("mode").asText().equals("restart") && application.path("state").asText().equals("ACCEPTED")) state.synchronize(jobId,evidence.baseline(jobs.get(jobId)));
+      prune(jobId);return application;
     }
   }
 
@@ -206,7 +250,7 @@ public class AiJobServiceImpl implements AiJobService {
 
   /** 持久化会话正文，临时展示字段不得混入下一次模型上下文。 */
   private ObjectNode save(ObjectNode value) {
-    value.remove(List.of("plan","evidence","application","lastTask","canEdit","canOperate"));
+    value.remove(List.of("plan","evidence","application","lastTask","canEdit","canOperate","current","round"));
     value.put("sharedSummaryRevision",value.path("summaryRevision").asLong());
     var stored=value.deepCopy();stored.remove(List.of("summary","summaryRevision","summaryId","unknowns"));
     return records.save("ai_job_conversations",value.path("id").asText(),stored,value.path("revision").asLong());

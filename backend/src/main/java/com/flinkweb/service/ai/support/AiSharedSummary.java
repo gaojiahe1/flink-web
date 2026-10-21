@@ -90,6 +90,15 @@ public class AiSharedSummary {
     if(current!=expected) throw new BusinessException(HttpStatus.CONFLICT,"AI_SUMMARY_CHANGED","作业总结已由另一入口更新，请重新加载并整理后重试");
   }
 
+  /** 人工核对可显式移除不属于本作业或已解决事项；不传字段则保留原列表。 */
+  public com.fasterxml.jackson.databind.JsonNode reviewedUnknowns(ObjectNode input,com.fasterxml.jackson.databind.JsonNode previous) {
+    if(!input.has("unknowns"))return previous;
+    var value=input.path("unknowns");
+    if(!value.isArray() || value.size()>20)throw new BusinessException(HttpStatus.BAD_REQUEST,"AI_INVALID_UNKNOWNS","待核对事项须为最多20项文本");
+    for(var item:value)if(!item.isTextual() || item.asText().isBlank() || item.asText().length()>2000)throw new BusinessException(HttpStatus.BAD_REQUEST,"AI_INVALID_UNKNOWNS","每项待核对内容须为1到2000字符");
+    return value;
+  }
+
   /** 兼容原会话响应，视图带总结修订；实际会话正文不再保存第二份总结。 */
   public ObjectNode view(ObjectNode conversation,ObjectNode memory,boolean sql) {
     boolean changed=conversation.has("sharedSummaryRevision")

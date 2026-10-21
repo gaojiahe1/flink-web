@@ -17,13 +17,15 @@ const props = defineProps<{
   error?: string
   canReadLogs: boolean
 }>()
-const emit = defineEmits<{ close: []; changed: [] }>()
+const emit = defineEmits<{ close: []; changed: []; restarted: [] }>()
 const dialog = ref<HTMLDialogElement>(),
   messages = ref<HTMLElement>()
 const conversation = ref<AiJobConversation>(),
   loading = ref(true),
   saving = ref(false),
   applying = ref(false)
+const collecting = ref(false)
+const evidenceCategory = ref('auto')
 const modelId = ref(''),
   model = ref<AiModel>(),
   allowExternal = ref(false),
@@ -33,6 +35,7 @@ const instruction = ref(''),
   notice = ref(''),
   editingSummary = ref(false),
   summaryText = ref('')
+const unknownsText = ref('')
 const file = ref<'yaml' | 'sql'>('yaml'),
   mode = ref<'save' | 'restart'>('save'),
   restoreMode = ref('')
@@ -42,7 +45,7 @@ const savepointPath = ref(''),
 const application = ref<AiJobApplication>()
 const body = ref<HTMLElement>(),
   split = ref(42),
-  largeView = ref<'summary' | 'evidence' | 'comparison'>(),
+  largeView = ref<'summary' | 'evidence' | 'comparison' | 'current'>(),
   stacked = ref(false)
 const drawerWidth = ref(1180),
   availableWidth = ref(window.innerWidth)
@@ -129,8 +132,13 @@ function resizeKey(event: KeyboardEvent) {
 const pendingApplication = ref<{ planId: string; input: Record<string, unknown> }>()
 const { task, busy, error: taskError, uncertain, retry, start, cancel, resume } = useAiTask()
 let disposed = false
-const working = computed(() => busy.value || saving.value || applying.value || loading.value)
+const working = computed(
+  () => busy.value || saving.value || applying.value || loading.value || collecting.value,
+)
 const plan = computed(() => conversation.value?.plan)
+const displayedError = computed(() =>
+  conversation.value?.evidence ? conversation.value.evidence.runtimeError || '' : props.error || '',
+)
 const ready = computed(() => !!modelId.value && !working.value)
 const mayApply = computed(
   () =>
@@ -164,6 +172,26 @@ async function reload() {
   if (disposed) return
   conversation.value = value
   application.value = value.application
+}
+async function refreshEvidence(category: string) {
+  if (working.value) return
+  collecting.value = true
+  failure.value = ''
+  try {
+    const value = await aiApi.jobEvidence(props.job.id, category)
+    if (!disposed && conversation.value) conversation.value.evidence = value
+  } catch (e) {
+    if (!disposed) failure.value = (e as Error).message
+  } finally {
+    collecting.value = false
+  }
+}
+function finishRestart() {
+  if (application.value?.mode === 'restart' && application.value.state === 'ACCEPTED') {
+    emit('restarted')
+    return true
+  }
+  return false
 }
 onMounted(async () => {
   measureDrawer()
@@ -221,7 +249,10 @@ watch(
     } catch (e) {
       if (!disposed) failure.value = (e as Error).message
     }
-    if (state === 'SUCCEEDED') notice.value = 'AI 已回答；建议尚未应用。'
+    if (state === 'SUCCEEDED')
+      notice.value = conversation.value?.plan
+        ? 'AI 已回答；已生成修改建议，尚未保存或重启。'
+        : 'AI 已回答；本轮尚未生成可应用的 SQL / 配置候选，可补充证据或生成修复方案。'
   },
 )
 watch(
@@ -274,6 +305,7 @@ async function ask(kind: 'chat' | 'repair', repeat = false) {
       jobConversationVersion: conversation.value!.contentVersion,
       allowExternal: allowExternal.value,
       includeLogs: includeLogs.value && props.canReadLogs,
+      evidenceCategory: evidenceCategory.value,
     })
     allowExternal.value = false
   } catch (e) {
@@ -290,6 +322,7 @@ async function allowAndAsk() {
 }
 function editSummary() {
   summaryText.value = conversation.value?.summary || ''
+  unknownsText.value = conversation.value?.unknowns.join('\n') || ''
   editingSummary.value = true
 }
 async function saveSummary() {
@@ -301,6 +334,10 @@ async function saveSummary() {
       revision: conversation.value.revision,
       summaryRevision: conversation.value.summaryRevision,
       summary: summaryText.value,
+      unknowns: unknownsText.value
+        .split('\n')
+        .map((text) => text.trim())
+        .filter(Boolean),
     })
     editingSummary.value = false
   } catch (e) {
@@ -328,13 +365,21 @@ async function apply() {
   try {
     application.value = await aiApi.applyJobPlan(props.job.id, pending.planId, pending.input)
     pendingApplication.value = undefined
+    if (finishRestart()) return
+    const outcome = application.value
     await reload()
+    if (outcome?.mode === 'save' && outcome.state === 'SAVED')
+      notice.value = '草稿已保存，后续分析将读取最新 SQL / 配置。'
     emit('changed')
   } catch (e) {
     try {
       application.value = await aiApi.jobApplication(props.job.id, String(pending.input.requestId))
       pendingApplication.value = undefined
+      if (finishRestart()) return
+      const outcome = application.value
       await reload()
+      if (outcome?.mode === 'save' && outcome.state === 'SAVED')
+        notice.value = '草稿已保存，后续分析将读取最新 SQL / 配置。'
       emit('changed')
     } catch (lookup) {
       if (
@@ -391,7 +436,12 @@ async function continueApplication() {
         <X :size="19" />
       </button>
     </header>
-    <p v-if="error" class="notice error ai-prewrap ai-job-current-error">{{ error }}</p>
+    <p v-if="displayedError" class="notice error ai-prewrap ai-job-current-error">
+      <small>{{
+        conversation?.evidence ? '本轮重新采集的运行异常' : '列表上次查询的运行异常；发送后重新取证'
+      }}</small
+      ><br />{{ displayedError }}
+    </p>
     <div class="ai-job-settings">
       <AiModelSelect
         v-model="modelId"
@@ -401,16 +451,43 @@ async function continueApplication() {
       />
       <label v-if="canReadLogs" class="ai-check"
         ><input v-model="includeLogs" :disabled="working" type="checkbox" />包含容器日志<HelpTip
-          text="按本轮分析需要读取有权访问的JM/TM日志，最多两份，各120行，并经过脱敏。"
+          text="按本轮需要读取有权访问的JM/TM及故障容器日志，最多四份，各取末尾600行，再提取异常附近和最后输出；并非完整日志。"
       /></label>
       <label v-if="model?.external" class="ai-check ai-external"
         ><input
           v-model="allowExternal"
           :disabled="working"
           type="checkbox" />允许本次发送脱敏上下文<HelpTip
-          text="本轮会向所选外部模型发送作业总结、近期对话、SQL、受限配置、事件和勾选的日志；每轮单独确认。"
+          text="本轮向所选外部模型发送本作业总结、近期对话、当前SQL、脱敏配置、事件和所选取证方向的数据；勾选后附带受限容器日志，每轮单独确认。"
       /></label>
     </div>
+    <label class="ai-job-baseline"
+      >本轮取证方向
+      <select v-model="evidenceCategory" :disabled="working" aria-label="本轮取证方向">
+        <option value="auto">按当前报错自动判断</option>
+        <option value="configuration">SQL / 部署配置</option>
+        <option value="pods">Pod 配置与事件</option>
+        <option value="podMetrics">Pod 资源用量</option>
+        <option value="flinkExceptions">Flink 异常</option>
+        <option value="flinkCheckpoints">快照 / Checkpoint</option>
+        <option value="flinkMetrics">JVM / GC 指标</option>
+        <option v-if="canReadLogs" value="flinkLogs">Flink 日志</option>
+      </select>
+    </label>
+    <p v-if="conversation?.current" class="muted ai-job-baseline">
+      当前草稿 r{{ conversation.current.baseline.jobRevision
+      }}<template v-if="conversation.current.baseline.sqlRevision !== undefined">
+        · SQL r{{ conversation.current.baseline.sqlRevision }}</template
+      >
+      <button class="text-button" :disabled="working" @click="reload">重新核对最新配置</button>
+      <button class="text-button" :disabled="working" @click="largeView = 'current'">
+        查看当前 SQL / YAML
+      </button>
+    </p>
+    <p v-if="conversation?.round?.reason" class="muted ai-job-baseline">
+      {{ conversation.round.reason }}
+    </p>
+    <p v-if="conversation?.proposalWarning" class="notice">{{ conversation.proposalWarning }}</p>
     <p v-if="loading" class="muted" role="status">
       <LoaderCircle :size="14" class="ai-job-spin" /> 正在恢复本作业对话…
     </p>
@@ -453,10 +530,27 @@ async function continueApplication() {
             <LoaderCircle :size="15" class="ai-job-spin" /> 正在收集证据并分析，可继续查看已有对话…
           </p>
         </div>
-        <div v-if="conversation?.evidence" class="ai-job-evidence">
-          <button class="text-button" @click="largeView = 'evidence'">
-            本轮证据 · {{ new Date(conversation.evidence.queriedAt).toLocaleTimeString() }}
-            <span>· 打开大视图查看 Pod、事件、配置和日志 ↗</span>
+        <div class="ai-job-evidence">
+          <p v-if="busy || collecting" class="muted" role="status">
+            正在采集当前轮次证据，完成前请勿将已有快照当作最新状态。
+          </p>
+          <template v-if="conversation?.evidence">
+            <button class="text-button" @click="largeView = 'evidence'">
+              本轮证据 · {{ new Date(conversation.evidence.queriedAt).toLocaleTimeString() }}
+              <span>· 打开大视图查看 Pod、事件、配置和日志 ↗</span>
+            </button>
+          </template>
+          <button
+            v-else
+            class="text-button"
+            :disabled="working"
+            @click="
+              refreshEvidence('auto').then(() => {
+                if (conversation?.evidence) largeView = 'evidence'
+              })
+            "
+          >
+            按需采集证据 · 查看 Pod、事件、配置和日志 ↗
           </button>
         </div>
         <div class="ai-job-input">
@@ -501,7 +595,7 @@ async function continueApplication() {
               :disabled="!ready || !conversation?.messages.length || !!pendingApplication"
               @click="ask('repair')"
             >
-              生成修复方案</button
+              {{ plan?.canApply ? '重新生成修复方案' : '生成修复方案' }}</button
             ><button v-if="busy" class="text-button" @click="cancel">取消分析</button
             ><button v-if="uncertain" class="text-button" @click="retry">核对原任务并重试</button
             ><button
@@ -539,6 +633,18 @@ async function continueApplication() {
       </div>
       <section v-if="plan" class="ai-job-plan" aria-label="修复方案审阅">
         <h4>修复方案与完整对比</h4>
+        <p class="notice ai-job-proposal-state">
+          {{ plan.sqlChanged ? '已生成 SQL 修改建议' : ''
+          }}{{ plan.sqlChanged && plan.yamlChanged ? '及' : ''
+          }}{{ plan.yamlChanged ? '配置修改建议' : '' }} ·
+          {{
+            plan.applicationId
+              ? '本方案已提交应用'
+              : plan.canApply
+                ? '待你审阅确认，尚未保存或重启'
+                : '基准已变化，本方案已失效'
+          }}
+        </p>
         <p class="muted">
           基于已保存草稿 r{{ plan.baseline.jobRevision
           }}<template v-if="plan.baseline.sqlRevision">
@@ -666,21 +772,41 @@ async function continueApplication() {
       </p>
       <p v-else-if="notice" class="muted" role="status">{{ notice }}</p>
       <p class="muted">
-        总结与 SQL 开发共用；实际启动成功后清空上一轮排障对话，保留总结。按需取证。
+        总结与 SQL 开发共用；重启受理后结束本轮并返回作业列表，保留总结。证据按需重新采集。
       </p>
     </footer>
     <AiContentDialog
       v-if="largeView"
       :title="
-        largeView === 'summary'
-          ? '作业总结'
-          : largeView === 'evidence'
-            ? '本轮证据详情'
-            : '完整修改对比'
+        largeView === 'current'
+          ? '当前已保存 SQL / YAML'
+          : largeView === 'summary'
+            ? '作业总结'
+            : largeView === 'evidence'
+              ? '本轮证据详情'
+              : '完整修改对比'
       "
       @close="largeView = undefined"
     >
-      <template v-if="largeView === 'summary'">
+      <template v-if="largeView === 'current' && conversation?.current">
+        <p class="muted">
+          当前草稿 r{{ conversation.current.baseline.jobRevision }} · SQL r{{
+            conversation.current.baseline.sqlRevision ?? '无'
+          }}；仅从平台读取最新保存内容，集群声明请在本轮证据中另行采集。
+        </p>
+        <p class="notice ai-job-proposal-state">{{ conversation.current.referenceNote }}</p>
+        <h4 v-if="conversation.current.sql !== undefined">当前 SQL 草稿</h4>
+        <pre v-if="conversation.current.sql !== undefined" class="ai-job-current-doc">{{
+          conversation.current.sql
+        }}</pre>
+        <h4 v-if="conversation.current.publishedSql">已发布 SQL</h4>
+        <pre v-if="conversation.current.publishedSql" class="ai-job-current-doc">{{
+          conversation.current.publishedSql
+        }}</pre>
+        <h4>当前部署草稿 YAML（完整结构，敏感值脱敏）</h4>
+        <pre class="ai-job-current-doc">{{ conversation.current.draftYaml }}</pre>
+      </template>
+      <template v-else-if="largeView === 'summary'">
         <template v-if="!editingSummary">
           <AiRichText
             :text="
@@ -702,6 +828,13 @@ async function continueApplication() {
         </template>
         <template v-else>
           <label>核对后的总结<textarea v-model="summaryText" rows="12" maxlength="8000" /></label>
+          <label
+            >本作业待核对事项（每行一项，已解决或不相关项可删除）<textarea
+              v-model="unknownsText"
+              aria-label="编辑本作业待核对事项"
+              rows="4"
+            />
+          </label>
           <div class="toolbar-actions">
             <button
               class="button primary"
@@ -718,6 +851,9 @@ async function continueApplication() {
       <AiEvidenceView
         v-else-if="largeView === 'evidence' && conversation?.evidence"
         :evidence="conversation.evidence"
+        :busy="working"
+        :can-read-logs="canReadLogs"
+        @refresh="refreshEvidence"
       />
       <template v-else-if="plan"
         ><div class="toolbar-actions">
@@ -790,6 +926,24 @@ async function continueApplication() {
 }
 .ai-job-heading {
   flex: none;
+}
+.ai-job-baseline {
+  margin: 0;
+  font-size: 12px;
+  flex: none;
+}
+.ai-job-proposal-state {
+  display: block;
+}
+.ai-job-current-doc {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--color-background);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.7;
 }
 .ai-job-heading h3 {
   display: flex;
@@ -1087,6 +1241,7 @@ async function continueApplication() {
   margin: 4px 0;
 }
 .ai-job-current-error {
+  display: block;
   max-height: 80px;
   overflow: auto;
   flex: none;

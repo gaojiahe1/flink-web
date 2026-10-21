@@ -19,6 +19,7 @@ public class AiContentGuard {
       Pattern.compile(
           "(?i)(['\"]?(?:password|passwd|secret(?:[_-]?key)?|api[_-]?key|access[_-]?key|authorization|token)['\"]?\\s*[:=]\\s*)(['\"]?)([^\\s,;\\n"
               + "]+)");
+  private static final Pattern PLATFORM_REFERENCE=Pattern.compile("\\{\\{(?:secret|config):[a-z0-9][a-z0-9_.-]{0,100}}" );
   private final RecordRepository records;
   private final SecretCipher cipher;
 
@@ -61,7 +62,8 @@ public class AiContentGuard {
     while (matcher.find()) {
       String token = matcher.group(3);
       boolean reference =
-          token.startsWith("{{") || token.startsWith("${") || token.startsWith("[REDACTED]");
+          token.startsWith("{{") || token.startsWith("${") || token.startsWith("[REDACTED]")
+              || insidePlatformReference(value,matcher.start(),matcher.end());
       matcher.appendReplacement(
           buffer,
           java.util.regex.Matcher.quoteReplacement(
@@ -75,6 +77,14 @@ public class AiContentGuard {
             "(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----",
             "[REDACTED PRIVATE KEY]")
         .replaceAll("(?i)(://[^/\\s:@]+:)[^@/\\s]+@", "$1[REDACTED]@");
+  }
+
+  /** 逐字段处理时也保留合法平台引用；占位符后拼接的明文赋值仍须拒绝。 */
+  private boolean insidePlatformReference(String value,int start,int end) {
+    var references=PLATFORM_REFERENCE.matcher(value);
+    while(references.find())if(start>=references.start() && start<references.end()
+        && end>=references.end() && value.substring(references.end(),end).matches("[\"'}\\]]*"))return true;
+    return false;
   }
 
   /** SQL 和需求含明文密钥时直接拒绝，不用静默修改后的 SQL 继续生成。 */

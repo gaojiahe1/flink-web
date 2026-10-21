@@ -86,6 +86,15 @@ export interface AiJobApplication {
   savedJobRevision?: number
 }
 export interface AiJobConversation {
+  round?: { roundId: string; startedAt: string; reason: string }
+  current?: {
+    baseline: { jobRevision: number; sqlRevision?: number }
+    draftYaml: string
+    sql?: string
+    publishedSql?: string
+    referenceNote: string
+  }
+  proposalWarning?: string
   summaryRevision?: number
   id: string
   revision: number
@@ -97,22 +106,56 @@ export interface AiJobConversation {
   canEdit: boolean
   canOperate: boolean
   evidence?: {
+    runtimeError?: string
+    jobState?: string
+    lifecycleState?: string
+    category?: string
     queriedAt: string
     resourceExists?: boolean
     uid?: string
     resourceVersion?: string
     baseline: { jobRevision: number; sqlRevision?: number }
     unavailable: string[]
-    logs?: { pod: string; container: string; previous: boolean; text: string }[]
+    logs?: {
+      pod: string
+      container: string
+      previous: boolean
+      text: string
+      source?: string
+      queriedAt?: string
+      fallback?: boolean
+    }[]
     diagnostics?: unknown
     draftConfiguration?: unknown
     runtimeConfiguration?: unknown
+    documents?: {
+      draftYaml?: string
+      runtimeYaml?: string
+      sql?: string
+      publishedSql?: string
+      runtimeSql?: string
+      referenceNote?: string
+    }
+    podDetails?: {
+      name: string
+      yaml?: string
+      configured?: unknown
+      usage?: unknown
+      timestamp?: string
+      window?: string
+    }[]
+    flink?: Record<string, unknown>
   }
   plan?: AiRepairPlan
   application?: AiJobApplication
   lastTask?: AiTask
 }
 export const aiApi = {
+  jobEvidence: (jobId: string, category: string) =>
+    request<NonNullable<AiJobConversation['evidence']>>(
+      '/api/ai/jobs/' + encodeURIComponent(jobId) + '/evidence',
+      { method: 'POST', ...jsonBody({ category }) },
+    ),
   jobConversation: (jobId: string) =>
     request<AiJobConversation>('/api/ai/jobs/' + encodeURIComponent(jobId) + '/conversation'),
   jobMessage: (jobId: string, value: unknown) =>

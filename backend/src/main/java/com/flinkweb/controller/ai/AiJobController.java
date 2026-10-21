@@ -18,6 +18,9 @@ public class AiJobController {
   /** 恢复本用户在这个作业生命周期内的总结、消息、证据与建议。 */
   @GetMapping("/conversation")
   public ApiResponse<ObjectNode> get(@PathVariable String jobId) {return ApiResponse.ok(jobs.get(jobId));}
+  /** 按类别取证，目标始终由作业归属决定，不能传入URL或Pod目标。 */
+  @PostMapping("/evidence")
+  public ApiResponse<ObjectNode> evidence(@PathVariable String jobId,@RequestBody ObjectNode input) {return ApiResponse.ok(jobs.evidence(jobId,input.path("category").asText("auto")));}
   /** 幂等保存用户补充。 */
   @PostMapping("/messages")
   public ApiResponse<ObjectNode> append(@PathVariable String jobId,@RequestBody ObjectNode input) {return ApiResponse.ok(jobs.append(jobId,input));}

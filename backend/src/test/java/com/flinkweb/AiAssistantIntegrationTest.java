@@ -62,7 +62,7 @@ class AiAssistantIntegrationTest {
   @Autowired AiModelService models;
   @Autowired AiTaskService tasks;
   @Autowired AiConversationService conversations;
-  @Autowired RecordRepository records;
+  @MockitoSpyBean RecordRepository records;
   @Autowired SecretTransportService transport;
   @Autowired AiContentGuard guard;
   @MockitoSpyBean AiModelClient client;
@@ -84,6 +84,30 @@ class AiAssistantIntegrationTest {
     return mapper.createObjectNode().put("requestId", UUID.randomUUID().toString())
         .put("kind", "sql").put("mode", mode).put("sqlId", id).put("sql", "SELECT 1;")
         .put("modelId", modelId).put("flinkVersion", "1.20.5").put("conversationVersion", version);
+  }
+
+  /** SQL回复/总结与任务成功状态必须一起回滚，不能留下成功回复配失败任务。 */
+  @Test
+  void terminalSaveFailureRollsBackSqlCompletion() throws Exception {
+    String id=conversationDraft();
+    var current=conversations.append(id,mapper.createObjectNode().put("messageId",UUID.randomUUID().toString()).put("revision",0).put("content","解释当前SQL"));
+    var failed=new AtomicBoolean();
+    doAnswer(call->{
+      var node=call.getArgument(2,ObjectNode.class);
+      var saved=call.callRealMethod();
+      if(node.path("sqlId").asText().equals(id) && node.path("state").asText().equals("SUCCEEDED") && failed.compareAndSet(false,true)) {
+        assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+        throw new IllegalStateException("injected terminal save failure");
+      }
+      return saved;
+    }).when(records).save(eq("ai_tasks"),anyString(),any(),anyLong());
+    answer.set("{\"reply\":\"解释完成\",\"summary\":\"当前SQL概要\",\"unknowns\":[]}");
+    var result=await(tasks.create(conversationTask(id,current.path("contentVersion").asLong(),"chat")).path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("FAILED");assertThat(result.has("result")).isFalse();
+    var after=conversations.get(id);
+    assertThat(after.path("messages")).hasSize(1);assertThat(after.path("summary")).isEqualTo(current.path("summary"));
+    assertThat(after.path("summaryRevision")).isEqualTo(current.path("summaryRevision"));
+    assertThat(await(tasks.create(conversationTask(id,current.path("contentVersion").asLong(),"chat")).path("id").asText()).path("state").asText()).isEqualTo("SUCCEEDED");
   }
 
   /** 对话、完整总结、确认和完整 SQL 生成分离，退出后可以恢复已有记录。 */

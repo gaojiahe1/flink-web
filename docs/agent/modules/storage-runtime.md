@@ -1,6 +1,6 @@
 # 制品与运行文件
 
-更新：2026-10-20。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-21。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：S3 浏览/上传/复制/删除、外部文件引用、下载器与 S3 插件准备。S3StorageClient 单独负责存储协议，ArtifactService 管业务，ArtifactPodBuilder/S3PluginPodBuilder 渲染受管卷与容器；实际文件读取在 downloader/Flink 主容器。
 
@@ -13,6 +13,8 @@ HTTP(S) 需白名单，无凭据/参数/片段，不跟重定向，阻止危险�
 平台 SDK、下载器、Flink 插件连接分别验收；V4/签名区域/WHEN_REQUIRED/必要 MD5 只说明兼容配置，MinIO 测试不能替代华为等提供商认证。10-10 用户反馈目标华为 S3 添加两个 WHEN_REQUIRED 环境变量后恢复正常，仅为该场景现场反馈，不等于全部接口或三条路径已验收。已知未确认资料见 open-questions。
 
 2026-10-20追加：删除平台作业继续在确认集群资源消失之后清理，由JobService事务处理失败回滚/重试；S3StorageClient对已验证UUID同时清理`{prefix}jobs/{id}/`和旧版`{prefix}{id}/`。先删不带末尾斜杠的精确目录标记，再递归分页删对象及带斜杠标记，避免某些S3实现的同名对象遮蔽目录。只从可信job id计算目标，不按YAML推导路径，不清相邻前缀或共享文件；SQL仍存草稿时先迁移其引用文件的既有规则保留。真实隔离MinIO及最终镜像删除API验证覆盖目录标记/旧目录/邻居/共享边界。
+
+2026-10-21：下载器[运行前缀精简](../../../downloader/prepare-runtime.py)只接受带固定标识的专用python目录，拒绝系统/主目录及解析别名，全部链接先预检后删除；[隔离测试](../../../downloader/test_prepare_runtime.py)覆盖合法、无标识、禁止和越界链接的零删除边界。后端Dockerfile离线context断言两版精确Parser文件。用户本轮升级三组件0.0.8并清理旧版本；详情见[验收](../validation.md#ai-六项优化与版本发布2026-10-21)。
 
 ## 定位代码与验证
 

@@ -1,6 +1,8 @@
 # Flink Web 部署指南
 
-更新：2026-10-20。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-21。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+
+当前三组件已发布0.0.8并清理旧版，包含AI新轮次/分类取证与六项优化；[发布和清理结果](#ai-一致性修复与版本发布2026-10-21)。实际K8s仍关闭，未部署清单/RBAC。恢复时先更新app/web及系统设置中持久化的下载器绑定至0.0.8，再串行验证一个作业。
 
 ## 1. 部署拓扑与前置条件
 
@@ -104,16 +106,16 @@ npm run format:check
 
 从项目根目录构建镜像，再按部署流程推送：
 
-当前发布约定（2026-10-19）：每次代码/功能修改通过校验后发布受影响组件镜像，完成容器验证、推送、仓库摘要核对及文档更新。用户本次要求 app、web、downloader 统一使用 `192.168.68.1:5000/flink-web/{组件}:0.0.7`，替代此前 `0.0.4` 约定，不更新 `latest`。最新web摘要见 [本轮发布](#ai-抽屉调宽与继续对话2026-10-20)，app见[统一总结发布](#ai-阅读布局与统一总结2026-10-20)，瘦身基线见 [BES记录](#bes-运行时与镜像瘦身2026-10-19)，下方旧日期的 0.0.4 记录保留历史范围。发布镜像不自动更新运行中的 Kubernetes 工作负载。
+当前发布约定（2026-10-21）：每次代码修改校验后发布受影响镜像并核对仓库。用户本次要求升级并清理旧版本，三组件统一`192.168.68.1:5000/flink-web/{组件}:0.0.8`，替代0.0.7，不更新latest。新版本已发布，旧标签和历史manifest已清；[当前摘要及验证](#ai-一致性修复与版本发布2026-10-21)。发布镜像不自动更新实际K8s。
 
 2026-10-09 Operator 与日志兼容说明：版本识别支持 `1.9.0-xxxxx`、`1.9.1-xxxx` 等发行前缀。FlinkStateSnapshot 从 [Operator 1.10](https://flink.apache.org/2024/10/25/apache-flink-kubernetes-operator-1.10.0-release-announcement/) 引入，按实际 CRD 可用性处理，不单凭镜像版本假设存在。列表中部署与快照请求独立处理错误，快照 CRD 缺失兼容旧版状态，快照读取失败仅显示局部提示，已有作业状态与 YAML 仍返回；Savepoint 停止继续要求有效完成凭据，读取失败不直接删除作业。
 
 Pod 抽屉与详情页日志按需读取最新 10000 行，支持初始化/运行容器及上一实例，流式保留最后 4 MiB，总传输上限 64 MiB；依据 [Kubernetes Pod 日志接口](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/#read-log-log)。日志高亮时间戳与 ERROR/WARN/INFO 等级，支持行号与复制，并继续验证资源所有者链和 Secret 脱敏。需要已有 `pods/log` get、Pod 和所有者资源 get/list、日志脱敏所需 Secret get 授权。Kubernetes 401、403 与网络错误及平台授权失败在后端日志记录操作、资源路径、状态/错误码和必要身份，排查时区分平台角色/作业范围、CSRF 与 ServiceAccount RBAC；不输出请求正文、查询参数、令牌或上游错误正文。
 
 ~~~sh
-docker build -f backend/Dockerfile -t 192.168.68.1:5000/flink-web/app:0.0.7 .
-docker build -t 192.168.68.1:5000/flink-web/web:0.0.7 frontend
-docker build -t 192.168.68.1:5000/flink-web/downloader:0.0.7 downloader
+docker build -f backend/Dockerfile -t 192.168.68.1:5000/flink-web/app:0.0.8 .
+docker build -t 192.168.68.1:5000/flink-web/web:0.0.8 frontend
+docker build -t 192.168.68.1:5000/flink-web/downloader:0.0.8 downloader
 ~~~
 
 2026-10-05 发布验证：Docker Desktop linux/amd64 下 app、web、downloader 三个 Kylin SP3 镜像已重新构建并推送到 192.168.68.1:5000/flink-web，按用户要求覆盖 0.0.4 标签，不更新 latest，仓库摘要与本地一致。后端使用临时 SQLite 健康检查 UP，前端 HTTP 200、Nginx 配置及接口代理通过；下载器以非 root、只读根文件系统准备启动脚本；实际 Flink 1.20.5 主容器从自身镜像复制 Presto 插件并启动，/overview 返回 200。本地 MinIO 整目录复制与删除验证通过。已清理本次临时验证容器和网络，推送后清空 Docker 构建缓存，回收 2.505 GB，保留已标记镜像。未应用实际 Kubernetes 清单或修改运行作业；现场 Metaspace 故障需按下方说明调整作业内存并重新部署。SQL Runner 本次未发布。
@@ -640,11 +642,13 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 三个 0.0.7 已推送，经原 registry 的 localhost:15000 映射发布，再从指定 192.168.68.1:5000 核对 manifest 正文/响应摘要、config、全部压缩层大小/SHA-256 及解压 diff_id 与已测试镜像一致。app/web 为 UID/GID10001，downloader 为 UID9999，均 linux/amd64；不更新 latest。用户切换版本前 app 曾按旧约定发布同一 BES 内容到 0.0.4，最终交付统一采用 0.0.7。
 
+下表滚动维护当前镜像；本节其他0.0.7内容为历史，旧版已于2026-10-21清理。
+
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.7 | sha256:8553bb3812c75be9da5564e1c287cea16d5250ef0edcbdb702f2b268d01bd8e0 |
-| 192.168.68.1:5000/flink-web/web:0.0.7 | sha256:22ed9af63670ac852c24179a2dd0bde1261ad546ba7b678bf8ad75d4211c7663 |
-| 192.168.68.1:5000/flink-web/downloader:0.0.7 | sha256:5056ca21789d783a6fbaca695e5bb894f6d9335b91a18b691de9a8e1a5744353 |
+| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:11c9dc9373b83bfcc3b73656007874675ee43de356696ae37deec78cbea91cc1 |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:e4dbebea3aadd858ce319d2e1b36dcfbca3a1c41bedeae87a20069de90e57136 |
+| 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
 | --- | --- | --- | --- |
@@ -697,6 +701,14 @@ app/web覆盖0.0.7，当前manifest见上表；config分别为`sha256:a5430ce72c
 
 现场`flink-kubernetes-operator` namespace的单副本`StatefulSet/flink-web`保留原配置，沿用Always拉取策略执行滚动重启；`flink-web-0`两个容器Ready且imageID与上述manifest完全一致，站点登录和新助手可用。只创建一个临时SQL作业：JobManager CPU100导致真实FailedScheduling，经既有Qwen/Qwen3.5-27B分析/持续对话生成CPU0.25及SQL n+1建议，完整对比后显式选择stateless，保存/发布/dry-run/deploy受理，随后实际RUNNING/STABLE且Print输出从2开始。JM/TM各1024m、各0.25CPU、并行度1；没有启动原有五个作业。完整后续日志、清理及提交记录见[验收](agent/validation.md#作业-ai-持续诊断与确认修复2026-10-20)。
 
+## AI 新轮次与分类取证待发布（2026-10-20）
+
+工作分支`codex/ai-fresh-round-evidence`尚未提交或合并；后端及Web静态产物已本地构建，验证与产物摘要见[本轮验收](agent/validation.md#ai-新轮次与分类取证2026-10-20本地完成发布待恢复)。用户明确关闭K8s，本机Docker Engine也停止，实际未构建/验证/推送镜像、未更改运行工作负载，不更新此处已发布镜像摘要。无数据库迁移，PVC/数据库/主密钥保留且不备份。
+
+环境恢复后沿用正式Dockerfile，从干净Kylin底座构建app/web:0.0.7（不更新latest/downloader），先做隔离实际镜像登录/CSRF/分类取证/修复恢复与代理检查，再推送原仓库并核验manifest/config/全部层。`deploy/kubernetes/rbac.yaml`已准备namespace Role对`metrics.k8s.io`组`pods`资源的`get`补充；仅用于按需Pod CPU/内存查询，不授权跨namespace、节点或写入。真实metrics-server不存在时仍显示不可用，不主动安装组件。
+
+在已有平台更新授权下应用对应Role补充、重启单副本StatefulSet/flink-web并核对两容器Ready/imageID。现场只能串行验证一个作业，复核重启受理关窗/新空态、最新SQL和配置、故障方向分类采集、合法Secret引用、显式确认应用；临时资源清理后，再按AGENTS提交工作分支并合并本地master。实际Flink REST/JVM/GC/Checkpoint、Pod metrics与平台RBAC均以恢复后的现场结果为准。
+
 ## AI 抽屉调宽与继续对话（2026-10-20）
 
 仅web:0.0.7覆盖发布，manifest `sha256:a99f4339a462c1e314552c2528e2db47fcfdfae8eb6e705ab6f5825c0f7d7777`，config `sha256:7f31576a245f3dc546ea21b9cfb3e5976b5da0a6b8799a24645128ff865f9dc2`；逻辑311,009,868字节、压缩111,340,373字节、8层。从正式Dockerfile和干净Kylin底座构建，已验证命名context提供Nginx运行件与前端dist；非root/只读镜像32项相关页面及启动/DNS代理4项通过，经原localhost:15000映射推送后，从192.168.68.1:5000核验manifest正文/响应摘要、config、全部压缩层及解压diff_id一致。
@@ -708,3 +720,19 @@ app/web覆盖0.0.7，当前manifest见上表；config分别为`sha256:a5430ce72c
 本轮覆盖app/web 0.0.7，最新manifest见上表；app config为sha256:cf33d0956e7e149aa8511b887e50a96eabf95cb0849605a2c90542d9dc0f2d7a，web config为sha256:901606a1af348ce803ef54d1f875ba2782f19a6e832f8d392e19e62cb305e076。逻辑585,061,177/311,006,413字节，压缩282,331,663/111,339,775字节，10/8层。沿用正式Dockerfile及已验证命名context，从干净Kylin构建；只读非root镜像先通过登录、唯一总结保存/格式化大视图、宽度及删除，再经原localhost:15000映射发布，从192.168.68.1:5000核验manifest正文/响应摘要、config、全部压缩层大小/哈希和解压diff_id一致。downloader保持原0.0.7，latest和共享Runner未改。
 
 在用户既有授权下滚动重启单副本StatefulSet/flink-web，原PVC/数据库/主密钥保留且不做备份，无DDL迁移。规范总结与运行标记复用platform_records及主体索引，按需兼容旧总结；不迁移其他存储。实际仅运行一个临时SQL作业，真实模型完成共享总结分析/修复并经显式stateless应用达到RUNNING/STABLE；受理不清消息，成功后清旧排障、保留唯一总结，SQL入口展示同一总结。临时作业/SQL及4份AI正文/3条索引最终清零，原五作业版本不变。[完整验收](agent/validation.md#ai-阅读布局与统一总结2026-10-20)。
+
+## AI 一致性修复与版本发布（2026-10-21）
+
+本次按用户要求将app/web/downloader统一升级0.0.8并清旧版，包含10-20未发布的新轮次/分类取证与本轮六项优化。三组件沿用正式Dockerfile、干净Kylin底座和已验证命名context，未继承旧业务镜像；BES/Java17、非root/只读根、SQLite原路径、Parser/Runner保持。后端离线产物缺少任一精确Parser文件即失败；Python精简先验证专用标识及路径/全部链接，再删除构建文件。
+
+| 组件 | config SHA-256 | 逻辑字节 | 压缩层字节 | 层数 |
+| --- | --- | ---: | ---: | ---: |
+| app:0.0.8 | sha256:d5b6acbc893734f486c83681d9d8afcec1d395a5cdcad8a5e37cfe9826e9976a | 585,079,784 | 282,349,643 | 11 |
+| web:0.0.8 | sha256:40f487cccb2f1d4f9f8ed98f331dd8e7ba78deabd47c8081016cb42ec53a3772 | 311,020,285 | 111,343,592 | 8 |
+| downloader:0.0.8 | sha256:f35eed19bbc787181949acf926499be696614adabbb9c2b3e985a0362b8fbb2c | 392,503,512 | 146,379,002 | 5 |
+
+manifest见上方当前表。经原registry localhost:15000映射推送，从指定192.168.68.1:5000核对manifest正文/响应摘要、config、全部压缩层大小/SHA-256及解压diff_id。后端286项中285过/1可选MinIO跳过，最终Web35项、下载器Linux12项、双Parser/加密登录/AI持久化与清轮、代理恢复通过；实际K8s/Flink/模型为隔离协议替身，详细边界见[验收](agent/validation.md#ai-六项优化与版本发布2026-10-21)。
+
+清理三个0.0.7标签、19份旧manifest，原生GC在归属/保留引用核对后回收101个旧blob，共525,215,072字节；恢复原registry后47个保留digest全部复核，磁盘blob集合精确一致。其他flink/registry标签与摘要不变。本地旧组件标签/推送别名、4个新增私有缓存已清；保留正式0.0.8镜像、共享缓存/基础镜像。历史发布摘要仅作记录，不能再按旧标签/已清摘要拉取。
+
+实际K8s仍关闭，本次未重启平台或作业。恢复时应用更新的application.yaml（app/web及下载器环境值均0.0.8），并检查系统设置中已保存的全局下载器绑定：持久化绑定优先于环境值，若仍是0.0.7必须显式改为0.0.8后才启动作业。已有Pod中的旧initContainer配置也应随明确部署更新，不能只重启一个仍引用旧下载器的作业。metrics.k8s.io/pods只读RBAC补充已准备，未现场应用或安装metrics-server。单后端实例、原PVC/数据库/主密钥/共享Runner保留，不做PVC备份，现场继续一次只验证一个作业。

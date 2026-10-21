@@ -424,7 +424,7 @@ public class AiTaskServiceImpl implements AiTaskService {
   /** 只装配必要事实；诊断使用现有归属核验及脱敏日志服务。 */
   private ObjectNode prepare(ObjectNode input) {
     if(input.has("jobConversationVersion"))
-      return jobConversations.context(input.path("jobId").asText(),input.path("jobConversationVersion").asLong(),input.path("includeLogs").asBoolean()).put("mode",input.path("mode").asText("chat"));
+      return jobConversations.context(input.path("jobId").asText(),input.path("jobConversationVersion").asLong(),input.path("includeLogs").asBoolean(),input.path("evidenceCategory").asText("auto")).put("mode",input.path("mode").asText("chat"));
     String kind = input.path("kind").asText();
     var context =
         mapper
@@ -547,18 +547,24 @@ public class AiTaskServiceImpl implements AiTaskService {
 
   /** 作业会话和任务终态一起接受成功结果，取消与删除后不再补写。 */
   private void finish(String id, String state, String message, ObjectNode result, ObjectNode context) {
+    // 与创建/删除统一先取作业锁，再取任务锁；候选校验仍在持久化事务外。
+    synchronized (jobState.monitor()) {
     synchronized (taskLock) {
       var task = records.find("ai_tasks", id);
       if(task==null) return;
       if (!Set.of("QUEUED", "RUNNING").contains(task.path("state").asText())) return;
-      if (state.equals("SUCCEEDED") && result != null && task.has("conversationVersion"))
+      Runnable commitTask = () -> {
+        task.put("state", state).put("message", message);
+        if (result != null) task.set("result", result);
+        records.save("ai_tasks", id, task, task.path("revision").asLong());
+      };
+      if (state.equals("SUCCEEDED") && result != null && task.has("conversationVersion")) {
         conversations.complete(task.path("sqlId").asText(), task.path("conversationVersion").asLong(), id,
-            task.path("mode").asText(), task.path("sqlContextHash").asText(), context.path("conversation").path("summaryRevision").asLong(), result);
-      if(state.equals("SUCCEEDED") && result!=null && task.has("jobConversationVersion"))
-        jobConversations.complete(task.path("jobId").asText(),task.path("jobConversationVersion").asLong(),id,context,result);
-      task.put("state", state).put("message", message);
-      if (result != null) task.set("result", result);
-      records.save("ai_tasks", id, task, task.path("revision").asLong());
+            task.path("mode").asText(), task.path("sqlContextHash").asText(), context.path("conversation").path("summaryRevision").asLong(), result, commitTask);
+      } else if(state.equals("SUCCEEDED") && result!=null && task.has("jobConversationVersion")) {
+        jobConversations.complete(task.path("jobId").asText(),task.path("jobConversationVersion").asLong(),id,context,result,commitTask);
+      } else commitTask.run();
+    }
     }
   }
 
@@ -569,14 +575,14 @@ public class AiTaskServiceImpl implements AiTaskService {
         + "返回 reply:string(4000字符内),summary:string(8000字符内),risks:string[],evidence:string[],unknowns:string[],steps:string[]。"
         + "summary必须融合之前总结、近期全部消息及本轮结果，包括用户约束、已确认事实、推测、已排除原因、已尝试动作和待核对问题；不能丢失人工总结，不把推测当事实。"
         + "引用证据时间、Pod和配置字段；没有日志或资源时明确证据不足。退出码137不能独自证明SQL错误。"
-        + (mode.equals("repair")
-            ? "用户请求候选修复，证据足够时可增加changes:[{path:string,value:标量}]与sql:string(完整SQL，未修改则省略)。"
+        + "每轮重新取证，当前SQL和配置优先于历史总结；历史尝试不证明本轮仍是同一错误。平台{{secret:...}}和{{config:...}}是合法引用，提交时解析，不要当成缺失Secret或替换成展示脱敏值。"
+        + "unknowns仅列当前作业必要的证据缺口或必须由用户确认的业务条件，可选扩展放risks，不添加其他作业的待核对项。"
+        + "发现可确定的SQL或配置修复时，本轮直接增加changes:[{path:string,value:标量}]与sql:string(完整SQL，未修改则省略)，同时在reply明确列出修改和影响。证据不足才只分析并列出下一步需补采的类别。"
                 + "允许路径仅/spec/job/parallelism、/spec/taskManager/resource/memory、/spec/taskManager/resource/cpu、/spec/jobManager/resource/memory、/spec/jobManager/resource/cpu，"
                 + "以及/spec/flinkConfiguration/下taskmanager.memory.*、jobmanager.memory.*、taskmanager.numberOfTaskSlots、parallelism.default、execution.checkpointing.interval、execution.checkpointing.timeout、restart-strategy.*、table.exec.*。"
                 + "JSON指针的斜线须编码~1。不得修改身份、namespace、镜像、环境、凭据、程序入口、恢复路径和托管字段；未知必要参数列入unknowns，不编造补丁。"
                 + "SQL仅当上下文包含currentSql时提供，保留非空连接参数和用户业务口径；仅CREATE TABLE/VIEW、INSERT、SELECT/WITH/VALUES，不允许SET、DROP、ALTER、Catalog、函数或CTAS。"
-                + "说明影响、前置检查和恢复兼容风险；建议不等于验证成功。"
-            : "本轮只解释、澄清并更新总结，不输出changes或sql；用户可另行请求生成修复方案。");
+                + "说明影响、前置检查和恢复兼容风险；仅生成待审阅候选，未经用户确认不能声称已修改草稿或重启。";
   }
 
   /** 对话流程从全部历史提炼总结；未显式确认不得生成 SQL，不编造缺失连接参数。 */
