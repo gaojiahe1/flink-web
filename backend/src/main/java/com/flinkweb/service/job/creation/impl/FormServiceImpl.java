@@ -52,6 +52,10 @@ public class FormServiceImpl implements FormService {
     resource.put("apiVersion", "flink.apache.org/v1beta1").put("kind", "FlinkDeployment");
     resource.withObject("/metadata").put("name", name).put("namespace", properties.namespace());
     ObjectNode spec = resource.withObject("/spec");
+    if (input.has("logConfiguration")) {
+      if (input.path("logConfiguration").isEmpty()) spec.remove("logConfiguration");
+      else spec.set("logConfiguration", input.get("logConfiguration").deepCopy());
+    }
     if (input.has("deploymentMode")) spec.put("mode", input.path("deploymentMode").asText());
     if (input.has("tmReplicas")) {
       if (input.path("tmReplicas").isNull()) spec.withObject("/taskManager").remove("replicas");
@@ -167,8 +171,16 @@ public class FormServiceImpl implements FormService {
             || input.path("serviceAccount").asText().isBlank()))
       yaml.fail("serviceAccount: 请填写 ServiceAccount");
     for (String key :
-        java.util.List.of("flinkConfiguration", "podTemplate", "jmPodTemplate", "tmPodTemplate"))
+        java.util.List.of("flinkConfiguration", "logConfiguration", "podTemplate", "jmPodTemplate", "tmPodTemplate"))
       if (input.has(key) && !input.path(key).isObject()) yaml.fail(key + " 必须是 JSON 对象");
+    if (input.has("logConfiguration")) {
+      var fields = input.path("logConfiguration").fields();
+      while (fields.hasNext()) {
+        var field = fields.next();
+        if (field.getKey().isBlank() || !field.getValue().isTextual())
+          yaml.fail("logConfiguration 必须为文件名到文本的映射");
+      }
+    }
   }
 
   /** 显式空对象移除对应模板；未提交的字段保留原 YAML，角色模板互不覆盖。 */

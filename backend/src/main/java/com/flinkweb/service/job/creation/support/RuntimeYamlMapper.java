@@ -72,6 +72,10 @@ public class RuntimeYamlMapper {
     if (image.isEmpty()) yaml.fail("YAML 镜像及 Flink 版本必须匹配已登记的运行镜像");
     options.put("imageId", image.orElseThrow().path("id").asText());
     options.put("baseYaml", source);
+    if (spec.has("logConfiguration") && (!spec.path("logConfiguration").isObject()
+        || !java.util.stream.StreamSupport.stream(spec.path("logConfiguration").spliterator(), false).allMatch(JsonNode::isTextual)))
+      yaml.fail("logConfiguration 必须为文件名到文本的映射");
+    options.set("logConfiguration", spec.has("logConfiguration") ? spec.get("logConfiguration").deepCopy() : options.objectNode());
     if (spec.has("serviceAccount")) options.set("serviceAccount", spec.get("serviceAccount"));
     else options.remove("serviceAccount");
     options.set("flinkConfiguration", spec.path("flinkConfiguration").deepCopy());

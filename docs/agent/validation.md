@@ -1,5 +1,17 @@
 # 治理与记忆系统验收
 
+## 普通作业日志配置（2026-10-23）
+
+- 起点干净master `81926a4`，分支`codex/job-log-configuration`。核对用户所给Operator main日志文档（快照版本）以及release-1.14日志说明，按已有spec.logConfiguration契约实现，不修改Operator Helm或切换日志框架。新建普通表单默认INFO、Console/RollingFile双输出（${sys:log.file}、32MB、最多5个归档），默认折叠，支持原文编辑、填默认和显式移除。已有日志缺省不静默补默认；Logback及额外文件保留。
+- 后端FormService仅显式logConfiguration覆盖，空对象移除，非对象/非文本值拒绝，未传保留baseYaml；RuntimeYamlMapper从YAML回填日志并清掉陈旧表单值。JAR hydrate、模板、SQL/Session旧runtime从deploymentYaml/baseYaml读取，保留多文件原文；专用验证Session继续服务端固定协议。保存不部署，运行生效需用户显式发布/重启。
+- 完整后端package 287项：286通过、1可选MinIO跳过；包括日志渲染→保留→替换→清空→错误拒绝、Session YAML回填及既有实际提交保留、双精确Parser。类型/生产构建、受影响源码格式及Java注释/分层213类1273方法通过。
+- runtime-templates新增2项，扩展SQL/Session日志输入保存断言，8项全部通过；最终非root/只读Web镜像同8项及12项相关Session/SQL页面通过。扩展旧session-development全文件初轮19过/7失败，其中新测试镜像控件名称定位修正后通过；另6项（旧JAR表格删除/映射、SQL删除定位/文本、1100px拖动宽度）在未修改HEAD源码独立构建的基线页面逐项同样失败，本次未把既有问题改成通过或修改无关测试。这6项不在本轮通过数内。
+- 使用现有Flink1.20.5镜像的Log4j2.24.3/JDK11，加载前端实际默认properties，以普通Java日志事件验证控制台和${sys:log.file}同一标记双输出成功，未启动Flink作业。早期验证因辅助类编译目标17而不匹配镜像11，改为release11；隔离容器显式hostname后无DNS警告。未据此宣称现场Flink UI或日志轮转压力验收通过。
+- 最终非root/只读BES镜像真实加密登录/CSRF、日志完整渲染/JAR保存重读/Session YAML配置通过；截图保留本聊天可视化目录。Web启动/DNS恢复代理4项通过。按当前版本约定app/web:0.0.8覆盖发布，使用正式Dockerfile、干净Kylin底座和已验证命名context，未继承业务镜像。指定LAN仓库manifest正文/响应摘要、config、全部11/8层大小/SHA-256及解压diff_id核对一致。downloader/共享Runner未改。
+- 现场192.168.68.170:30080本轮4秒内连接不可用，未启动K8s或更新用户工作负载，未备份/更改PVC/数据库/主密钥。已存在作业需显式填入默认或自定义日志、保存后部署/重启，不能只更新平台镜像就认为作业日志配置生效。来源：[Operator日志](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.14/docs/operations/metrics-logging/)、[Flink1.20标准输出配置](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/config/#taskmanager-system-out-mode)。
+
+- 本轮临时镜像容器/网络、浏览器、两个预览进程、推送别名、中间Web镜像与3项新增私有构建缓存清理，保留原registry/基线共享缓存和正式镜像；独占脚本/测试库/日志目录及本轮截图副本收尾清理，唯一页面预览保留聊天可视化目录。
+
 ## AI 六项优化与版本发布（2026-10-21）
 
 - 续接`codex/ai-fresh-round-evidence`，起点master/HEAD均为`6614fd8`，保留前轮37项未提交改动并一并验证发布；用户本次明确要求修复六项、升级版本并清理旧版本，统一改为0.0.8，不更新latest。Docker按本次发布授权恢复，实际K8s仍关闭。

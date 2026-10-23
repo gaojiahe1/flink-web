@@ -2,6 +2,7 @@ import { confirmJarName } from './draft-name'
 import { test, expect, type Page } from '@playwright/test'
 import { stringify, parse } from 'yaml'
 import { hydrateJar } from '../src/modules/job-creation/jarForm'
+import { defaultLogConfiguration, runtimeLogConfiguration } from '../src/shared/utils/logConfiguration'
 
 const image = { id: 'flink', repository: 'registry.test/flink', version: '1.20.5', flinkVersion: '1.20.5' }
 const deployment = {
@@ -60,6 +61,34 @@ test('回填保留 serviceAccount、三处 PodTemplate 和资源字段', () => {
   expect(mapped.options.podTemplate).toEqual(deployment.spec.podTemplate)
   expect(mapped.options.jmMemory).toBe('2g')
 })
+
+test('日志回填保留多文件原文，旧运行参数读取原YAML且无配置不补默认', () => {
+  const value = structuredClone(deployment) as any
+  value.spec.logConfiguration = { 'logback-console.xml': '<configuration/>\n', 'custom.properties': 'key=value\n' }
+  expect(hydrateJar(stringify(value), [image]).options.logConfiguration).toEqual(value.spec.logConfiguration)
+  expect(runtimeLogConfiguration({ deploymentYaml: stringify(value) })).toEqual(value.spec.logConfiguration)
+  expect(runtimeLogConfiguration({})).toEqual({})
+})
+
+test('新JAR日志默认折叠，默认双输出可编辑并进入预览请求，移除可显式清空', async ({ page }) => {
+  const f = await fixture(page)
+  await page.goto('/#/jar/new')
+  await confirmJarName(page, 'log-defaults')
+  await page.getByRole('combobox', { name: '镜像版本', exact: false }).selectOption('flink')
+  const section=page.locator('[data-field="logConfiguration"]')
+  await expect(section).not.toHaveAttribute('open','')
+  await section.locator('summary').click()
+  const text=page.getByLabel('日志配置文件 log4j-console.properties', { exact:true })
+  await expect(text).toHaveValue(defaultLogConfiguration()['log4j-console.properties']!)
+  await text.fill('rootLogger.level = WARN\n')
+  await page.getByRole('button', { name: '本地验证与预览', exact:true }).click()
+  await expect.poll(()=>f.renders.length).toBe(1)
+  expect(f.renders[0].logConfiguration).toEqual({'log4j-console.properties':'rootLogger.level = WARN\n'})
+  await section.getByRole('button',{name:'移除日志覆盖'}).click()
+  await page.getByRole('button', { name: '本地验证与预览', exact:true }).click()
+  await expect.poll(()=>f.renders.length).toBe(2)
+  expect(f.renders[1].logConfiguration).toEqual({})
+})
 test('新 JAR 默认账号来自 namespace，模板可识别三处且默认折叠', async ({ page }) => {
   await fixture(page)
   await page.goto('/#/jar/new')
@@ -97,6 +126,8 @@ test('Session 保存三个 YAML 模板和自定义账号，重新编辑能回填
   await expect(page.getByLabel('ServiceAccount', { exact: false })).toHaveValue('team-flink')
   await page.getByLabel('集群名称', { exact: true }).fill('ordinary')
   await page.getByRole('combobox', { name: '运行镜像', exact: true }).selectOption('flink')
+  await page.locator('[data-field="logConfiguration"] summary').click()
+  await page.getByLabel('日志配置文件 log4j-console.properties', { exact:true }).fill('rootLogger.level=DEBUG\n')
   await page.getByLabel('ServiceAccount', { exact: false }).fill('session-account')
   for (const [key, label, text] of [['podTemplate', '共享', 'metadata:\n  labels:\n    shared: "yes"'], ['jmPodTemplate', 'JobManager', 'spec:\n  nodeSelector:\n    role: jm'], ['tmPodTemplate', 'TaskManager', 'spec:\n  nodeSelector:\n    role: tm']]) {
     await page.locator(`[data-field="${key}"] summary`).click()
@@ -105,6 +136,7 @@ test('Session 保存三个 YAML 模板和自定义账号，重新编辑能回填
   await page.getByRole('button', { name: '保存配置', exact: true }).click()
   await expect.poll(() => f.saves.length).toBe(1)
   expect(f.saves[0].runtime).toMatchObject({ serviceAccount: 'session-account', jmPodTemplate: { spec: { nodeSelector: { role: 'jm' } } }, tmPodTemplate: { spec: { nodeSelector: { role: 'tm' } } } })
+  expect(f.saves[0].runtime.logConfiguration).toEqual({'log4j-console.properties':'rootLogger.level=DEBUG\n'})
   await page.getByRole('button', { name: '配置', exact: true }).click()
   await expect(page.getByLabel('ServiceAccount', { exact: false })).toHaveValue('session-account')
   await page.locator('[data-field="tmPodTemplate"] summary').click()
@@ -149,6 +181,9 @@ test('SQL 复制三处模板并保存账号，格式错误切换页签后保留�
   await expect(page.getByLabel('作业名称', { exact: false })).toHaveValue('sql-pods')
   await page.getByRole('combobox', { name: '镜像版本', exact: true }).selectOption('flink')
   await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
+  await page.locator('[data-field="logConfiguration"] summary').click()
+  await page.getByRole('button',{name:'填入 Log4j2 默认配置'}).click()
+  await page.getByLabel('日志配置文件 log4j-console.properties',{exact:true}).fill('rootLogger.level=WARN\n')
   await page.getByLabel('从模板获取 PodTemplate').selectOption('template')
   await page.getByRole('button', { name: '应用 PodTemplate', exact: true }).click()
   await page.locator('[data-field="jmPodTemplate"] summary').click()
@@ -158,6 +193,7 @@ test('SQL 复制三处模板并保存账号，格式错误切换页签后保留�
   await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
   await expect.poll(() => f.saves.length).toBe(1)
   expect(f.saves[0].runtime).toMatchObject({ serviceAccount: 'sql-account', podTemplate: deployment.spec.podTemplate, jmPodTemplate: deployment.spec.jobManager.podTemplate, tmPodTemplate: deployment.spec.taskManager.podTemplate })
+  expect(f.saves[0].runtime.logConfiguration).toEqual({'log4j-console.properties':'rootLogger.level=WARN\n'})
   await editor.fill('spec: [bad')
   await page.getByRole('button', { name: '部署配置', exact: true }).click()
   await page.getByRole('button', { name: '部署配置', exact: true }).click()

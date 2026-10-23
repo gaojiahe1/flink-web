@@ -6,6 +6,11 @@ import SessionStateDetail from '../components/SessionStateDetail.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import MemoryInput from '../../../shared/components/form/MemoryInput.vue'
 import FlinkConfigEditor from '../../../shared/components/editor/FlinkConfigEditor.vue'
+import LogConfigurationFields from '../../../shared/components/editor/LogConfigurationFields.vue'
+import {
+  defaultLogConfiguration,
+  runtimeLogConfiguration,
+} from '../../../shared/utils/logConfiguration'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import PodStatusDrawer from '../../job-management/components/PodStatusDrawer.vue'
@@ -39,6 +44,7 @@ const defaults = () => ({
   validation: false,
   revision: 0,
   runtime: {
+    logConfiguration: defaultLogConfiguration(),
     baseYaml: '',
     deploymentYaml: '',
     deploymentMode: 'native',
@@ -154,6 +160,7 @@ function open(item?: SessionCluster) {
   const initial = defaults()
   Object.assign(form, initial, item ? JSON.parse(JSON.stringify(item)) : {})
   form.runtime = { ...initial.runtime, ...form.runtime }
+  if (item) form.runtime.logConfiguration = runtimeLogConfiguration(item.runtime)
   pods.value = {
     podTemplate: form.runtime.podTemplate || {},
     jmPodTemplate: form.runtime.jmPodTemplate || {},
@@ -614,6 +621,10 @@ onMounted(async () => {
             v-model="form.runtime.flinkConfiguration"
             :readonly="busy || uploading"
             @valid="configValid = $event"
+          />
+          <LogConfigurationFields
+            v-model="form.runtime.logConfiguration"
+            :readonly="busy || form.validation"
           />
           <PodTemplateFields
             v-model="pods"

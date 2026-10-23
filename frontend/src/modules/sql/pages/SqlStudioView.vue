@@ -22,6 +22,11 @@ import SqlVerificationResults from '../components/SqlVerificationResults.vue'
 import type { WizardTable } from '../../ai/utils/wizard'
 import type { AiResult } from '../../ai/api/ai'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import LogConfigurationFields from '../../../shared/components/editor/LogConfigurationFields.vue'
+import {
+  defaultLogConfiguration,
+  runtimeLogConfiguration,
+} from '../../../shared/utils/logConfiguration'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
 import {
@@ -52,6 +57,7 @@ type Catalog = {
   yaml?: string
 }
 type Runtime = {
+  logConfiguration: Record<string, string>
   baseYaml: string
   deploymentYaml: string
   serviceAccount: string
@@ -110,6 +116,7 @@ async function blurName() {
   }
 }
 const initialRuntime = (): Runtime => ({
+  logConfiguration: defaultLogConfiguration(),
   baseYaml: '',
   deploymentYaml: '',
   serviceAccount: systemInfo.value?.namespace ? systemInfo.value.namespace + '-flink' : '',
@@ -503,6 +510,7 @@ async function open(record: SqlDraft, force = false) {
     revision: record.revision,
   })
   Object.assign(runtime, initialRuntime(), JSON.parse(JSON.stringify(record.runtime)))
+  runtime.logConfiguration = runtimeLogConfiguration(record.runtime)
   if (record.jobId) runtime.workspaceId = record.jobId
   config.value = JSON.stringify(runtime.flinkConfiguration || {}, null, 2)
   pod.value = JSON.stringify(runtime.podTemplate || {}, null, 2)
@@ -1336,6 +1344,10 @@ watch(
             >
               应用 PodTemplate
             </button>
+            <LogConfigurationFields
+              v-model="runtime.logConfiguration"
+              :readonly="busy || !editable"
+            />
             <PodTemplateFields
               v-model="podOptions"
               :key="runtime.workspaceId"

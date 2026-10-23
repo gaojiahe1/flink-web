@@ -1,6 +1,6 @@
 # Flink Web 部署指南
 
-更新：2026-10-21。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-23。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
 当前三组件已发布0.0.8并清理旧版，包含AI新轮次/分类取证与六项优化；[发布和清理结果](#ai-一致性修复与版本发布2026-10-21)。实际K8s仍关闭，未部署清单/RBAC。恢复时先更新app/web及系统设置中持久化的下载器绑定至0.0.8，再串行验证一个作业。
 
@@ -646,8 +646,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:11c9dc9373b83bfcc3b73656007874675ee43de356696ae37deec78cbea91cc1 |
-| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:e4dbebea3aadd858ce319d2e1b36dcfbca3a1c41bedeae87a20069de90e57136 |
+| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:9e5e75d5a627d9773898b279ecb37c84febe228b960e2b46d969a0ae09cba6bc |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:3523c41171553232b40f5d6722d119cdcd8d43684c510314f89e56c1f03f3047 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -736,3 +736,12 @@ manifest见上方当前表。经原registry localhost:15000映射推送，从指
 清理三个0.0.7标签、19份旧manifest，原生GC在归属/保留引用核对后回收101个旧blob，共525,215,072字节；恢复原registry后47个保留digest全部复核，磁盘blob集合精确一致。其他flink/registry标签与摘要不变。本地旧组件标签/推送别名、4个新增私有缓存已清；保留正式0.0.8镜像、共享缓存/基础镜像。历史发布摘要仅作记录，不能再按旧标签/已清摘要拉取。
 
 实际K8s仍关闭，本次未重启平台或作业。恢复时应用更新的application.yaml（app/web及下载器环境值均0.0.8），并检查系统设置中已保存的全局下载器绑定：持久化绑定优先于环境值，若仍是0.0.7必须显式改为0.0.8后才启动作业。已有Pod中的旧initContainer配置也应随明确部署更新，不能只重启一个仍引用旧下载器的作业。metrics.k8s.io/pods只读RBAC补充已准备，未现场应用或安装metrics-server。单后端实例、原PVC/数据库/主密钥/共享Runner保留，不做PVC备份，现场继续一次只验证一个作业。
+
+
+## 普通作业日志配置（2026-10-23）
+
+JAR/SQL/普通Session提供折叠日志编辑，新表单含INFO/控制台/滚动文件默认；已有配置不自动覆盖，保存后需明确部署/重启。普通表单自定义日志与专用SQL验证Session固定协议分离。Print/System.out默认不是文件日志，需要转入时显式配置taskmanager.system-out.mode=LOG。
+
+app/web继续0.0.8覆盖发布，manifest见当前表；config分别为sha256:f41fc450b233658f0693f6424fd48b1151beebc838c05261f86706edcdded34d、sha256:c622f3c7ed124f9da19e6899b212a54340d6a841fd9b404bffe860df22148653。正式Dockerfile/干净Kylin底座/验证命名context构建，非root只读镜像验证后推送，经指定仓库核验manifest/config/全部11与8层大小、摘要及解压内容。downloader摘要不变。
+
+现场站点本轮不可达，未更新实际K8s；已有作业需要自行选择默认或自定义日志、保存并部署/重启才生效。原PVC/数据库/主密钥/Runner不变、不备份PVC。[测试范围及既有失败说明](agent/validation.md#普通作业日志配置2026-10-23)。

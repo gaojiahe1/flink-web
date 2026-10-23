@@ -260,3 +260,8 @@ SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数�
 [知识索引](agent/INDEX.md) 按业务关键词定位模块、需求和当前代码；本说明继续维护完整业务规则，部署参数和镜像事实仍在部署指南。知识库不保存整段历史聊天，任务结束仅更新受影响的条目。
 
 2026-10-12 状态地址修复：S3 默认值与作业专属状态清理统一读取 application.yml 中的 platform.operator.state-root，即 FLINK_WEB_STATE_ROOT；保留桶后完整路径前缀。新建/显式重新启用状态存储时使用该根目录生成 Checkpoint、Savepoint、HA 地址，不自动迁移或重写已有草稿/运行作业的手工目录。
+
+
+### 普通作业日志配置（2026-10-23）
+
+JAR、SQL、普通Session表单统一提供默认折叠的日志配置区，写入spec.logConfiguration。新建默认Log4j2 INFO、控制台和滚动文件双输出，文件为${sys:log.file}、32MB、最多5个归档；已有草稿/模板/YAML日志原文与额外文件保留，原来省略时不自动覆盖，可显式填入默认或移除覆盖。表单/YAML回填、保存/发布沿用既有流程，保存不自动部署；专用SQL验证Session的固定日志协议不变。日志页读取文件，Print/System.out默认输出在stdout；需要转入日志时可在Flink配置中显式设置taskmanager.system-out.mode=LOG。默认Log4j2适用于对应镜像的日志框架，已有Logback XML保留，不自动切换框架。

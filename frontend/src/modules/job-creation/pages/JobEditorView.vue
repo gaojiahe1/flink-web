@@ -15,6 +15,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { parseDocument } from 'yaml'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import LogConfigurationFields from '../../../shared/components/editor/LogConfigurationFields.vue'
+import {
+  defaultLogConfiguration,
+  readLogConfiguration,
+} from '../../../shared/utils/logConfiguration'
 import PodTemplateFields from '../../../shared/components/editor/PodTemplateFields.vue'
 import ServiceAccountField from '../../../shared/components/form/ServiceAccountField.vue'
 import { emptyPodTemplates, readPodTemplates } from '../../../shared/utils/podTemplates'
@@ -47,6 +52,7 @@ const form = reactive<DraftInput>({
   revision: 0,
 })
 const options = reactive({
+  logConfiguration: defaultLogConfiguration(),
   serviceAccount: '',
   templateId: '',
   imageId: '',
@@ -365,6 +371,7 @@ function applyTemplate() {
       if (method.value === 'form') {
         const spec = doc.toJS()?.spec || {}
         pods.value = readPodTemplates(spec)
+        options.logConfiguration = readLogConfiguration(spec)
         if (spec.serviceAccount) options.serviceAccount = spec.serviceAccount
         baseYaml.value = item.yaml
         config.value = { ...(spec.flinkConfiguration || {}) }
@@ -753,6 +760,7 @@ async function save(deploy = false) {
             :readonly="busy"
             @valid="configValid = $event"
           />
+          <LogConfigurationFields v-model="options.logConfiguration" :readonly="busy" />
           <PodTemplateFields v-model="pods" :readonly="busy" @valid="podValid = $event" />
         </section>
       </template>

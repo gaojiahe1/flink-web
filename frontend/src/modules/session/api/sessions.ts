@@ -17,6 +17,7 @@ export interface SessionCluster {
   queriedAt?: string
   uid?: string
   runtime: {
+    logConfiguration?: Record<string, string>
     baseYaml?: string
     deploymentYaml?: string
     deploymentMode?: string

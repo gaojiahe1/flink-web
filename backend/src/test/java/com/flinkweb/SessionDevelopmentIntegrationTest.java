@@ -215,6 +215,7 @@ class SessionDevelopmentIntegrationTest {
     var converted =
         sessions.configuration(new SessionRequest("yaml-session", "", false, options, 0));
     assertThat(converted.at("/runtime/tmReplicas").asInt()).isEqualTo(3);
+    assertThat(converted.at("/runtime/logConfiguration/log4j-console.properties").asText()).isEqualTo("rootLogger.level=INFO");
     var saved =
         sessions.save("yaml-session", new SessionRequest("yaml-session", "", false, options, 0));
     sessions.start("yaml-session", saved.path("revision").asLong());
@@ -251,6 +252,25 @@ class SessionDevelopmentIntegrationTest {
       var request = new SessionRequest("bad-replicas", "", false, options, 0);
       assertThatThrownBy(() -> sessions.configuration(request)).hasMessageContaining("正整数");
     }
+  }
+
+  /** 日志文件原文往返保留，显式替换和清空生效，非文本映射不能生成部署。 */
+  @Test
+  void editableLogConfigurationPreservesReplacesAndRemovesOverrides() {
+    var forms=applicationContext.getBean(com.flinkweb.service.job.creation.FormService.class);
+    var input=runtime().put("name","log-config").put("upgradeMode","stateless");
+    input.putObject("logConfiguration").put("log4j-console.properties","rootLogger.level = INFO\nappender.file.fileName = ${sys:log.file}\n").put("custom.properties","keep=true\n");
+    var rendered=forms.render(input);
+    var first=yaml.parse(rendered.path("yaml").asText()).at("/spec/logConfiguration");
+    assertThat(first).isEqualTo(input.path("logConfiguration"));
+    input.put("baseYaml",rendered.path("yaml").asText());input.remove("logConfiguration");
+    assertThat(yaml.parse(forms.render(input).path("yaml").asText()).at("/spec/logConfiguration")).isEqualTo(first);
+    input.putObject("logConfiguration").put("logback-console.xml","<configuration/>\n");
+    assertThat(yaml.parse(forms.render(input).path("yaml").asText()).at("/spec/logConfiguration/logback-console.xml").asText()).isEqualTo("<configuration/>\n");
+    input.putObject("logConfiguration");
+    assertThat(yaml.parse(forms.render(input).path("yaml").asText()).at("/spec/logConfiguration").isMissingNode()).isTrue();
+    input.putObject("logConfiguration").put("bad.properties",12);
+    assertThatThrownBy(()->forms.render(input)).hasMessageContaining("logConfiguration");
   }
 
   /** dry-run 的整数规范化不是配置丢失，真正裁剪仍阻止创建且不泄漏字段值。 */

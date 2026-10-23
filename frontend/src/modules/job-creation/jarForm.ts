@@ -1,4 +1,5 @@
 import { parseDocument } from 'yaml'
+import { readLogConfiguration } from '../../shared/utils/logConfiguration'
 import { readPodTemplates } from '../../shared/utils/podTemplates'
 type Image = { id: string; repository?: string; version?: string; flinkVersion?: string }
 export function hydrateJar(
@@ -88,6 +89,7 @@ export function hydrateJar(
   return {
     options: {
       serviceAccount: spec.serviceAccount || '',
+      logConfiguration: readLogConfiguration(spec),
       ...readPodTemplates(spec),
       templateId: '',
       imageId: image.id,
