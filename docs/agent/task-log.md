@@ -4,6 +4,8 @@
 
 用户选择 JDBC+Hive，并要求 Catalog 页面整体重设计；三栏管理及 SQL 共用浏览、运行依赖、Hive XML、库表/函数、引用保护与多目录初始化已接入。另完成此前 UDF/SET/DROP、差异高亮与日志需求。真实 PostgreSQL及串行单个Flink1.20.5作业通过，Hive为官方Thrift TCP与XML边界验证。发布 app/web0.0.8，平台已同步，未改共享Runner/PVC/密钥。具体测试与未验证范围见 [验收](validation.md#catalogudfsql与日志2026-10-25)。
 
+功能提交`06bfb40`已快进合并本地master，无冲突/新增差异，分支树一致；本轮独占临时产物清理，截图保留，源码Git未推送。新Runner以独立文件发布，原共享Runner未覆盖，需在SQL部署配置中显式选择。
+
 更新：2026-10-25。只保存定位线索。验证结论按每条日期与范围理解，历史报告不代表本次复测。
 
 ## 2026-10-25 AI与SQL视口布局

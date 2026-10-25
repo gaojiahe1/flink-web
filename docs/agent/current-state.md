@@ -1,6 +1,6 @@
 # 当前状态
 
-2026-10-25最新：Catalog 管理页和 SQL 浏览入口已重设计，优先 JDBC/Hive；UDF 单包多函数、受控 SET/RESET/DDL、SQL/YAML 高亮对比及 JM/TM 日志修复已实现。已发布 app/web:0.0.8并同步 Kubernetes，downloader不变。真实 PostgreSQL与一个 Flink1.20.5作业联调通过，目标 Hive 服务未提供，Hive当前按协议/配置边界验证。详情见 [本轮验收](validation.md#catalogudfsql与日志2026-10-25) 和 [Catalog模块](modules/catalog-workbench.md)。代码提交与本地master合并收尾中，下方为历史报告。
+2026-10-25最新：Catalog 管理页和 SQL 浏览入口已重设计，优先 JDBC/Hive；UDF 单包多函数、受控 SET/RESET/DDL、SQL/YAML 高亮对比及 JM/TM 日志修复已实现。已发布 app/web:0.0.8并同步 Kubernetes，downloader不变。真实 PostgreSQL与一个 Flink1.20.5作业联调通过，目标 Hive 服务未提供，Hive当前按协议/配置边界验证。详情见 [本轮验收](validation.md#catalogudfsql与日志2026-10-25) 和 [Catalog模块](modules/catalog-workbench.md)。功能提交`06bfb40`已快进合并本地master，无冲突或新增差异；本轮独占临时资源已清理，源码Git未推送。下方为历史报告。
 
 布局修复`b55ad26`验证发布后已快进合并本地master，无冲突/新增差异；工作分支内容一致，临时资源已清理，源码Git未推送。
 
