@@ -44,7 +44,7 @@ const savepointPath = ref(''),
   acceptImpact = ref(false)
 const application = ref<AiJobApplication>()
 const body = ref<HTMLElement>(),
-  split = ref(42),
+  split = ref(55),
   largeView = ref<'summary' | 'evidence' | 'comparison' | 'current'>(),
   stacked = ref(false)
 const drawerWidth = ref(1180),
@@ -126,7 +126,7 @@ function resizeKey(event: KeyboardEvent) {
   event.preventDefault()
   split.value =
     event.key === 'Home'
-      ? 42
+      ? 55
       : Math.max(28, Math.min(72, split.value + (event.key === 'ArrowLeft' ? -3 : 3)))
 }
 const pendingApplication = ref<{ planId: string; input: Record<string, unknown> }>()
@@ -436,58 +436,69 @@ async function continueApplication() {
         <X :size="19" />
       </button>
     </header>
-    <p v-if="displayedError" class="notice error ai-prewrap ai-job-current-error">
-      <small>{{
-        conversation?.evidence ? '本轮重新采集的运行异常' : '列表上次查询的运行异常；发送后重新取证'
-      }}</small
-      ><br />{{ displayedError }}
-    </p>
-    <div class="ai-job-settings">
-      <AiModelSelect
-        v-model="modelId"
-        purpose="diagnosis"
-        :disabled="working"
-        @selected="model = $event"
-      />
-      <label v-if="canReadLogs" class="ai-check"
-        ><input v-model="includeLogs" :disabled="working" type="checkbox" />包含容器日志<HelpTip
-          text="按本轮需要读取有权访问的JM/TM及故障容器日志，最多四份，各取末尾600行，再提取异常附近和最后输出；并非完整日志。"
-      /></label>
-      <label v-if="model?.external" class="ai-check ai-external"
-        ><input
-          v-model="allowExternal"
+    <div class="ai-job-context">
+      <details v-if="displayedError" class="notice error ai-job-current-error">
+        <summary :title="displayedError">
+          {{
+            conversation?.evidence
+              ? '本轮重新采集的运行异常'
+              : '列表上次查询的运行异常；发送后重新取证'
+          }}
+          · {{ displayedError }}
+        </summary>
+        <pre>{{ displayedError }}</pre>
+      </details>
+      <div class="ai-job-settings">
+        <AiModelSelect
+          v-model="modelId"
+          purpose="diagnosis"
           :disabled="working"
-          type="checkbox" />允许本次发送脱敏上下文<HelpTip
-          text="本轮向所选外部模型发送本作业总结、近期对话、当前SQL、脱敏配置、事件和所选取证方向的数据；勾选后附带受限容器日志，每轮单独确认。"
-      /></label>
-    </div>
-    <label class="ai-job-baseline"
-      >本轮取证方向
-      <select v-model="evidenceCategory" :disabled="working" aria-label="本轮取证方向">
-        <option value="auto">按当前报错自动判断</option>
-        <option value="configuration">SQL / 部署配置</option>
-        <option value="pods">Pod 配置与事件</option>
-        <option value="podMetrics">Pod 资源用量</option>
-        <option value="flinkExceptions">Flink 异常</option>
-        <option value="flinkCheckpoints">快照 / Checkpoint</option>
-        <option value="flinkMetrics">JVM / GC 指标</option>
-        <option v-if="canReadLogs" value="flinkLogs">Flink 日志</option>
-      </select>
-    </label>
-    <p v-if="conversation?.current" class="muted ai-job-baseline">
-      当前草稿 r{{ conversation.current.baseline.jobRevision
-      }}<template v-if="conversation.current.baseline.sqlRevision !== undefined">
-        · SQL r{{ conversation.current.baseline.sqlRevision }}</template
+          @selected="model = $event"
+        />
+        <label v-if="canReadLogs" class="ai-check"
+          ><input v-model="includeLogs" :disabled="working" type="checkbox" />包含容器日志<HelpTip
+            text="按本轮需要读取有权访问的JM/TM及故障容器日志，最多四份，各取末尾600行，再提取异常附近和最后输出；并非完整日志。"
+        /></label>
+        <label v-if="model?.external" class="ai-check ai-external"
+          ><input
+            v-model="allowExternal"
+            :disabled="working"
+            type="checkbox" />允许本次发送脱敏上下文<HelpTip
+            text="本轮向所选外部模型发送本作业总结、近期对话、当前SQL、脱敏配置、事件和所选取证方向的数据；勾选后附带受限容器日志，每轮单独确认。"
+        /></label>
+        <label class="ai-job-baseline"
+          >本轮取证方向
+          <select v-model="evidenceCategory" :disabled="working" aria-label="本轮取证方向">
+            <option value="auto">按当前报错自动判断</option>
+            <option value="configuration">SQL / 部署配置</option>
+            <option value="pods">Pod 配置与事件</option>
+            <option value="podMetrics">Pod 资源用量</option>
+            <option value="flinkExceptions">Flink 异常</option>
+            <option value="flinkCheckpoints">快照 / Checkpoint</option>
+            <option value="flinkMetrics">JVM / GC 指标</option>
+            <option v-if="canReadLogs" value="flinkLogs">Flink 日志</option>
+          </select>
+        </label>
+      </div>
+      <p v-if="conversation?.current" class="muted ai-job-baseline">
+        当前草稿 r{{ conversation.current.baseline.jobRevision
+        }}<template v-if="conversation.current.baseline.sqlRevision !== undefined">
+          · SQL r{{ conversation.current.baseline.sqlRevision }}</template
+        >
+        <button class="text-button" :disabled="working" @click="reload">重新核对最新配置</button>
+        <button class="text-button" :disabled="working" @click="largeView = 'current'">
+          查看当前 SQL / YAML
+        </button>
+      </p>
+      <p
+        v-if="conversation?.round?.reason"
+        class="muted ai-job-baseline ai-job-round"
+        :title="conversation.round.reason"
       >
-      <button class="text-button" :disabled="working" @click="reload">重新核对最新配置</button>
-      <button class="text-button" :disabled="working" @click="largeView = 'current'">
-        查看当前 SQL / YAML
-      </button>
-    </p>
-    <p v-if="conversation?.round?.reason" class="muted ai-job-baseline">
-      {{ conversation.round.reason }}
-    </p>
-    <p v-if="conversation?.proposalWarning" class="notice">{{ conversation.proposalWarning }}</p>
+        {{ conversation.round.reason }}
+      </p>
+      <p v-if="conversation?.proposalWarning" class="notice">{{ conversation.proposalWarning }}</p>
+    </div>
     <p v-if="loading" class="muted" role="status">
       <LoaderCircle :size="14" class="ai-job-spin" /> 正在恢复本作业对话…
     </p>
@@ -895,7 +906,7 @@ async function continueApplication() {
   box-shadow: -5px 0 24px #1522381a;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   overflow: hidden;
 }
 .ai-analysis-drawer::backdrop {
@@ -952,18 +963,46 @@ async function continueApplication() {
   margin: 0;
 }
 .ai-job-heading p {
-  margin: 5px 0 0;
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+.ai-job-context {
+  flex: none;
+  max-height: min(220px, 32dvh);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .ai-job-settings {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 20px;
+  gap: 6px 14px;
   flex: none;
 }
 .ai-job-settings :deep(.ai-model-field) {
-  flex: 1;
-  min-width: 220px;
+  flex: 0 1 360px;
+  min-width: min(280px, 100%);
+  margin: 0;
+  align-items: center;
+}
+.ai-job-settings :deep(.ai-model-field label) {
+  font-size: 12px;
+}
+.ai-job-settings > .ai-job-baseline {
+  flex: 0 1 240px;
+  font-weight: 400;
+}
+.ai-job-round {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-job-context > .notice {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 .ai-external {
   flex: none;
@@ -984,12 +1023,13 @@ async function continueApplication() {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   flex: 1;
   gap: 0;
 }
 .ai-job-has-plan {
-  grid-template-columns: minmax(0, var(--chat-width, 42%)) 14px minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--chat-width, 55%)) 14px minmax(0, 1fr);
 }
 .ai-job-resizer {
   cursor: col-resize;
@@ -1038,13 +1078,13 @@ async function continueApplication() {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  gap: 12px;
+  gap: 8px;
 }
 .ai-job-summary,
 .ai-job-evidence {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 7px 10px;
   font-size: 12px;
   overflow: auto;
   max-height: 120px;
@@ -1070,6 +1110,9 @@ async function continueApplication() {
 .ai-job-consent {
   display: block;
   margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .ai-job-consent p {
   margin: 0 0 8px;
@@ -1084,13 +1127,14 @@ async function continueApplication() {
 .ai-job-messages {
   overflow: auto;
   flex: 1;
-  min-height: 120px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 4px 3px;
 }
 .ai-job-message {
+  flex: none;
   background: var(--color-background);
   border-radius: 8px;
   padding: 10px 13px;
@@ -1136,13 +1180,20 @@ async function continueApplication() {
 }
 .ai-job-input {
   border-top: 1px solid var(--line);
-  padding-top: 12px;
-  flex: none;
+  padding-top: 8px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 58%;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 .ai-job-input label {
   font-size: 12px;
+  margin: 0 0 4px;
+  line-height: 1.5;
 }
 .ai-job-input textarea {
+  display: block;
   width: 100%;
   min-height: 68px;
   max-height: 150px;
@@ -1235,17 +1286,37 @@ async function continueApplication() {
   display: block;
   flex: none;
   border-top: 1px solid var(--line);
-  padding-top: 8px;
+  padding: 6px 0 0;
+  max-height: 90px;
+  overflow: auto;
+  font-size: 11px;
+}
+.ai-job-footer .notice {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 .ai-job-footer p {
   margin: 4px 0;
 }
 .ai-job-current-error {
   display: block;
-  max-height: 80px;
-  overflow: auto;
   flex: none;
   margin: 0;
+}
+.ai-job-current-error summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.ai-job-current-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 90px;
+  overflow: auto;
+  margin: 6px 0 0;
+  font: inherit;
 }
 .ai-job-spin {
   animation: ai-job-spin 1s linear infinite;
@@ -1266,10 +1337,12 @@ async function continueApplication() {
 }
 .ai-drawer-narrow .ai-job-has-plan {
   grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
   overflow: auto;
 }
 .ai-drawer-narrow .ai-job-has-plan .ai-job-conversation {
-  min-height: 520px;
+  height: max(420px, 65dvh);
+  flex: none;
 }
 .ai-drawer-narrow .ai-job-plan {
   overflow: visible;

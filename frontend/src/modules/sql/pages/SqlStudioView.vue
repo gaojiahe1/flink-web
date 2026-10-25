@@ -218,7 +218,9 @@ function resizeWithKeys(event: KeyboardEvent) {
 function resetInspector() {
   clampInspector(
     sideTab.value === 'ai'
-      ? ((workbench.value?.clientWidth || 1000) - 50) * (aiStep.value === 1 ? 0.7 : 0.3)
+      ? aiStep.value === 1
+        ? ((workbench.value?.clientWidth || 1000) - 50) * 0.7
+        : Math.min(360, ((workbench.value?.clientWidth || 1000) - 50) * 0.3)
       : Math.min(380, Math.max(300, window.innerWidth * 0.26)),
   )
 }

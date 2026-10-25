@@ -498,15 +498,22 @@
   vertical-align: top;
 }
 /* 需求向导：确认面板在左，保留现有 SQL 编辑/检查/保存流程在右。 */
+.studio-title {
+  margin-bottom: 10px;
+  align-items: center;
+}
+.studio-title .eyebrow {
+  display: none;
+}
 .sql-wizard-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  padding: 12px 16px;
+  padding: 6px 12px;
   background: white;
   border: 1px solid var(--line);
   border-radius: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 .sql-wizard-steps button {
   display: flex;
@@ -537,8 +544,8 @@
 }
 .sql-workbench.with-inspector.ai-guided {
   grid-template-columns: minmax(300px, var(--inspector-width)) 8px minmax(260px, 1fr) 42px;
-  height: calc(100vh - 248px);
-  min-height: 480px;
+  height: calc(100dvh - 200px);
+  min-height: 400px;
 }
 .ai-guided > .sql-explorer {
   display: none;
@@ -612,6 +619,30 @@
   .sql-wizard-steps button {
     gap: 5px;
     font-size: 11px;
+  }
+}
+
+/* 全屏必须覆盖向导及普通模式的高度，网格子项在容器内滚动。 */
+.sql-workbench.studio-maximized,
+.sql-workbench.with-inspector.ai-guided.studio-maximized {
+  height: calc(100dvh - 24px);
+  min-height: 0;
+  max-height: calc(100dvh - 24px);
+  grid-template-rows: minmax(0, 1fr);
+}
+.studio-maximized .sql-center > .code-editor {
+  min-height: 0;
+}
+@media (max-width: 1000px) {
+  .sql-workbench.with-inspector.ai-guided.studio-maximized {
+    grid-template-rows: minmax(240px, 45%) minmax(300px, 1fr);
+    overflow: auto;
+  }
+  .studio-maximized.ai-guided > .sql-center {
+    min-height: 300px;
+  }
+  .studio-maximized.ai-guided.sql-preview-collapsed {
+    grid-template-rows: minmax(0, 1fr);
   }
 }
 @media (max-width: 600px) {

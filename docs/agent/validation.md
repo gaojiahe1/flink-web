@@ -1,5 +1,12 @@
 # 治理与记忆系统验收
 
+## AI 与 SQL 视口布局（2026-10-25）
+
+- 起点干净master，工作分支`codex/ai-layout-viewport`；按截图核对现有样式。全屏的普通向导高度选择器优先级更高，固定定位仍只占部分屏幕；现覆盖高度/min-height并限制网格子项滚动，1920×1080和1280×720反复进出验证。SQL审阅默认360px以内，保留拖动，标题/步骤收紧。
+- 作业AI模型不再拉满整行，取证方向并排；长异常默认单行折叠、可展开原文，顶部有高度预算。显式`minmax(0,1fr)`网格行阻止内容顶开对话区域；消息不互相挤压，输入/授权可内部滚动，页脚错误独立限高。55/45默认分栏顶部对齐，窄屏可滚动到应用。仅调整前端，不修改任务权限、外发确认和保存/重启边界。
+- `npm run build`类型/生产构建通过；Chromium使用本机Chrome。`ai-assistant`、`ai-conversation`、`ai-job`38项通过；正式Dockerfile、干净Kylin及已验证Nginx依赖构建的非root/只读最终镜像同38项通过，代理启动/上线/重建等4类通过。新增覆盖短屏长异常、授权位置、失败解除禁用并成功继续对话、分栏、反复全屏和缩窄后操作可达；测试夹具补齐取证时间后专项1项再过。真实厂商失败根因未证实，不将协议替身回归称为现场验收。
+- web:0.0.8发布manifest `sha256:68c5bf01c35bd4292af5f049ba5df450e233d536659f6ea38d19bc4444e6a077`，config `sha256:b4f8bbc806a91a03cb0eaea4e84b8f10fcf52893430fff6ae63b6c8d2ee52efe`。指定192.168.68.1:5000核对manifest正文/响应摘要/config、8层压缩大小/哈希和解压diff_id一致；逻辑311026662字节、压缩111345969字节。app/downloader/latest保持，现场30080端口不可达，未更新K8s/作业/PVC。独占测试容器、推送别名及预览进程已清理；新增1项缓存属于正式镜像共享层，保留。
+
 ## 普通作业日志配置（2026-10-23）
 
 - 起点干净master `81926a4`，分支`codex/job-log-configuration`。核对用户所给Operator main日志文档（快照版本）以及release-1.14日志说明，按已有spec.logConfiguration契约实现，不修改Operator Helm或切换日志框架。新建普通表单默认INFO、Console/RollingFile双输出（${sys:log.file}、32MB、最多5个归档），默认折叠，支持原文编辑、填默认和显式移除。已有日志缺省不静默补默认；Logback及额外文件保留。

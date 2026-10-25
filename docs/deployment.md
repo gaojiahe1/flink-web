@@ -647,7 +647,7 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
 | 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:9e5e75d5a627d9773898b279ecb37c84febe228b960e2b46d969a0ae09cba6bc |
-| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:3523c41171553232b40f5d6722d119cdcd8d43684c510314f89e56c1f03f3047 |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:68c5bf01c35bd4292af5f049ba5df450e233d536659f6ea38d19bc4444e6a077 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -745,3 +745,7 @@ JAR/SQL/普通Session提供折叠日志编辑，新表单含INFO/控制台/滚�
 app/web继续0.0.8覆盖发布，manifest见当前表；config分别为sha256:f41fc450b233658f0693f6424fd48b1151beebc838c05261f86706edcdded34d、sha256:c622f3c7ed124f9da19e6899b212a54340d6a841fd9b404bffe860df22148653。正式Dockerfile/干净Kylin底座/验证命名context构建，非root只读镜像验证后推送，经指定仓库核验manifest/config/全部11与8层大小、摘要及解压内容。downloader摘要不变。
 
 现场站点本轮不可达，未更新实际K8s；已有作业需要自行选择默认或自定义日志、保存并部署/重启才生效。原PVC/数据库/主密钥/Runner不变、不备份PVC。[测试范围及既有失败说明](agent/validation.md#普通作业日志配置2026-10-23)。
+
+### AI与SQL视口布局（2026-10-25）
+
+仅web继续覆盖发布0.0.8，manifest见当前表，config `sha256:b4f8bbc806a91a03cb0eaea4e84b8f10fcf52893430fff6ae63b6c8d2ee52efe`。正式Dockerfile与干净Kylin构建，非root只读最终镜像38项相关页面及代理4类通过，指定仓库manifest/config/全部8层压缩与解压摘要核对一致。app/downloader/latest不变；现场30080端口不可达，未更新实际K8s或启动作业。更新已有工作负载后才会显示本轮布局；验证范围见[验收](agent/validation.md#ai-与-sql-视口布局2026-10-25)。

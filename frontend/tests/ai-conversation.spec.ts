@@ -96,6 +96,32 @@ async function discuss(page: Page, text = '按订单统计已支付金额') {
   await expect(panel.getByRole('button', { name: /确认总结并.*SQL/ })).toBeEnabled()
 }
 
+test('SQL 审阅全屏填满视口、侧栏紧凑，退出及反复切换保留布局', async ({ page }) => {
+  const f = await fixture(page), panel = await openAssistant(page)
+  await discuss(page)
+  await panel.getByRole('button', { name: /确认总结并生成 SQL/ }).click()
+  await expect(page.getByRole('textbox', { name: 'AI 建议 SQL', exact: true })).toBeVisible()
+  for (const size of [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(size)
+    const nav = (await page.getByRole('navigation', { name: 'SQL 需求向导' }).boundingBox())!
+    expect(nav.y + nav.height).toBeLessThan(200)
+    for (let i = 0; i < 2; i++) {
+      await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
+      const workbench = (await page.locator('.sql-workbench').boundingBox())!
+      expect(workbench.y).toBe(12)
+      expect(workbench.height).toBe(size.height - 24)
+      expect((await panel.boundingBox())!.width).toBeLessThanOrEqual(400)
+      const editor = (await page.getByRole('textbox', { name: 'AI 建议 SQL', exact: true }).boundingBox())!
+      expect(editor.height).toBeGreaterThan(size.height - 180)
+      expect(editor.y + editor.height).toBeLessThanOrEqual(size.height - 12)
+      if (i === 0) await page.screenshot({ path: test.info().outputPath(`sql-fullscreen-${size.width}.png`) })
+      await page.getByRole('button', { name: '退出全屏', exact: true }).click()
+      await expect(page.locator('.sql-workbench')).not.toHaveClass(/studio-maximized/)
+    }
+  }
+  expect(f.errors).toEqual([])
+})
+
 test('AI 助手反复展开收起不残留面板，不改变 SQL 编辑器和辅助栏布局', async ({ page }) => {
   const f = await fixture(page)
   const warnings: string[] = []
