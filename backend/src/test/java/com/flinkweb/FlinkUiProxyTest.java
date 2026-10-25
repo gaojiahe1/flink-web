@@ -40,7 +40,13 @@ class FlinkUiProxyTest {
     resource.withObject("/metadata").put("name", "fw-session-sql-validation");
     when(sessions.observedResource("sql-validation")).thenReturn(resource);
     var service =
-        new FlinkUiServiceImpl(jobs, new PlatformProperties("flink-ns", null, null), sessions);
+        new FlinkUiServiceImpl(
+            jobs,
+            new PlatformProperties("flink-ns", null, null),
+            sessions,
+            mock(com.flinkweb.service.permission.AccessService.class),
+            mock(com.flinkweb.service.job.runtime.DiagnosticService.class),
+            mock(com.flinkweb.service.ai.support.AiContentGuard.class));
     ReflectionTestUtils.setField(service, "client", client);
     return service;
   }
@@ -99,10 +105,62 @@ class FlinkUiProxyTest {
                         "GET",
                         "/flink-ui/sessions/sql-validation/taskmanagers/tm/logs/sql-validation.log"),
                     new MockHttpServletResponse()))
-        .hasMessageContaining("不开放");
+        .hasMessageContaining("日志仅向");
     var redirect = new MockHttpServletResponse();
     service.sessionTrailingSlash("sql-validation", redirect);
     assertThat(redirect.getRedirectedUrl()).isEqualTo("/flink-ui/sessions/sql-validation/");
+  }
+
+  /** JM/TM 日志按角色与资源授权读取，保持版本/端口 ID，返回脱敏结果。 */
+  @Test
+  void authorizedLogsAreBoundedAndRedacted() throws Exception {
+    var client = mock(HttpClient.class);
+    var service = service(client);
+    var diagnostics =
+        (com.flinkweb.service.job.runtime.DiagnosticService)
+            ReflectionTestUtils.getField(service, "diagnostics");
+    var guard =
+        (com.flinkweb.service.ai.support.AiContentGuard)
+            ReflectionTestUtils.getField(service, "guard");
+    when(diagnostics.redactEvidence(eq("job-id"), any()))
+        .thenAnswer(
+            i ->
+                new com.fasterxml.jackson.databind.node.TextNode(
+                    i.getArgument(1, com.fasterxml.jackson.databind.JsonNode.class)
+                        .asText()
+                        .replace("k8s-value", "[REDACTED]")));
+    when(guard.sanitize(any())).thenAnswer(i -> i.getArgument(0));
+    var auth =
+        new org.springframework.security.authentication.TestingAuthenticationToken(
+            "operator", "", "ROLE_OPERATOR");
+    org.springframework.security.core.context.SecurityContextHolder.getContext()
+        .setAuthentication(auth);
+    try {
+      for (String path : List.of("jobmanager/log", "taskmanagers/tm-id%3A6122/logs/task.log.1")) {
+        var logResponse = upstream(200, "text/plain", "startup k8s-value");
+        when(client.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(logResponse);
+        var out = new MockHttpServletResponse();
+        service.proxy("job-id", new MockHttpServletRequest("GET", "/flink-ui/job-id/" + path), out);
+        assertThat(out.getContentAsString()).isEqualTo("startup [REDACTED]");
+        assertThat(out.getHeader("Cache-Control")).isEqualTo("no-store");
+      }
+      verify(
+              (com.flinkweb.service.permission.AccessService)
+                  ReflectionTestUtils.getField(service, "access"),
+              times(2))
+          .require("job-id", "operate");
+      var huge = upstream(200, "text/plain", "x".repeat(10 * 1024 * 1024 + 1));
+      when(client.send(any(), any(HttpResponse.BodyHandler.class))).thenReturn(huge);
+      assertThatThrownBy(
+              () ->
+                  service.proxy(
+                      "job-id",
+                      new MockHttpServletRequest("GET", "/flink-ui/job-id/jobmanager/log"),
+                      new MockHttpServletResponse()))
+          .hasMessageContaining("超过 10 MB");
+    } finally {
+      org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
   }
 
   /** REST 子路径及查询参数不添加代理前缀，上游错误可以区分于传输错误。 */

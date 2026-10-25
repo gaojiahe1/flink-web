@@ -34,7 +34,7 @@ Session 行末刷新独立冷却，复用 PodStatusDrawer 与 DiagnosticService 
 
 普通 Session 可多个，验证 Session 仅一个；运行中不得改配置。管理员配置、管理员/运维启停；开发者需 SQL 编辑权限。Runner 默认共享具体 JAR，验证与 Application 可显式覆盖；运行 Session 镜像须与 SQL 相同。动态用户 bundle 合并服务发现、拒绝冲突类，不能删除看似重复的 META-INF 服务内容。
 
-SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 发布仍要求 INSERT；无 SQL Gateway。SQL SET 填 Flink 配置区域。删除部署草稿需清关联并迁移仍被 SQL 草稿引用的专属文件。Catalog 删除有引用保护。
+SQL 限32 KiB/100语句，Session 验证允许 SELECT/WITH/VALUES，Application 发布仍要求 INSERT；无 SQL Gateway。受控 SQL SET/RESET 可写在脚本初始化区，集群/类路径配置仍在部署表单管理。删除部署草稿需清关联并迁移仍被 SQL 草稿引用的专属文件。Catalog 删除有引用保护。
 
 2026-10-15：验证结果面板移出 workbench 的裁剪容器，单表滚动/固定表头、多 Sink 切换及工具栏/结果区停止。Runner 在展开变量前剥离显式 INSERT 目标表的连接选项，保留字段/主键作映射，再生成单 STRING 字段 Print 表；JSON 携带 columns/cells/keys/target，保留 RowKind、NULL 和大整数精度。源表加 SELECT 无需 Sink，CTAS 不执行；Application 普通 prepare 不变。后端只扩展内存事件结构，原1000条/两分钟、取消/UID/游标保护保留。前端按主键 upsert 或无主键多重集合并撤回，仅显示最终输出字段；未匹配撤回及旧 Runner 结构缺失明确提示，不猜测旧文本。新版 Runner 须下载、上传并重新选择，旧选择不自动覆盖。
 
@@ -86,3 +86,7 @@ SQL 提示参考 [Flink2.3 SQL](https://nightlies.apache.org/flink/flink-docs-re
 ## 结果事件标识预计算（2026-10-19）
 
 materializeVerification在候选行扫描前计算一次eventIdentity，候选行继续按原顺序/主键或整行标识匹配；未增加跨事件缓存。1000条唯一插入与1000条混合事件均与原HEAD实现结果完全一致，序列化次数和累计输出字符下降，不能外推实际生产延迟或堆占用。新增混合主键更新、无主键重复、匹配及未匹配撤回回归。测量范围见 [本次验收](../validation.md#ai-准备阶段取消与结果标识优化2026-10-19)。
+
+2026-10-25：目录和页面重设计见 [Catalog 模块](catalog-workbench.md)。新增 SQL UDF 侧栏，使用 JarEntryInspector 的有界静态识别与 SqlUdfSupport 的服务端重建元信息，每作业最多4个 JAR、每 JAR 32个函数；不加载用户类。选中依赖与手工依赖、Catalog 依赖去重，在 Application/Session 两条路径生效，HTTP/S3 地址使用统一文件解析。
+
+Runner 支持初始化 CREATE/DROP/ALTER/USE 与白名单 SET/RESET；键值使用单引号。SET 允许 table.*、execution.checkpointing.*、execution.runtime-mode、parallelism.default、pipeline.name/auto-watermark-interval/object-reuse；批流模式在 Planner 创建前取最终值，RESET 恢复部署模式。Application 仍需 INSERT，验证可 SELECT/WITH/VALUES，ADD JAR 不开放。Runner 更新需下载、上传并显式选择，不替换已有共享文件。新 SQL 缺省日志在服务端补齐双输出、10MB/1归档，已有 YAML 和显式空日志选择优先。

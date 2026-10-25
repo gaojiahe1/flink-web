@@ -120,15 +120,22 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                               : state.path("state").has("terminated") ? "terminated" : "unknown");
           if (state.path("state").has("terminated"))
             node.put("exitCode", state.path("state").path("terminated").path("exitCode").asInt());
-          for(String phase:List.of("running","terminated"))
-            if(state.path("state").has(phase)) {
-              node.put("startedAt",state.at("/state/"+phase+"/startedAt").asText());
-              if(phase.equals("terminated"))node.put("finishedAt",state.at("/state/terminated/finishedAt").asText());
+          for (String phase : List.of("running", "terminated"))
+            if (state.path("state").has(phase)) {
+              node.put("startedAt", state.at("/state/" + phase + "/startedAt").asText());
+              if (phase.equals("terminated"))
+                node.put("finishedAt", state.at("/state/terminated/finishedAt").asText());
             }
-          var previous=state.at("/lastState/terminated");
-          if(previous.isObject()) node.set("lastTermination",mapper.createObjectNode()
-              .put("exitCode",previous.path("exitCode").asInt()).put("reason",previous.path("reason").asText())
-              .put("startedAt",previous.path("startedAt").asText()).put("finishedAt",previous.path("finishedAt").asText()));
+          var previous = state.at("/lastState/terminated");
+          if (previous.isObject())
+            node.set(
+                "lastTermination",
+                mapper
+                    .createObjectNode()
+                    .put("exitCode", previous.path("exitCode").asInt())
+                    .put("reason", previous.path("reason").asText())
+                    .put("startedAt", previous.path("startedAt").asText())
+                    .put("finishedAt", previous.path("finishedAt").asText()));
           for (String phase : List.of("waiting", "terminated"))
             if (state.path("state").has(phase)) {
               node.put("reason", state.path("state").path(phase).path("reason").asText());
@@ -147,43 +154,77 @@ public class DiagnosticServiceImpl implements DiagnosticService {
   }
 
   /** Pod配置取证复用UID所有者链，不接受仅标签相同的外部Pod。 */
-  public ObjectNode pod(String id,String podName) {
-    if(!podName.matches("[a-z0-9][a-z0-9.-]{0,252}"))fail("Pod名称无效");
-    var job=jobs.get(id);var deployment=client.require(job.deploymentName());ownership.assertManaged(deployment,id);
-    var pod=client.call("GET",client.core()+"/pods/"+podName,null);
-    if(pod.isMissingNode() || !belongs(pod,deployment.at("/metadata/uid").asText(),0,new HashSet<>()))fail("Pod不属于该作业");
-    return (ObjectNode)pod;
+  public ObjectNode pod(String id, String podName) {
+    if (!podName.matches("[a-z0-9][a-z0-9.-]{0,252}")) fail("Pod名称无效");
+    var job = jobs.get(id);
+    var deployment = client.require(job.deploymentName());
+    ownership.assertManaged(deployment, id);
+    var pod = client.call("GET", client.core() + "/pods/" + podName, null);
+    if (pod.isMissingNode()
+        || !belongs(pod, deployment.at("/metadata/uid").asText(), 0, new HashSet<>()))
+      fail("Pod不属于该作业");
+    return (ObjectNode) pod;
   }
 
   /** Flink REST异常与日志也必须遮蔽当前工作负载及其Pod引用的Kubernetes密钥。 */
-  public JsonNode redactEvidence(String id,JsonNode evidence) {
-    var job=jobs.get(id);var deployment=client.require(job.deploymentName());ownership.assertManaged(deployment,id);
-    var names=new HashSet<String>();collectSecretNames(deployment.path("spec"),names);
-    var pods=client.call("GET",client.core()+"/pods?labelSelector="+encode("app="+job.deploymentName()),null).path("items");
-    if(pods.size()>16)fail("关联Pod过多，无法在本轮预算内核对日志密钥");
-    for(var pod:pods)if(belongs(pod,deployment.at("/metadata/uid").asText(),0,new HashSet<>()))collectSecretNames(pod.path("spec"),names);
-    if(names.size()>16)fail("引用Secret过多，请通过运维日志平台查看");
-    var secrets=new ArrayList<String>();
-    for(String name:names) {
-      if(!name.matches("[a-z0-9][a-z0-9.-]{0,252}"))fail("Secret引用名称无效");
-      var secret=client.call("GET",client.core()+"/secrets/"+name,null);
-      if(!secret.path("data").isObject())fail("无法核对日志脱敏所需Secret，不能返回原始证据");
-      for(var value:secret.path("data")) {
-        String text=new String(Base64.getDecoder().decode(value.asText()),StandardCharsets.UTF_8);if(!text.isEmpty())secrets.add(text);
+  public JsonNode redactEvidence(String id, JsonNode evidence) {
+    var job = jobs.get(id);
+    var deployment = client.require(job.deploymentName());
+    ownership.assertManaged(deployment, id);
+    return redactResourceEvidence(deployment, evidence);
+  }
+
+  /** Session 逐次校验 UID 后共用日志密钥遮蔽。 */
+  public JsonNode redactSessionEvidence(String id, JsonNode evidence) {
+    return redactResourceEvidence(sessions.observedResource(id), evidence);
+  }
+
+  /** 收集当前资源及所属 Pod 的密钥引用，精确遮蔽而不返回原值。 */
+  private JsonNode redactResourceEvidence(JsonNode deployment, JsonNode evidence) {
+    var names = new HashSet<String>();
+    collectSecretNames(deployment.path("spec"), names);
+    var pods =
+        client
+            .call(
+                "GET",
+                client.core()
+                    + "/pods?labelSelector="
+                    + encode("app=" + deployment.at("/metadata/name").asText()),
+                null)
+            .path("items");
+    if (pods.size() > 16) fail("关联Pod过多，无法在本轮预算内核对日志密钥");
+    for (var pod : pods)
+      if (belongs(pod, deployment.at("/metadata/uid").asText(), 0, new HashSet<>()))
+        collectSecretNames(pod.path("spec"), names);
+    if (names.size() > 16) fail("引用Secret过多，请通过运维日志平台查看");
+    var secrets = new ArrayList<String>();
+    for (String name : names) {
+      if (!name.matches("[a-z0-9][a-z0-9.-]{0,252}")) fail("Secret引用名称无效");
+      var secret = client.call("GET", client.core() + "/secrets/" + name, null);
+      if (!secret.path("data").isObject()) fail("无法核对日志脱敏所需Secret，不能返回原始证据");
+      for (var value : secret.path("data")) {
+        String text =
+            new String(Base64.getDecoder().decode(value.asText()), StandardCharsets.UTF_8);
+        if (!text.isEmpty()) secrets.add(text);
       }
     }
-    return maskEvidence(evidence,secrets);
+    return maskEvidence(evidence, secrets);
   }
 
   /** 对字符串叶子做精确替换，不通过序列化字符串替换破坏JSON结构。 */
-  private JsonNode maskEvidence(JsonNode evidence,List<String> secrets) {
-    if(evidence.isTextual()) {
-      String text=evidence.asText();for(String secret:secrets)text=text.replace(secret,"[REDACTED]");return com.fasterxml.jackson.databind.node.TextNode.valueOf(text);
+  private JsonNode maskEvidence(JsonNode evidence, List<String> secrets) {
+    if (evidence.isTextual()) {
+      String text = evidence.asText();
+      for (String secret : secrets) text = text.replace(secret, "[REDACTED]");
+      return com.fasterxml.jackson.databind.node.TextNode.valueOf(text);
     }
-    var copy=evidence.deepCopy();
-    if(copy instanceof ObjectNode object) {
-      var names=new ArrayList<String>();object.fieldNames().forEachRemaining(names::add);for(String name:names)object.set(name,maskEvidence(object.get(name),secrets));
-    } else if(copy instanceof com.fasterxml.jackson.databind.node.ArrayNode array) for(int i=0;i<array.size();i++)array.set(i,maskEvidence(array.get(i),secrets));
+    var copy = evidence.deepCopy();
+    if (copy instanceof ObjectNode object) {
+      var names = new ArrayList<String>();
+      object.fieldNames().forEachRemaining(names::add);
+      for (String name : names) object.set(name, maskEvidence(object.get(name), secrets));
+    } else if (copy instanceof com.fasterxml.jackson.databind.node.ArrayNode array)
+      for (int i = 0; i < array.size(); i++) array.set(i, maskEvidence(array.get(i), secrets));
     return copy;
   }
 

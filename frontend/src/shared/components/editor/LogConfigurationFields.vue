@@ -14,7 +14,7 @@ const emit = defineEmits<{ 'update:modelValue': [Record<string, string>] }>()
     <div class="log-configuration-body">
       <p class="muted">
         写入 spec.logConfiguration；保存后需显式部署或重启才能生效。默认
-        INFO，同时输出控制台与滚动文件（32 MB × 最多 5 个归档）。
+        INFO，同时输出控制台与滚动文件（每个 10 MB，当前文件 + 1 个归档，共 2 个）。
       </p>
       <p class="muted">
         Flink UI 的日志页读取文件；Print / System.out 输出通常在 stdout 页。如需转入日志，可在 Flink

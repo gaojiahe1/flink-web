@@ -1,8 +1,8 @@
 # Flink Web 部署指南
 
-更新：2026-10-23。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-25。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前三组件已发布0.0.8并清理旧版，包含AI新轮次/分类取证与六项优化；[发布和清理结果](#ai-一致性修复与版本发布2026-10-21)。实际K8s仍关闭，未部署清单/RBAC。恢复时先更新app/web及系统设置中持久化的下载器绑定至0.0.8，再串行验证一个作业。
+当前 app/web 已按 Catalog、UDF、SQL 与日志改造覆盖发布0.0.8，downloader不变；现场 Kubernetes 已恢复，平台 StatefulSet 已重启并核对两容器发布摘要。最新结果见 [本轮发布](#catalogudfsql与日志2026-10-25)，历史清理记录仍见 [10-21发布](#ai-一致性修复与版本发布2026-10-21)。
 
 ## 1. 部署拓扑与前置条件
 
@@ -22,7 +22,7 @@
 - 制品桶、状态存储目录及相应访问身份。
 - SQLite 所需可写 PVC，或 MySQL 8+ 数据库及专用账号。
 
-Flink UI 上游固定为 {FlinkDeployment资源名}-rest.{作业namespace}.svc:8081。代理只允许受控只读请求，不接收任意 URL，不转发平台 Cookie/Authorization；运行配置脱敏，环境与原始日志接口被阻止。不同 Flink UI 版本需实际验收。
+Flink UI 上游固定为 {FlinkDeployment资源名}-rest.{作业namespace}.svc:8081。代理只允许受控只读请求，不接收任意 URL，不转发平台 Cookie/Authorization；运行配置脱敏，环境接口被阻止；JM/TM 日志仅按角色、作业运维权限及白名单开放，并限制大小、脱敏及禁止缓存。不同 Flink UI 版本需实际验收。
 
 ## 2. 本地开发启动
 
@@ -749,3 +749,26 @@ app/web继续0.0.8覆盖发布，manifest见当前表；config分别为sha256:f4
 ### AI与SQL视口布局（2026-10-25）
 
 仅web继续覆盖发布0.0.8，manifest见当前表，config `sha256:b4f8bbc806a91a03cb0eaea4e84b8f10fcf52893430fff6ae63b6c8d2ee52efe`。正式Dockerfile与干净Kylin构建，非root只读最终镜像38项相关页面及代理4类通过，指定仓库manifest/config/全部8层压缩与解压摘要核对一致。app/downloader/latest不变；现场30080端口不可达，未更新实际K8s或启动作业。更新已有工作负载后才会显示本轮布局；验证范围见[验收](agent/validation.md#ai-与-sql-视口布局2026-10-25)。
+
+## Catalog、UDF、SQL与日志（2026-10-25）
+
+采用正式 Dockerfile、干净 Kylin 运行基础及验证后的离线制品覆盖发布 app/web:0.0.8，不更新 latest；downloader 保持。指定仓库 `192.168.68.1:5000/flink-web` 已逐层核对 manifest 正文/响应摘要、镜像 config、全部压缩层大小/哈希和解压 diff_id。
+
+| 组件 | Manifest | Config | 层数 |
+| --- | --- | --- | --- |
+| app:0.0.8 | `sha256:1e2add538775358d863e8d5cf6da741e76f0997d4d0cdd72b549476abb59dc6a` | `sha256:0ad828b649a22d4b5982968171333c5b3bd9c07d70694139dcc618953a460b89` | 11 |
+| web:0.0.8 | `sha256:85257fdae54377a4133cad0dfcc47176d79ffb19eae3efebaf0bd65510386145` | `sha256:efe093c8f63fcb4d8439b7e0ae4981ad471b273cdd9c827d2642c9e2b2931067` | 8 |
+
+现场 StatefulSet/flink-web 已重启，两容器 Ready 且 imageID 对应上述仓库摘要。沿用现有 PVC、SQLite 和原加密主密钥；按用户要求不做 PVC 备份。验证期间至多一个 FlinkDeployment，不修改两个既有 SQL 草稿。临时作业验证完按无状态停止、确认集群资源删除后清理本地草稿、SQL、Catalog 和迁移后的私有文件。
+
+新 SQL 使用10MB/1归档双输出日志。JM/TM 日志代理已按角色、运维权限、路径白名单和 Secret 脱敏开放；现场通过代理读取成功。已有自定义或显式空日志不覆盖。新 Runner 的 SET/RESET/DDL 和函数注册能力需下载、上传并显式选择；既有共享 Runner 不自动替换。
+
+本地 Parser 缓存曾落后于源代码协议，已按当前源码重建并更新仓库中的1.20.3/1.20.5制品，JDK8/17共32项协议检查通过。只读 Docker 验证的 SQLite 原生库需要 `/tmp` 可执行挂载（`--tmpfs /tmp:rw,exec,uid=10001,gid=10001`）；平台现有 Kubernetes emptyDir 不受此临时验证参数影响。
+
+Hive 浏览的 SASL/TLS/Compact/Framed 和目标 Hive 服务未作实环境验收，不能把协议替身称为真实 Hive 验证；详细边界见 [Catalog 模块](agent/modules/catalog-workbench.md) 与 [验收](agent/validation.md#catalogudfsql与日志2026-10-25)。
+
+2026-10-25收尾：最终镜像再次逐层核对并同步现场，两次现场用例为串行执行、任一时刻仅一个作业；最终 Runner 的作业也达到 RUNNING/STABLE。全部验证 FlinkDeployment/Pod、对应平台/SQL/Catalog与原始及迁移后的私有文件已清理。原两个用户SQL草稿及其修订不变。
+
+新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
+
+清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。

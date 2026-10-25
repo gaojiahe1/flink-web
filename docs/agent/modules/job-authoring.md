@@ -1,6 +1,6 @@
 # 作业配置与表单
 
-更新：2026-10-23。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-25。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：JAR 开发映射、表单/YAML 双向编辑、模板/镜像、程序入口与资源配置。数据流：JobEditorView → jarForm/hydrateJar → render-form/FormServiceImpl → YamlServiceImpl.validate；最终发布另走生命周期/ReleaseService。
 
@@ -40,3 +40,5 @@ YAML 省略的 JM/TM 资源字段保持省略；configuration 的可选 `formIss
 补充适用范围：ServiceAccount 例外同时覆盖旧资源仍存在的直接启动/恢复和资源删除后的重建；平台编辑角色与作业编辑权限同时满足才采用草稿账号。最终176项后端回归和实际镜像闭环通过。
 
 2026-10-13 来源补核：旧作业 editor 标签仅标记编辑来源，确认转换及解析能力才决定能否进表单；同日后续允许确认转换替代 10-04 早期“仅 YAML”的限制。状态配置与单位输入定位 [StateStorageForm](../../../frontend/src/shared/components/form/StateStorageForm.vue)、[DurationInput](../../../frontend/src/shared/components/form/DurationInput.vue)，其值与 Flink 配置编辑器同步。文件区限高/搜索和复制后编辑方式定位 ArtifactPicker/JobsView；历史要求与替代关系见 REQ-002，未重新做本轮页面验收。
+
+2026-10-25：普通默认日志改为每份10MB、1个归档（当前+归档共2份）；新 SQL 服务端补默认，已有自定义/空日志不覆盖。现场确认旧作业磁盘已有 JM/TM 日志，Flink UI 不可见来自平台代理阻断。代理新增受限日志白名单，仅管理员或具备作业运维权限的运维角色允许，10MiB预算、Secret/配置脱敏、no-store；环境/提交/取消等敏感端点仍拒绝。

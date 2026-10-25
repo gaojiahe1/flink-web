@@ -17,9 +17,9 @@ appender.file.layout.type = PatternLayout
 appender.file.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c - %m%n
 appender.file.policies.type = Policies
 appender.file.policies.size.type = SizeBasedTriggeringPolicy
-appender.file.policies.size.size = 32MB
+appender.file.policies.size.size = 10MB
 appender.file.strategy.type = DefaultRolloverStrategy
-appender.file.strategy.max = 5
+appender.file.strategy.max = 1
 `,
   }
 }

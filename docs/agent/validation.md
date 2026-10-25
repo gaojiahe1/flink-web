@@ -1,5 +1,17 @@
 # 治理与记忆系统验收
 
+## Catalog、UDF、SQL与日志（2026-10-25）
+
+- 起点干净 master `2fa305d`，工作分支 `codex/sql-udf-diff-logging`。Catalog 管理和 SQL 侧栏共用浏览，优先 JDBC/Hive；支持运行依赖、Hive XML、函数、引用作业和多目录初始化。UDF 单包多函数静态分析，元信息保存时在服务端重建；AI 带入选中函数和目录语义。SQL/YAML 对比红绿高亮，生成后从设置区域开始左右分栏。
+- 完整后端295项中292通过、3跳过（可选 MinIO及两个本地 Parser 制品）；补齐重建 Parser 后其6项（含此前2项）全过。最新 Catalog/Thrift/XML/UDF专项17项通过，Runner12项真实 Planner/执行及批流模式边界通过；JDK8/17与双精确版本 Parser32项协议检查通过。Java中文文档与分层检查通过。现场 MinIO上传/下载及静态UDF识别已实际通过，但未把它改记为可选集成测试已运行。
+- 前端类型/生产构建通过；初轮44项页面/配置回归与新增 SQL Catalog 使用专项1项通过，最终只读/非root Web 镜像37项通过。最后 UDF 文件标签变更后，受影响共享组件13项和UDF专项1项在开发与最终镜像均通过。代理启动/断连/恢复/重建4类通过。页面覆盖大屏、700×600配置、晚到响应隔离、只读角色、双函数保存/AI上下文、完整差异、反复全屏与短屏输入可见。
+- 最终镜像与真实 PostgreSQL17 联调：协议连接、登记数据库、表/视图、主键和 DECIMAL(12,2)、密码引用不明文、引用删除保护与修订冲突均通过。真实页面打开 PostgreSQL 对象展示字段和引用 SQL。Hive 使用官方 Thrift TCP 编解码替身验证5种方法、字段/分区/函数及截断；XML覆盖XXE、重复、超限与协议拒绝。未部署真实 Hive 服务，未验收 Hive Connector/Hadoop/安全认证或生产存储权限。
+- 现场 Kubernetes1.27.2、Flink1.20.5、Operator现有安装；仅一个独立测试作业运行，初始化 Catalog，使用 SET/DROP和两项 UDF，实际达到 RUNNING/STABLE，TM输出 `QA_UDF> +I[2, HELLO]`、`+I[3, HELLO]`。新 job.logConfiguration 为10MB、max=1；平台代理 JM/TM 日志分别取得约84/42KiB并成功脱敏交付。原日志文件存在而UI代理阻断的根因已核实。
+- 真实 Flink 镜像 Log4j 压测4万条，同时交付4万条控制台输出；结束仅 job.log（4300140字节）与 job.log.1（10486620字节），符合按10MiB阈值滚动、当前+1归档。单条写入导致阈值后约860字节误差，未声称文件硬截断。
+- app/web:0.0.8发布后核对全部11/8层，具体摘要见 [部署指南](../deployment.md#catalogudfsql与日志2026-10-25)。平台 StatefulSet已同步重启，无PVC备份/数据库或密钥替换。测试作业按平台停止删除流程清理；Operator最终删除存在异步等待，未移除finalizer或强制删除Pod。现有用户 SQL、共享 Runner、downloader、latest保留。
+
+最终摘要核对及清理结果见文末收尾；Git提交/合并在完成后补录。
+
 ## AI 与 SQL 视口布局（2026-10-25）
 
 - 功能提交`b55ad26`经验证和镜像发布后快进合并本地master；合并前干净，无冲突/新增差异，两分支内容一致。独占临时目录已清理，正式镜像及共享层保留，源码Git未推送。
@@ -488,3 +500,9 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 - app/web0.0.4发布完成：manifest分别为 `sha256:b34f4caa63841e9e20a3694f2fb2bbfe3c40d075cf89e42c75fbe955b5b8aaf8`、`sha256:5f47d45da2b92c27b9c78c65f5b47a3f95baca6e143e0b39d61e0d6ad0e9e20f`，config及全部21/20层内容与本地一致；未更新latest/downloader或现场工作负载。
 
 最终镜像另有2项真实凭据传输/重试回归通过。临时容器/网络、Vite、检查标签和中间镜像已清理，按已核实ID回收本轮私有构建缓存；共享/历史缓存、registry和最终发布镜像保留。独占目录及已核实测试截图收尾清理，原数据库/备份保留。功能提交 `0336805` 在校验、镜像发布与清理后生成，由 `codex/session-ui-model-wizard` 从基线 `4abb34f` 快进合并本地master；合并前工作区干净，无冲突或新增差异，两分支树一致。此后仅补录知识文档并通过检查；未推送源码Git、未重新修改运行代码或镜像。
+
+2026-10-25收尾：最终镜像再次逐层核对并同步现场，两次现场用例为串行执行、任一时刻仅一个作业；最终 Runner 的作业也达到 RUNNING/STABLE。全部验证 FlinkDeployment/Pod、对应平台/SQL/Catalog与原始及迁移后的私有文件已清理。原两个用户SQL草稿及其修订不变。
+
+新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
+
+清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。

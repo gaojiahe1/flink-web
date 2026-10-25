@@ -9,16 +9,98 @@ import org.junit.jupiter.api.Test;
 
 /** 使用真实 Flink Planner 验证 SQL Runner 计划构建，并检查参数和密钥替换。 */
 class SqlRunnerTest {
+  /** 批流模式需在 Planner 创建前生效，RESET 恢复部署配置而非强制流模式。 */
+  @Test
+  void runtimeModeIsAppliedBeforePlannerCreation() {
+    var global = new org.apache.flink.configuration.Configuration();
+    assertFalse(
+        SqlRunner.settings(
+                global, List.of("SET 'execution.runtime-mode'='BATCH'", "SELECT 1"), key -> null)
+            .isStreamingMode());
+    assertTrue(
+        SqlRunner.settings(
+                global,
+                List.of(
+                    "SET 'execution.runtime-mode'='BATCH'",
+                    "RESET 'execution.runtime-mode'",
+                    "SELECT 1"),
+                key -> null)
+            .isStreamingMode());
+    assertTrue(
+        SqlRunner.settings(
+                global,
+                List.of(
+                    "CREATE TABLE sink (n INT) WITH ('password'='{{env:MISSING_SINK_SECRET}}')",
+                    "SELECT 1"),
+                key -> null)
+            .isStreamingMode());
+    global.setString("execution.runtime-mode", "BATCH");
+    assertFalse(SqlRunner.settings(global, List.of("SELECT 1"), key -> null).isStreamingMode());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SqlRunner.settings(
+                global, List.of("SET 'execution.runtime-mode'='AUTOMATIC'"), key -> null));
+  }
+
+  /** 真实 Planner 顺序执行 SET/RESET/DROP 和函数注册，函数参与执行结果。 */
+  @Test
+  @org.junit.jupiter.api.Timeout(45)
+  void settingsDdlAndMultipleUdfsExecute() throws Exception {
+    TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
+    var plan =
+        SqlRunner.prepareValidation(
+            environment,
+            List.of(
+                "SET 'parallelism.default' = '1'",
+                "SET 'pipeline.name' = 'temporary'",
+                "RESET 'pipeline.name'",
+                "DROP TEMPORARY SYSTEM FUNCTION IF EXISTS add_one",
+                "CREATE TEMPORARY SYSTEM FUNCTION add_one AS"
+                    + " 'com.flinkweb.sql.SqlRunnerTest$AddOne'",
+                "CREATE TEMPORARY TABLE unused (n INT) WITH ('connector'='datagen')",
+                "DROP TEMPORARY TABLE unused",
+                "CREATE TEMPORARY TABLE sink (n INT) WITH ('connector'='print')",
+                "INSERT INTO sink SELECT add_one(41)"),
+            key -> null,
+            "0123456789abcdef0123456789abcdef");
+    assertEquals(
+        "1", environment.getConfig().getConfiguration().getString("parallelism.default", ""));
+    assertTrue(captured(plan).contains("42"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SqlRunner.prepare(
+                environment,
+                List.of("SET 'pipeline.jars' = 'file:///other.jar'", "INSERT INTO sink VALUES (1)"),
+                key -> null));
+  }
+
+  /** 测试函数仅用于真实 Planner 注册与求值。 */
+  public static class AddOne extends org.apache.flink.table.functions.ScalarFunction {
+    /** 标量函数将输入加一。 */
+    public Integer eval(Integer value) {
+      return value == null ? null : value + 1;
+    }
+  }
+
   /** 缺失地址、错误选项和未配置密码不参与验证；结构化输出保留列名、空值及大整数。 */
   @Test
   @org.junit.jupiter.api.Timeout(45)
   void validationIgnoresProductionSinkOptionsAndEncodesFields() throws Exception {
     TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
     environment.getConfig().getConfiguration().setString("parallelism.default", "1");
-    var plan = SqlRunner.prepareValidation(environment, List.of(
-        "CREATE TEMPORARY TABLE sink_events (id BIGINT, payload STRING, optional STRING, PRIMARY KEY(id) NOT ENFORCED) WITH ('connector'='kafka','print-identifier'='MY_PRINT','password'='{{env:UNAVAILABLE}}')",
-        "INSERT INTO sink_events VALUES (9007199254740993, '中文,值\nnext', CAST(NULL AS STRING))"), key -> null,
-        "0123456789abcdef0123456789abcdef");
+    var plan =
+        SqlRunner.prepareValidation(
+            environment,
+            List.of(
+                "CREATE TEMPORARY TABLE sink_events (id BIGINT, payload STRING, optional STRING,"
+                    + " PRIMARY KEY(id) NOT ENFORCED) WITH"
+                    + " ('connector'='kafka','print-identifier'='MY_PRINT','password'='{{env:UNAVAILABLE}}')",
+                "INSERT INTO sink_events VALUES (9007199254740993, '中文,值\n"
+                    + "next', CAST(NULL AS STRING))"),
+            key -> null,
+            "0123456789abcdef0123456789abcdef");
     String output = captured(plan);
     assertTrue(output.contains("\"columns\":[\"id\",\"payload\",\"optional\"]"), output);
     assertTrue(output.contains("\"cells\":[\"9007199254740993\",\"中文,值\\nnext\",null]"), output);
@@ -31,17 +113,30 @@ class SqlRunnerTest {
   void validationAcceptsSourceAndReadOnlyQuery() throws Exception {
     TableEnvironment environment = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
     environment.getConfig().getConfiguration().setString("parallelism.default", "1");
-    var plan = SqlRunner.prepareValidation(environment, List.of(
-        "CREATE TEMPORARY TABLE source_events (id BIGINT, payload STRING) WITH ('connector'='datagen','number-of-rows'='2')",
-        "WITH orders AS (SELECT id,payload FROM source_events) SELECT id AS order_id,payload FROM orders"), key -> null,
-        "0123456789abcdef0123456789abcdef");
+    var plan =
+        SqlRunner.prepareValidation(
+            environment,
+            List.of(
+                "CREATE TEMPORARY TABLE source_events (id BIGINT, payload STRING) WITH"
+                    + " ('connector'='datagen','number-of-rows'='2')",
+                "WITH orders AS (SELECT id,payload FROM source_events) SELECT id AS"
+                    + " order_id,payload FROM orders"),
+            key -> null,
+            "0123456789abcdef0123456789abcdef");
     String output = captured(plan);
     assertEquals(2, output.lines().filter(line -> line.startsWith("FWV_")).count());
     assertTrue(output.contains("\"columns\":[\"order_id\",\"payload\"]"), output);
-    assertThrows(IllegalArgumentException.class, () -> SqlRunner.prepare(environment, List.of("SELECT 1"), key -> null));
-    assertThrows(IllegalArgumentException.class, () -> SqlRunner.prepareValidation(environment,
-        List.of("CREATE TABLE forbidden WITH ('connector'='blackhole') AS SELECT 1 AS id"), key -> null,
-        "0123456789abcdef0123456789abcdef"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SqlRunner.prepare(environment, List.of("SELECT 1"), key -> null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            SqlRunner.prepareValidation(
+                environment,
+                List.of("CREATE TABLE forbidden WITH ('connector'='blackhole') AS SELECT 1 AS id"),
+                key -> null,
+                "0123456789abcdef0123456789abcdef"));
   }
 
   /** 捕获本地真实运行输出，仅供检查验证协议，不依赖共享日志或集群。 */

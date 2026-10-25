@@ -19,15 +19,37 @@ public final class SqlRunner {
   /** 读取平台编码的语句；沿用 Operator 注入的 Flink 配置，执行单个 StatementSet。 */
   public static void main(String[] args) {
     String validation = args.length >= 2 && "--validation".equals(args[0]) ? args[1] : null;
-    String[] statements = validation == null ? args : Arrays.copyOfRange(args, 2, args.length);
+    List<String> statements =
+        decode(validation == null ? args : Arrays.copyOfRange(args, 2, args.length));
     TableEnvironment environment =
         TableEnvironment.create(
-            EnvironmentSettings.newInstance()
-                .withConfiguration(executionConfiguration(GlobalConfiguration.loadConfiguration()))
-                .inStreamingMode()
-                .build());
-    if (validation == null) prepare(environment, decode(statements), System::getenv).execute();
-    else prepareValidation(environment, decode(statements), System::getenv, validation).execute();
+            settings(GlobalConfiguration.loadConfiguration(), statements, System::getenv));
+    if (validation == null) prepare(environment, statements, System::getenv).execute();
+    else prepareValidation(environment, statements, System::getenv, validation).execute();
+  }
+
+  /** Planner 的批流模式在创建时固定，先求出初始化 SET/RESET 的最终模式再创建环境。 */
+  static EnvironmentSettings settings(
+      Configuration global, List<String> statements, Function<String, String> variables) {
+    Configuration configuration = executionConfiguration(global);
+    String key = "execution.runtime-mode", mode = configuration.getString(key, "STREAMING");
+    for (String statement : statements) {
+      if (statement.matches("(?is)^(INSERT|SELECT|WITH|VALUES)\\b.*")) break;
+      if (!statement.matches("(?is)^(SET|RESET)\\b.*")) continue;
+      String sql = substitute(statement, variables);
+      Matcher set =
+          Pattern.compile("(?is)^SET\\s+'execution\\.runtime-mode'\\s*=\\s*'([^']+)'\\s*$")
+              .matcher(sql);
+      if (set.matches()) mode = set.group(1);
+      else if (sql.matches("(?is)^RESET\\s+'execution\\.runtime-mode'\\s*$"))
+        mode = global.getString(key, "STREAMING");
+    }
+    EnvironmentSettings.Builder builder =
+        EnvironmentSettings.newInstance().withConfiguration(configuration);
+    if ("BATCH".equalsIgnoreCase(mode)) builder.inBatchMode();
+    else if ("STREAMING".equalsIgnoreCase(mode)) builder.inStreamingMode();
+    else throw new IllegalArgumentException("SQL execution.runtime-mode 仅支持 BATCH 或 STREAMING");
+    return builder.build();
   }
 
   /** 保留业务配置；用户 JAR 与类路径沿用 Flink 提交上下文，避免磁盘 local URI 覆盖已解析的 URL。 */
@@ -60,7 +82,8 @@ public final class SqlRunner {
     }
     int count = 0;
     for (String raw : statements) {
-      if (raw.matches("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
+      if (raw.matches(
+          "(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
         throw new IllegalArgumentException("验证不执行 CREATE TABLE AS 查询，请改为源表定义加 SELECT");
       // 先剥离目标表连接参数，再展开变量；验证不要求原 Sink 的地址、驱动或凭据。
       String sql = substitute(validationDeclaration(raw, targets, environment), variables);
@@ -69,21 +92,28 @@ public final class SqlRunner {
       if (writing || sql.matches("(?is)^(SELECT|WITH|VALUES)\\b.*")) {
         String target = writing ? match.group(1) : "查询结果 " + (count + 1);
         Table query = environment.sqlQuery(writing ? match.group(3) : sql);
-        org.apache.flink.table.catalog.ResolvedSchema schema = writing
-            ? environment.from(target).getResolvedSchema() : query.getResolvedSchema();
+        org.apache.flink.table.catalog.ResolvedSchema schema =
+            writing ? environment.from(target).getResolvedSchema() : query.getResolvedSchema();
         List<org.apache.flink.table.catalog.Column> physical = new ArrayList<>();
         for (org.apache.flink.table.catalog.Column column : schema.getColumns())
           if (column.isPhysical()) physical.add(column);
         List<String> mapping = new ArrayList<>();
         if (writing && match.group(2) != null) {
-          Matcher columns = Pattern.compile("`((?:``|[^`])+)`|([A-Za-z_][A-Za-z0-9_$]*)").matcher(match.group(2));
-          while (columns.find()) mapping.add(columns.group(1) != null ? columns.group(1).replace("``", "`") : columns.group(2));
-        } else for (org.apache.flink.table.catalog.Column column : physical) mapping.add(column.getName());
+          Matcher columns =
+              Pattern.compile("`((?:``|[^`])+)`|([A-Za-z_][A-Za-z0-9_$]*)").matcher(match.group(2));
+          while (columns.find())
+            mapping.add(
+                columns.group(1) != null ? columns.group(1).replace("``", "`") : columns.group(2));
+        } else
+          for (org.apache.flink.table.catalog.Column column : physical)
+            mapping.add(column.getName());
         if (mapping.size() != query.getResolvedSchema().getColumnCount())
           throw new IllegalArgumentException("输出字段数量与查询不一致");
-        if (new HashSet<>(mapping).size() != mapping.size()) throw new IllegalArgumentException("输出字段重复");
+        if (new HashSet<>(mapping).size() != mapping.size())
+          throw new IllegalArgumentException("输出字段重复");
         for (String column : mapping)
-          if (!schema.getColumn(column).isPresent()) throw new IllegalArgumentException("输出字段不存在：" + column);
+          if (!schema.getColumn(column).isPresent())
+            throw new IllegalArgumentException("输出字段不存在：" + column);
         String[] aliases = new String[mapping.size()];
         for (int i = 0; i < aliases.length; i++) aliases[i] = "fw_column_" + i;
         query = query.as(aliases[0], Arrays.copyOfRange(aliases, 1, aliases.length));
@@ -100,10 +130,16 @@ public final class SqlRunner {
         List<String> keys = new ArrayList<>();
         if (schema.getPrimaryKey().isPresent())
           for (String key : schema.getPrimaryKey().get().getColumns()) keys.add(literal(key));
-        String payload = "JSON_OBJECT('columns' VALUE JSON_ARRAY(" + String.join(",", names)
-            + "), 'cells' VALUE JSON_ARRAY(" + String.join(",", values)
-            + " NULL ON NULL), 'keys' VALUE JSON_ARRAY(" + String.join(",", keys)
-            + "), 'target' VALUE " + literal(target) + ")";
+        String payload =
+            "JSON_OBJECT('columns' VALUE JSON_ARRAY("
+                + String.join(",", names)
+                + "), 'cells' VALUE JSON_ARRAY("
+                + String.join(",", values)
+                + " NULL ON NULL), 'keys' VALUE JSON_ARRAY("
+                + String.join(",", keys)
+                + "), 'target' VALUE "
+                + literal(target)
+                + ")";
         String sink = "fw_validation_" + validation + "_" + count;
         environment.createTemporaryTable(
             sink,
@@ -113,24 +149,32 @@ public final class SqlRunner {
                 .build());
         set.addInsertSql("INSERT INTO `" + sink + "` SELECT " + payload + " FROM `" + view + "`");
         count++;
-      } else if (count == 0
-          && (sql.matches("(?is)^CREATE\\s+(TEMPORARY\\s+)?(TABLE|VIEW|CATALOG|DATABASE)\\b.*")
-              || sql.matches("(?is)^USE\\s+.*"))) {
-        environment.executeSql(sql);
-      } else throw new IllegalArgumentException("验证仅支持先 CREATE/USE，再 INSERT 或 SELECT");
+      } else if (count == 0 && setup(sql)) {
+        executeSetup(environment, sql);
+      } else
+        throw new IllegalArgumentException(
+            "验证仅支持先 CREATE/DROP/ALTER/SET/RESET/USE，再 INSERT 或 SELECT");
     }
     if (count == 0) throw new IllegalArgumentException("至少需要一条 INSERT 或 SELECT");
     return set;
   }
 
   /** 只替换显式写入目标的顶层 WITH 选项，字段和主键保留，不解析原 Sink 的连接器。 */
-  static String validationDeclaration(String sql, List<String> targets, TableEnvironment environment) {
-    String identifier = "(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*)(?:\\s*\\.\\s*(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*))*";
-    Matcher table = Pattern.compile("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(" + identifier + ")\\s*\\(").matcher(sql);
+  static String validationDeclaration(
+      String sql, List<String> targets, TableEnvironment environment) {
+    String identifier =
+        "(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*)(?:\\s*\\.\\s*(?:`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_$]*))*";
+    Matcher table =
+        Pattern.compile(
+                "(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?("
+                    + identifier
+                    + ")\\s*\\(")
+            .matcher(sql);
     if (!table.find()) return sql;
     boolean sink = false;
     for (String target : targets)
-      if (qualified(target, environment).equals(qualified(table.group(1), environment))) sink = true;
+      if (qualified(target, environment).equals(qualified(table.group(1), environment)))
+        sink = true;
     if (!sink) return sql;
     int depth = 1;
     char quote = 0;
@@ -143,7 +187,8 @@ public final class SqlRunner {
         }
       } else if (c == '\'' || c == '"' || c == '`') quote = c;
       else if (c == '(') depth++;
-      else if (c == ')' && --depth == 0) return sql.substring(0, i + 1) + " WITH ('connector'='blackhole')";
+      else if (c == ')' && --depth == 0)
+        return sql.substring(0, i + 1) + " WITH ('connector'='blackhole')";
     }
     throw new IllegalArgumentException("验证输出表结构不完整");
   }
@@ -152,7 +197,8 @@ public final class SqlRunner {
   private static List<String> qualified(String text, TableEnvironment environment) {
     List<String> parts = new ArrayList<>();
     Matcher matcher = Pattern.compile("`((?:``|[^`])+)`|([A-Za-z_][A-Za-z0-9_$]*)").matcher(text);
-    while (matcher.find()) parts.add(matcher.group(1) == null ? matcher.group(2) : matcher.group(1).replace("``", "`"));
+    while (matcher.find())
+      parts.add(matcher.group(1) == null ? matcher.group(2) : matcher.group(1).replace("``", "`"));
     if (parts.size() == 1) parts.add(0, environment.getCurrentDatabase());
     if (parts.size() == 2) parts.add(0, environment.getCurrentCatalog());
     return parts;
@@ -173,13 +219,36 @@ public final class SqlRunner {
       if (sql.matches("(?is)^INSERT\\s+(INTO|OVERWRITE)\\b.*")) {
         set.addInsertSql(sql);
         inserts++;
-      } else if ((sql.matches("(?is)^CREATE\\s+(TEMPORARY\\s+)?(TABLE|VIEW|CATALOG|DATABASE)\\b.*")
-              || sql.matches("(?is)^USE\\s+.*"))
-          && inserts == 0) environment.executeSql(sql);
-      else throw new IllegalArgumentException("仅支持先 CREATE/USE，再 INSERT");
+      } else if (setup(sql) && inserts == 0) executeSetup(environment, sql);
+      else throw new IllegalArgumentException("仅支持先 CREATE/DROP/ALTER/SET/RESET/USE，再 INSERT");
     }
     if (inserts == 0) throw new IllegalArgumentException("至少需要一条 INSERT");
     return set;
+  }
+
+  /** 初始化语句在所有写入/查询前顺序执行，不把 SQL Client 提交命令开放到 Runner。 */
+  private static boolean setup(String sql) {
+    return sql.matches(
+        "(?is)^(?:CREATE\\s+(?:TEMPORARY\\s+(?:SYSTEM\\s+)?)?(?:TABLE|VIEW|CATALOG|DATABASE|FUNCTION)|DROP\\s+(?:TEMPORARY\\s+(?:SYSTEM\\s+)?)?(?:TABLE|VIEW|CATALOG|DATABASE|FUNCTION)|ALTER\\s+(?:TABLE|VIEW|DATABASE|FUNCTION)|USE|SET|RESET)\\b.*");
+  }
+
+  /** TableEnvironment 不执行 SQL Client SET，显式解析并应用允许的作业内参数。 */
+  private static void executeSetup(TableEnvironment environment, String sql) {
+    if (!sql.matches("(?is)^(SET|RESET)\\b.*")) {
+      environment.executeSql(sql);
+      return;
+    }
+    Matcher set =
+        Pattern.compile("(?is)^SET\\s+'((?:''|[^'])+)'\\s*=\\s*'((?:''|[^'])*)'\\s*$").matcher(sql);
+    Matcher reset = Pattern.compile("(?is)^RESET\\s+'((?:''|[^'])+)'\\s*$").matcher(sql);
+    boolean setting = set.matches();
+    String key = setting ? set.group(1) : reset.matches() ? reset.group(1) : "";
+    if (!key.matches(
+        "(?:table\\.[a-zA-Z0-9_.-]+|execution\\.checkpointing\\.[a-zA-Z0-9_.-]+|execution\\.runtime-mode|parallelism\\.default|pipeline\\.(?:name|auto-watermark-interval|object-reuse))"))
+      throw new IllegalArgumentException("SET/RESET 参数不属于作业内允许的配置范围");
+    Configuration configuration = environment.getConfig().getConfiguration();
+    if (setting) configuration.setString(key, set.group(2).replace("''", "'"));
+    else configuration.removeKey(key);
   }
 
   /** 解码平台传入的独立语句参数，不在运行时再次按分号切割脚本。 */

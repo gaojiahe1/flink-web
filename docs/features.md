@@ -265,3 +265,13 @@ SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数�
 ### 普通作业日志配置（2026-10-23）
 
 JAR、SQL、普通Session表单统一提供默认折叠的日志配置区，写入spec.logConfiguration。新建默认Log4j2 INFO、控制台和滚动文件双输出，文件为${sys:log.file}、32MB、最多5个归档；已有草稿/模板/YAML日志原文与额外文件保留，原来省略时不自动覆盖，可显式填入默认或移除覆盖。表单/YAML回填、保存/发布沿用既有流程，保存不自动部署；专用SQL验证Session的固定日志协议不变。日志页读取文件，Print/System.out默认输出在stdout；需要转入日志时可在Flink配置中显式设置taskmanager.system-out.mode=LOG。默认Log4j2适用于对应镜像的日志框架，已有Logback XML保留，不自动切换框架。
+
+## Catalog、UDF 与 SQL 日志（2026-10-25）
+
+Catalog 页面采用目录列表、库表/函数与对象详情分栏，优先 JDBC（MySQL/PostgreSQL）和 Hive。连接登记、连接测试、元数据读取与运行验证分别反馈；浏览按需执行，不读取业务数据。可查看引用作业、运行依赖和生成的初始化 SQL。SQL 侧栏共用对象浏览，支持主目录与附加目录、插入限定名 SQL。
+
+Hive 上传 hive-site.xml 并选择匹配的 Connector/Hadoop 依赖；只读浏览当前支持非 SASL/TLS Binary Thrift，认证/协议不支持时明确提示。JDBC 密码复用 Secret 引用。运行时插件、存储及外部服务仍须在目标环境验证，详见 [Catalog 模块](agent/modules/catalog-workbench.md)。
+
+UDF 函数侧栏可上传/选择 JAR、识别其中多个 Flink 函数、设置调用名和业务说明、插入注册/调用 SQL。静态签名及调用线索可供 AI 理解，不能等同完整函数源码。函数 JAR 随保存、发布及 SQL 验证选用；不影响运行中的作业。SET/RESET 与 DROP/ALTER 等初始化语句必须在 INSERT/SELECT 前，提交目标和依赖由平台管理。SQL/YAML 审阅高亮改动，用户确认后应用。
+
+新 SQL 默认日志双输出，当前文件和一个归档，每份10MB。Flink UI 的 JM/TM 日志由受权限及脱敏保护的代理读取。旧作业不会自动覆盖日志配置或共享 Runner；使用新 SET/UDF 行为须重新选择新版 Runner。

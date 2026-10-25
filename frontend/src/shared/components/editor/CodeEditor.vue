@@ -43,7 +43,12 @@ async function formatSql() {
       formatError.value = '当前 SQL 无法格式化，请检查未闭合的引号、注释或括号。原文已保留。'
   }
 }
-defineExpose({ format: formatSql })
+function insert(text: string) {
+  if (!view || props.readonly) return
+  view.dispatch(view.state.replaceSelection(text))
+  view.focus()
+}
+defineExpose({ format: formatSql, insert })
 let languageEpoch = 0,
   disposed = false
 async function updateLanguage() {

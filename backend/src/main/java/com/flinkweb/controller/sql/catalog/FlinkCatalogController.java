@@ -31,6 +31,21 @@ public class FlinkCatalogController {
     return ApiResponse.ok(service.list());
   }
 
+  /** 开发人员主动读取目录函数列表或详情，不执行函数。 */
+  @PostMapping("/{id}/functions")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> functions(@PathVariable String id, @RequestBody ObjectNode input) {
+    return ApiResponse.ok(
+        service.functions(id, input.path("database").asText(), input.path("name").asText()));
+  }
+
+  /** 查看有权读取的引用草稿，删除保护不因列表过滤而放宽。 */
+  @GetMapping("/{id}/usage")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> usage(@PathVariable String id) {
+    return ApiResponse.ok(service.usage(id));
+  }
+
   /** 创建或更新目录，使用请求中的 revision 控制并发。 */
   @PutMapping("/{id}")
   @PreAuthorize("hasRole('ADMIN')")

@@ -96,6 +96,40 @@ async function discuss(page: Page, text = '按订单统计已支付金额') {
   await expect(panel.getByRole('button', { name: /确认总结并.*SQL/ })).toBeEnabled()
 }
 
+test('一个 JAR 的多个 UDF 可独立添加、保存和传给 AI，切换作业不串函数', async ({ page }) => {
+  const f = await fixture(page)
+  f.drafts.other = { id: 'other', name: 'other', sql: 'SELECT 1', runtime: { ...runtime, udfArtifacts: [] }, revision: 1 }
+  await page.route('**/api/artifacts/defaults', route => route.fulfill({ json: { data: { bucket: 'test', rootPrefix: 'artifacts/' } } }))
+  await page.route('**/api/artifacts/objects?*', route => route.fulfill({ json: { data: { directories: [], objects: [] } } }))
+  await page.route('**/api/artifacts/udf-functions', route => route.fulfill({ json: { data: { functions: [
+    { className: 'example.TrimFunction', kind: 'SCALAR', signatures: ['eval[java.lang.String] → java.lang.String'], methodCalls: ['java.lang.String.trim'] },
+    { className: 'example.UpperFunction', kind: 'SCALAR', signatures: ['eval[java.lang.String] → java.lang.String'], methodCalls: ['java.lang.String.toUpperCase'] },
+  ], note: '静态分析，不加载用户类' } } }))
+  await page.goto('/#/sql?draft=sql-draft')
+  await page.getByRole('button', { name: 'UDF 函数', exact: true }).click()
+  const panel = page.locator('.udf-panel')
+  await panel.getByRole('button', { name: 'HTTP / S3 地址', exact: true }).click()
+  await panel.getByPlaceholder('https://host/path/file.jar 或 s3://bucket/path/file.jar').fill('s3://test/functions.jar')
+  await panel.getByRole('button', { name: '确认文件地址', exact: true }).click()
+  await panel.getByRole('button', { name: '识别 JAR 中的函数', exact: true }).click()
+  await expect(panel.locator('.udf-card')).toHaveCount(2)
+  await panel.locator('.udf-card').first().getByLabel('业务逻辑说明').fill('去除首尾空格，保留空值')
+  await panel.locator('.udf-card').first().getByRole('button', { name: '添加函数并插入 SQL' }).click()
+  await panel.locator('.udf-card').nth(1).getByRole('button', { name: '添加函数并插入 SQL' }).click()
+  await expect(page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })).toContainText("CREATE TEMPORARY SYSTEM FUNCTION `upper` AS 'example.UpperFunction'")
+  await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
+  await expect.poll(() => f.writes.length).toBe(1)
+  expect(f.writes.at(-1).runtime.udfArtifacts[0].functions).toHaveLength(2)
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  await discuss(page, '解释已选 UDF 的作用，不改变函数实现')
+  expect(f.submissions.at(-1).udfContext[0].functions[0]).toMatchObject({ className: 'example.TrimFunction', description: '去除首尾空格，保留空值', methodCalls: ['java.lang.String.trim'] })
+  await page.getByRole('button', { name: 'AI 助手', exact: true }).click()
+  await page.getByLabel('SQL 草稿列表').getByRole('button', { name: /^other / }).click()
+  await page.getByRole('button', { name: 'UDF 函数', exact: true }).click()
+  await expect(page.locator('.udf-panel')).toContainText('当前作业函数 · 0')
+  expect(f.errors).toEqual([])
+})
+
 test('SQL 审阅全屏填满视口、侧栏紧凑，退出及反复切换保留布局', async ({ page }) => {
   const f = await fixture(page), panel = await openAssistant(page)
   await discuss(page)

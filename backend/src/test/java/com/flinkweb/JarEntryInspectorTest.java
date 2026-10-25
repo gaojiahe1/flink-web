@@ -15,6 +15,45 @@ import org.springframework.asm.*;
 
 /** 验证入口静态识别、外部地址规则和归档大小约束。 */
 class JarEntryInspectorTest {
+  /** 多 UDF、间接继承及静态调用线索可识别，归档中的类从未加载。 */
+  @Test
+  void identifiesMultipleFunctionsAndInheritanceWithoutClassLoading() throws Exception {
+    var inspector = new JarEntryInspector(mock(ArtifactReferences.class), new ObjectMapper());
+    var writer = new org.springframework.asm.ClassWriter(0);
+    writer.visit(
+        Opcodes.V1_8,
+        Opcodes.ACC_PUBLIC,
+        "example/Trim",
+        null,
+        "org/apache/flink/table/functions/ScalarFunction",
+        null);
+    writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null).visitEnd();
+    var method =
+        writer.visitMethod(
+            Opcodes.ACC_PUBLIC, "eval", "(Ljava/lang/String;)Ljava/lang/String;", null, null);
+    method.visitCode();
+    method.visitMethodInsn(
+        Opcodes.INVOKEVIRTUAL, "java/lang/String", "trim", "()Ljava/lang/String;", false);
+    method.visitEnd();
+    writer.visitEnd();
+    var derived = new org.springframework.asm.ClassWriter(0);
+    derived.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "example/Derived", null, "example/Trim", null);
+    derived.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null).visitEnd();
+    derived.visitEnd();
+    var result =
+        inspector.scan(
+            jar(
+                Map.of(
+                    "example/Trim.class",
+                    writer.toByteArray(),
+                    "example/Derived.class",
+                    derived.toByteArray())));
+    assertThat(result.path("functions")).hasSize(2);
+    assertThat(result.path("functions").toString())
+        .contains("java.lang.String.trim", "SCALAR", "example.Derived");
+    assertThat(result.path("entryClasses")).isEmpty();
+  }
+
   private final ObjectMapper mapper = new ObjectMapper();
 
   /** 生成只有方法签名的字节码，不依赖类加载器或用户代码执行。 */

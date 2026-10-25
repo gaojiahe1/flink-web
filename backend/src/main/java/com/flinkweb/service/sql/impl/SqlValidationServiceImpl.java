@@ -13,7 +13,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class SqlValidationServiceImpl implements SqlValidationService {
   private static final Pattern DDL =
-      Pattern.compile("(?is)^CREATE\\s+(TEMPORARY\\s+)?(TABLE|VIEW|CATALOG|DATABASE)\\b.*");
+      Pattern.compile(
+          "(?is)^(?:CREATE\\s+(?:TEMPORARY\\s+(?:SYSTEM\\s+)?)?(?:TABLE|VIEW|CATALOG|DATABASE|FUNCTION)|DROP\\s+(?:TEMPORARY\\s+(?:SYSTEM\\s+)?)?(?:TABLE|VIEW|CATALOG|DATABASE|FUNCTION)|ALTER\\s+(?:TABLE|VIEW|DATABASE|FUNCTION))\\b.*");
   private static final Pattern INSERT = Pattern.compile("(?is)^INSERT\\s+(INTO|OVERWRITE)\\b.*");
 
   /** 拆分脚本并限制为先建表/视图、后 INSERT 的单 Application 执行序列。 */
@@ -34,18 +35,26 @@ public class SqlValidationServiceImpl implements SqlValidationService {
     int inserts = 0;
     int reads = 0;
     for (String statement : statements) {
-      if (queries && com.flinkweb.service.sql.support.SqlScriptLexical.maskQuoted(statement)
-          .matches("(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
+      if (queries
+          && com.flinkweb.service.sql.support.SqlScriptLexical.maskQuoted(statement)
+              .matches(
+                  "(?is)^CREATE\\s+(?:TEMPORARY\\s+)?TABLE\\b.*\\bAS\\s*\\(?\\s*(?:SELECT|WITH|VALUES)\\b.*"))
         fail("验证不执行 CREATE TABLE AS 查询，请改为源表定义加 SELECT");
       if (INSERT.matcher(statement).matches()) inserts++;
       else if (queries && statement.matches("(?is)^(SELECT|WITH|VALUES)\\b.*")) reads++;
-      else if (DDL.matcher(statement).matches() || statement.matches("(?is)^USE\\s+.*")) {
-        if (inserts + reads > 0) fail("CREATE / USE 必须放在所有 INSERT / SELECT 之前");
+      else if (DDL.matcher(statement).matches()
+          || statement.matches("(?is)^USE\\s+.*")
+          || setting(statement)) {
+        if (inserts + reads > 0)
+          fail("CREATE / DROP / ALTER / SET / RESET / USE 必须放在所有 INSERT / SELECT 之前");
       } else
         fail(
-            "支持 CREATE TABLE/VIEW/CATALOG/DATABASE、USE 和 INSERT INTO/OVERWRITE；"
-                + (queries ? "验证还支持 SELECT / WITH / VALUES 查询；" : "Application 发布必须包含 INSERT，SELECT / WITH / VALUES 查询请使用 SQL 验证；")
-                + "SET 请填写到运行配置，不支持 SQL Client 命令");
+            "支持 CREATE / DROP / ALTER TABLE、VIEW、DATABASE、FUNCTION，CREATE / DROP CATALOG、SET /"
+                + " RESET、USE 和 INSERT INTO/OVERWRITE；"
+                + (queries
+                    ? "验证还支持 SELECT / WITH / VALUES 查询；"
+                    : "Application 发布必须包含 INSERT，SELECT / WITH / VALUES 查询请使用 SQL 验证；")
+                + "不支持 ADD JAR 等 SQL Client 命令，依赖请通过 UDF / 附加文件管理");
     }
     if (inserts + reads == 0) fail(queries ? "至少需要一条 INSERT 或 SELECT 查询" : "至少需要一条 INSERT 写入语句");
     if (statements.size() > 100) fail("基础版最多支持 100 条语句");
@@ -56,6 +65,22 @@ public class SqlValidationServiceImpl implements SqlValidationService {
         inserts,
         "基础检查通过；尚未校验表字段、连接器和 Catalog，最终语义由 Flink 运行时校验。",
         List.copyOf(statements));
+  }
+
+  /** SET 只允许作业内执行参数，提交目标、类路径及集群配置继续由部署表单管理。 */
+  private boolean setting(String statement) {
+    if (!statement.matches("(?is)^(SET|RESET)\\b.*")) return false;
+    var set =
+        Pattern.compile("(?is)^SET\\s+'((?:''|[^'])+)'\\s*=\\s*'((?:''|[^'])*)'\\s*$")
+            .matcher(statement);
+    var reset = Pattern.compile("(?is)^RESET\\s+'((?:''|[^'])+)'\\s*$").matcher(statement);
+    String key = set.matches() ? set.group(1) : reset.matches() ? reset.group(1) : "";
+    if (!key.matches(
+        "(?:table\\.[a-zA-Z0-9_.-]+|execution\\.checkpointing\\.[a-zA-Z0-9_.-]+|execution\\.runtime-mode|parallelism\\.default|pipeline\\.(?:name|auto-watermark-interval|object-reuse))"))
+      fail(
+          "SET / RESET 请使用单引号键值；仅支持"
+              + " table.*、execution.checkpointing.*、execution.runtime-mode、parallelism.default、pipeline.name/auto-watermark-interval/object-reuse，集群与依赖配置请使用部署表单");
+    return true;
   }
 
   /** 按引号、反引号及注释状态识别分号，避免把字符串或注释中的分号当成语句结束。 */

@@ -25,4 +25,10 @@ public interface FlinkCatalogService {
 
   /** 仅按用户操作读取 JDBC 目录的库、表或字段元数据。 */
   ObjectNode metadata(String id, String database, String table);
+
+  /** 显式浏览目录函数；不支持的目录返回能力说明，不能冒充空查询结果。 */
+  ObjectNode functions(String id, String database, String name);
+
+  /** 返回当前用户可读且引用此目录的草稿，删除保护仍核对全部引用。 */
+  ObjectNode usage(String id);
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CodeDiff from '../../../shared/components/editor/CodeDiff.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import forge from 'node-forge'
 import {
@@ -14,7 +15,6 @@ import {
 import AiModelSelect from './AiModelSelect.vue'
 import AiResultReport from './AiResultReport.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
-import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import AiRichText from './AiRichText.vue'
 import AiContentDialog from './AiContentDialog.vue'
 import { aiApi, type AiConversation, type AiModel, type AiResult, type AiTask } from '../api/ai'
@@ -23,6 +23,9 @@ import { requestId } from '../../../shared/utils/requestId'
 
 const props = defineProps<{
   sql: string
+  udfContext?: unknown[]
+  catalogId?: string
+  catalogIds?: string[]
   sqlId: string
   flinkVersion: string
   contextKey: number
@@ -234,6 +237,9 @@ async function analyze(kind: 'chat' | 'explain' | 'generate' | 'repair') {
     allowExternal: allowExternal.value,
     sqlId: props.sqlId,
     sql: props.sql,
+    udfContext: props.udfContext || [],
+    catalogId: props.catalogId || '',
+    catalogIds: props.catalogIds || [],
     flinkVersion: props.flinkVersion,
     conversationVersion: conversation.value.contentVersion,
   })
@@ -658,21 +664,13 @@ onBeforeUnmount(() => {
           <X :size="16" />
         </button>
       </div>
-      <div class="ai-comparison">
-        <section>
-          <h4>当前 SQL（完整）</h4>
-          <CodeEditor :model-value="sql" language="sql" label="当前 SQL 完整审阅" readonly />
-        </section>
-        <section>
-          <h4>建议 SQL（完整）</h4>
-          <CodeEditor
-            :model-value="result?.sql || ''"
-            language="sql"
-            label="建议 SQL 完整审阅"
-            readonly
-          />
-        </section>
-      </div>
+      <CodeDiff
+        class="ai-full-diff"
+        :before="sql"
+        :after="result?.sql || ''"
+        before-label="当前 SQL 完整审阅"
+        after-label="建议 SQL 完整审阅"
+      />
     </dialog>
     <AiContentDialog v-if="summaryLarge" title="作业总结" @close="summaryLarge = false"
       ><AiRichText :text="conversation?.summary || ''"
@@ -680,6 +678,9 @@ onBeforeUnmount(() => {
   </aside>
 </template>
 <style scoped>
+.ai-full-diff {
+  height: 70dvh;
+}
 .ai-sql-panel {
   display: flex;
   flex-direction: column;

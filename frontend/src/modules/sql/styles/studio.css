@@ -252,6 +252,16 @@
   font-weight: 400;
   margin-bottom: 8px;
 }
+.sql-runtime .catalog-include {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.catalog-include input {
+  width: auto;
+  margin: 0;
+}
 .sql-runtime label small {
   font-size: 12px;
   line-height: 1.6;

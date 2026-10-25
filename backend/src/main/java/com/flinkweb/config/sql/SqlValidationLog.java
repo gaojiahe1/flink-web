@@ -7,7 +7,7 @@ import java.util.List;
 /** 专用 Session 的固定日志协议，只采集 Print 输出，顺序号保留重复行及轮转边界。 */
 public final class SqlValidationLog {
   public static final int ROW_LIMIT = 1000;
-  public static final int FILE_BYTES = 32 * 1024 * 1024;
+  public static final int FILE_BYTES = 10 * 1024 * 1024;
   public static final String FILE = "sql-validation.log";
   public static final List<String> FILES = List.of(FILE + ".1", FILE);
   private static final String CONFIG =
@@ -27,7 +27,7 @@ public final class SqlValidationLog {
       appender.file.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c - %m%n
       appender.file.policies.type = Policies
       appender.file.policies.size.type = SizeBasedTriggeringPolicy
-      appender.file.policies.size.size = 32MB
+      appender.file.policies.size.size = 10MB
       appender.file.strategy.type = DefaultRolloverStrategy
       appender.file.strategy.max = 1
       logger.validation.name = org.apache.flink.runtime.taskexecutor.SystemOutRedirectionUtils
@@ -46,7 +46,7 @@ public final class SqlValidationLog {
       appender.validation.filter.onMismatch = DENY
       appender.validation.policies.type = Policies
       appender.validation.policies.size.type = SizeBasedTriggeringPolicy
-      appender.validation.policies.size.size = 32MB
+      appender.validation.policies.size.size = 10MB
       appender.validation.strategy.type = DefaultRolloverStrategy
       appender.validation.strategy.max = 1
       """;

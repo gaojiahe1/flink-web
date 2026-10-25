@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X, Sparkles, LoaderCircle, ArrowUp, Check, RefreshCw } from '@lucide/vue'
 import AiModelSelect from './AiModelSelect.vue'
-import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
+import CodeDiff from '../../../shared/components/editor/CodeDiff.vue'
 import AiRichText from './AiRichText.vue'
 import AiContentDialog from './AiContentDialog.vue'
 import AiEvidenceView from './AiEvidenceView.vue'
@@ -436,69 +436,17 @@ async function continueApplication() {
         <X :size="19" />
       </button>
     </header>
-    <div class="ai-job-context">
-      <details v-if="displayedError" class="notice error ai-job-current-error">
-        <summary :title="displayedError">
-          {{
-            conversation?.evidence
-              ? '本轮重新采集的运行异常'
-              : '列表上次查询的运行异常；发送后重新取证'
-          }}
-          · {{ displayedError }}
-        </summary>
-        <pre>{{ displayedError }}</pre>
-      </details>
-      <div class="ai-job-settings">
-        <AiModelSelect
-          v-model="modelId"
-          purpose="diagnosis"
-          :disabled="working"
-          @selected="model = $event"
-        />
-        <label v-if="canReadLogs" class="ai-check"
-          ><input v-model="includeLogs" :disabled="working" type="checkbox" />包含容器日志<HelpTip
-            text="按本轮需要读取有权访问的JM/TM及故障容器日志，最多四份，各取末尾600行，再提取异常附近和最后输出；并非完整日志。"
-        /></label>
-        <label v-if="model?.external" class="ai-check ai-external"
-          ><input
-            v-model="allowExternal"
-            :disabled="working"
-            type="checkbox" />允许本次发送脱敏上下文<HelpTip
-            text="本轮向所选外部模型发送本作业总结、近期对话、当前SQL、脱敏配置、事件和所选取证方向的数据；勾选后附带受限容器日志，每轮单独确认。"
-        /></label>
-        <label class="ai-job-baseline"
-          >本轮取证方向
-          <select v-model="evidenceCategory" :disabled="working" aria-label="本轮取证方向">
-            <option value="auto">按当前报错自动判断</option>
-            <option value="configuration">SQL / 部署配置</option>
-            <option value="pods">Pod 配置与事件</option>
-            <option value="podMetrics">Pod 资源用量</option>
-            <option value="flinkExceptions">Flink 异常</option>
-            <option value="flinkCheckpoints">快照 / Checkpoint</option>
-            <option value="flinkMetrics">JVM / GC 指标</option>
-            <option v-if="canReadLogs" value="flinkLogs">Flink 日志</option>
-          </select>
-        </label>
-      </div>
-      <p v-if="conversation?.current" class="muted ai-job-baseline">
-        当前草稿 r{{ conversation.current.baseline.jobRevision
-        }}<template v-if="conversation.current.baseline.sqlRevision !== undefined">
-          · SQL r{{ conversation.current.baseline.sqlRevision }}</template
-        >
-        <button class="text-button" :disabled="working" @click="reload">重新核对最新配置</button>
-        <button class="text-button" :disabled="working" @click="largeView = 'current'">
-          查看当前 SQL / YAML
-        </button>
-      </p>
-      <p
-        v-if="conversation?.round?.reason"
-        class="muted ai-job-baseline ai-job-round"
-        :title="conversation.round.reason"
-      >
-        {{ conversation.round.reason }}
-      </p>
-      <p v-if="conversation?.proposalWarning" class="notice">{{ conversation.proposalWarning }}</p>
-    </div>
+    <details v-if="displayedError" class="notice error ai-job-current-error">
+      <summary :title="displayedError">
+        {{
+          conversation?.evidence
+            ? '本轮重新采集的运行异常'
+            : '列表上次查询的运行异常；发送后重新取证'
+        }}
+        · {{ displayedError }}
+      </summary>
+      <pre>{{ displayedError }}</pre>
+    </details>
     <p v-if="loading" class="muted" role="status">
       <LoaderCircle :size="14" class="ai-job-spin" /> 正在恢复本作业对话…
     </p>
@@ -510,6 +458,66 @@ async function continueApplication() {
       :style="{ '--chat-width': split + '%' }"
     >
       <section class="ai-job-conversation" aria-label="诊断对话">
+        <div class="ai-job-context">
+          <div class="ai-job-settings">
+            <AiModelSelect
+              v-model="modelId"
+              purpose="diagnosis"
+              :disabled="working"
+              @selected="model = $event"
+            />
+            <label class="ai-job-baseline ai-job-direction"
+              >本轮取证方向
+              <select v-model="evidenceCategory" :disabled="working" aria-label="本轮取证方向">
+                <option value="auto">按当前报错自动判断</option>
+                <option value="configuration">SQL / 部署配置</option>
+                <option value="pods">Pod 配置与事件</option>
+                <option value="podMetrics">Pod 资源用量</option>
+                <option value="flinkExceptions">Flink 异常</option>
+                <option value="flinkCheckpoints">快照 / Checkpoint</option>
+                <option value="flinkMetrics">JVM / GC 指标</option>
+                <option v-if="canReadLogs" value="flinkLogs">Flink 日志</option>
+              </select>
+            </label>
+            <label v-if="canReadLogs" class="ai-check"
+              ><input
+                v-model="includeLogs"
+                :disabled="working"
+                type="checkbox" />包含容器日志<HelpTip
+                text="按本轮需要读取有权访问的JM/TM及故障容器日志，最多四份，各取末尾600行，再提取异常附近和最后输出；并非完整日志。"
+            /></label>
+            <label v-if="model?.external" class="ai-check ai-external"
+              ><input
+                v-model="allowExternal"
+                :disabled="working"
+                type="checkbox" />允许本次发送脱敏上下文<HelpTip
+                text="本轮向所选外部模型发送本作业总结、近期对话、当前SQL、脱敏配置、事件和所选取证方向的数据；勾选后附带受限容器日志，每轮单独确认。"
+            /></label>
+          </div>
+          <p v-if="conversation?.current" class="muted ai-job-baseline">
+            当前草稿 r{{ conversation.current.baseline.jobRevision
+            }}<template v-if="conversation.current.baseline.sqlRevision !== undefined">
+              · SQL r{{ conversation.current.baseline.sqlRevision }}</template
+            >
+            <button class="text-button" :disabled="working" @click="reload">
+              重新核对最新配置
+            </button>
+            <button class="text-button" :disabled="working" @click="largeView = 'current'">
+              查看当前 SQL / YAML
+            </button>
+          </p>
+          <p
+            v-if="conversation?.round?.reason"
+            class="muted ai-job-baseline ai-job-round"
+            :title="conversation.round.reason"
+          >
+            {{ conversation.round.reason }}
+          </p>
+          <p v-if="conversation?.proposalWarning" class="notice">
+            {{ conversation.proposalWarning }}
+          </p>
+        </div>
+
         <button class="ai-job-summary" @click="largeView = 'summary'">
           当前总结
           <span class="muted">{{
@@ -675,21 +683,12 @@ async function continueApplication() {
           </button>
           <button class="text-button" @click="largeView = 'comparison'">大视图对比 ↗</button>
         </div>
-        <div class="ai-job-comparison">
-          <section>
-            <h5>当前{{ file === 'sql' ? ' SQL' : ' YAML' }}（完整）</h5>
-            <CodeEditor :model-value="currentText" :language="file" readonly label="当前完整内容" />
-          </section>
-          <section>
-            <h5>建议{{ file === 'sql' ? ' SQL' : ' YAML' }}（完整）</h5>
-            <CodeEditor
-              :model-value="proposedText"
-              :language="file"
-              readonly
-              label="建议完整内容"
-            />
-          </section>
-        </div>
+        <CodeDiff
+          class="ai-job-diff"
+          :before="currentText"
+          :after="proposedText"
+          :language="file"
+        />
         <ul v-if="plan.changes.length" class="ai-job-change-list">
           <li v-for="change in plan.changes" :key="change.path">
             <code>{{ change.path }}</code> → {{ change.value }}
@@ -874,17 +873,13 @@ async function continueApplication() {
             {{ stacked ? '切换并排' : '切换上下' }}
           </button>
         </div>
-        <div class="ai-job-large-comparison" :class="{ stacked }">
-          <section>
-            <h4>当前完整内容</h4>
-            <pre>{{ currentText }}</pre>
-          </section>
-          <section>
-            <h4>建议完整内容</h4>
-            <pre>{{ proposedText }}</pre>
-          </section>
-        </div></template
-      >
+        <CodeDiff
+          class="ai-job-large-comparison"
+          :before="currentText"
+          :after="proposedText"
+          :language="file"
+          :stacked="stacked"
+      /></template>
     </AiContentDialog>
   </dialog>
 </template>
@@ -966,6 +961,19 @@ async function continueApplication() {
   margin: 2px 0 0;
   font-size: 12px;
 }
+.ai-job-diff {
+  height: clamp(280px, 50dvh, 650px);
+  margin: 8px 0;
+}
+.ai-job-large-comparison {
+  height: 65dvh;
+}
+.ai-job-current-error {
+  max-height: 120px;
+}
+.ai-job-settings > .ai-check {
+  order: 3;
+}
 .ai-job-context {
   flex: none;
   max-height: min(220px, 32dvh);
@@ -982,8 +990,8 @@ async function continueApplication() {
   flex: none;
 }
 .ai-job-settings :deep(.ai-model-field) {
-  flex: 0 1 360px;
-  min-width: min(280px, 100%);
+  flex: 1 1 260px;
+  min-width: min(210px, 100%);
   margin: 0;
   align-items: center;
 }
@@ -991,7 +999,7 @@ async function continueApplication() {
   font-size: 12px;
 }
 .ai-job-settings > .ai-job-baseline {
-  flex: 0 1 240px;
+  flex: 1 1 200px;
   font-weight: 400;
 }
 .ai-job-round {
@@ -1052,7 +1060,7 @@ async function continueApplication() {
 .ai-job-resizer:hover span {
   background: var(--blue);
 }
-.ai-job-large-comparison {
+.ai-job-large-comparison-legacy {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;

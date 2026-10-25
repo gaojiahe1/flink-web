@@ -7,10 +7,17 @@ import java.util.*;
 public interface DiagnosticService {
   /** 手动查询当前作业事件与 Pod 概览，不返回容器环境变量。 */
   ObjectNode inspect(String id);
+
   /** 返回沿所有者链核验的单个Pod，仅供服务内按需投影和脱敏。 */
-  ObjectNode pod(String id,String podName);
+  ObjectNode pod(String id, String podName);
+
   /** 服务内部脱敏已核验工作负载引用的Secret值，失败时调用方不得返回原始证据。 */
-  com.fasterxml.jackson.databind.JsonNode redactEvidence(String id,com.fasterxml.jackson.databind.JsonNode evidence);
+  com.fasterxml.jackson.databind.JsonNode redactEvidence(
+      String id, com.fasterxml.jackson.databind.JsonNode evidence);
+
+  /** 脱敏已核验 Session 引用的 Secret 值，供 Flink UI 只读日志使用。 */
+  com.fasterxml.jackson.databind.JsonNode redactSessionEvidence(
+      String id, com.fasterxml.jackson.databind.JsonNode evidence);
 
   /** 获取最多 10000 行、4 MiB 的日志，Pod 与容器必须属于该作业。 */
   ObjectNode log(String id, String podName, String container, int lines, boolean previous);

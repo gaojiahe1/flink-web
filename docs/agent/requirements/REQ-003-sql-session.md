@@ -83,3 +83,11 @@ SQL、JAR、Session 共用登记的 Flink 镜像，以挂载 Runner JAR 运行�
 用户要求 Session 完整错误悬浮、刷新移到列表工具栏右上角、关闭 Flink UI 的 Submit New Job；模型服务重新设计并实际测试指定 ModelScope/Qwen 模型；SQL 按官方2.3资料补 Connector/类型提示和高亮；AI 按四步需求向导原型实现并增加模型选择。现已实现的边界及测试分别见 [SQL/Session模块](../modules/sql-session.md)、[AI模块](../modules/ai-assistant.md) 与 [本次验收](../validation.md#session-界面与模型需求向导2026-10-15)。
 
 10-15历史决定：用户先指定 BES11.5.0.x，随后暂缓并保留Tomcat。2026-10-19用户已提供 BES starter 并明确要求替换，现已实现，以 [REQ-004](REQ-004-storage-security.md) 和 [运行模块](../modules/storage-runtime.md#bes-运行时与后端镜像2026-10-19) 为准。真实 ModelScope 测试被账号邮箱验证要求阻止，不标成功。
+
+## Catalog、UDF 与 SQL 扩展（2026-10-25）
+
+用户确认 Catalog 优先 JDBC + Hive，并要求页面整体重设计；采用目录/对象/详情分栏、按需浏览、修订保护、引用删除保护及 SQL 共用浏览组件。上传 Hive 配置与插件进入统一下载器，多目录初始化最后切换主目录；连接、配置、运行验证层级分别报告。实现边界见 [Catalog 模块](../modules/catalog-workbench.md)。
+
+SQL UDF 在工作台侧栏上传/选择 JAR，一包多个函数独立选用；静态分析继承、签名、调用线索，名称与业务说明可维护，保存后服务端重建元信息。AI 带入选中 UDF 及目录投影，不把调用线索当成完整源码。SQL/YAML 对比显示行内/行级增删，生成候选后从设置区起左右分栏。
+
+初始化支持 CREATE/DROP/ALTER、USE、受控 SET/RESET；SET 不能改变提交目标、类路径和平台依赖管理。新 SQL 日志默认控制台与文件双输出，10MB 当前文件和1个归档。旧配置、显式空配置及既有共享 Runner 不自动覆盖。

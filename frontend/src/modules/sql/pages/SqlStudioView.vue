@@ -8,13 +8,10 @@ import ManualRefreshButton from '../../../shared/components/form/ManualRefreshBu
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
 import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
-import MetadataBrowser from '../../datasource/components/MetadataBrowser.vue'
-import {
-  catalogsApi,
-  type FlinkCatalog,
-  type ColumnDefinition,
-} from '../../flink-catalog/api/catalogs'
+import CatalogExplorer from '../../flink-catalog/components/CatalogExplorer.vue'
+import { catalogsApi, type FlinkCatalog } from '../../flink-catalog/api/catalogs'
 import SqlHistory from '../components/SqlHistory.vue'
+import SqlUdfPanel, { type UdfArtifact } from '../components/SqlUdfPanel.vue'
 import SqlDraftCreateDialog from '../components/SqlDraftCreateDialog.vue'
 import SqlDeploymentAudit from '../components/SqlDeploymentAudit.vue'
 import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
@@ -57,6 +54,7 @@ type Catalog = {
   yaml?: string
 }
 type Runtime = {
+  udfArtifacts: UdfArtifact[]
   logConfiguration: Record<string, string>
   baseYaml: string
   deploymentYaml: string
@@ -67,6 +65,7 @@ type Runtime = {
   parallelism: number
   slots: number
   catalogId: string
+  catalogIds: string[]
   database: string
   jmCpu: number
   tmCpu: number
@@ -116,12 +115,14 @@ async function blurName() {
   }
 }
 const initialRuntime = (): Runtime => ({
+  udfArtifacts: [],
   logConfiguration: defaultLogConfiguration(),
   baseYaml: '',
   deploymentYaml: '',
   serviceAccount: systemInfo.value?.namespace ? systemInfo.value.namespace + '-flink' : '',
   workspaceId: requestId(),
   catalogId: '',
+  catalogIds: [],
   database: '',
   jmCpu: 1,
   tmCpu: 1,
@@ -165,6 +166,13 @@ const flinkCatalogs = ref<FlinkCatalog[]>([]),
   explorerCollapsed = ref(false),
   maximized = ref(false)
 const currentCatalog = computed(() => flinkCatalogs.value.find((c) => c.id === runtime.catalogId))
+const browseCatalogId = ref('')
+const browseCatalog = computed(
+  () =>
+    flinkCatalogs.value.find((c) => c.id === browseCatalogId.value) ||
+    currentCatalog.value ||
+    flinkCatalogs.value[0],
+)
 const canBrowse = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
 )
@@ -484,6 +492,10 @@ onMounted(async () => {
     if (requested) await open(requested, true)
     else if (route.query.draft) error.value = '对应 SQL 草稿不存在或没有访问权限'
     else if (records.value[0]) await open(records.value[0], true)
+    if (typeof route.query.catalog === 'string') {
+      browseCatalogId.value = route.query.catalog
+      sideTab.value = 'catalogs'
+    }
   } catch (e) {
     error.value = showValidationError((e as Error).message)
   } finally {
@@ -501,6 +513,7 @@ async function mayDiscard() {
 async function open(record: SqlDraft, force = false) {
   if (!force && !(await mayDiscard())) return
   selected.value = record.id
+  browseCatalogId.value = ''
   stopListening()
   verification.value = null
   needsSession.value = false
@@ -822,6 +835,10 @@ function selectCatalog() {
   check.value = null
   preview.value = ''
 }
+function setCatalog(id: string) {
+  runtime.catalogId = id
+  selectCatalog()
+}
 function previewCatalog() {
   return run(async () => {
     const result = await catalogsApi.snippet(runtime.catalogId, runtime.database)
@@ -834,21 +851,17 @@ function refreshCatalogs() {
     flinkCatalogs.value = await catalogsApi.list()
   })
 }
-function insertTable(value: { database: string; table: string; columns: ColumnDefinition[] }) {
-  const quote = (name: string) =>
-    String.fromCharCode(96) +
-    name.replaceAll(String.fromCharCode(96), String.fromCharCode(96).repeat(2)) +
-    String.fromCharCode(96)
-  const reference = [runtime.catalogId, value.database, value.table].map(quote).join('.')
-  const fields = value.columns.map((column) => quote(column.name)).join(', ')
-  form.sql +=
-    '\n\n-- Catalog 表引用示例：请将 target_table 替换为已定义的目标表\nINSERT INTO target_table\nSELECT ' +
-    fields +
-    '\nFROM ' +
-    reference +
-    ';\n'
+function insertTable(value: { catalogId: string; database: string; sql: string }) {
+  if (!runtime.catalogIds.includes(value.catalogId)) runtime.catalogIds.push(value.catalogId)
+  sqlEditor.value?.insert(value.sql + '\n')
   check.value = null
-  message.value = '已追加完整表引用示例，请选择目标表后再检查和发布。'
+  message.value = '已插入对象引用并选择所需 Catalog；请检查后显式保存、验证或发布。'
+}
+function insertUdf(text: string) {
+  if (text.startsWith('CREATE TEMPORARY SYSTEM FUNCTION')) form.sql = text + '\n' + form.sql
+  else sqlEditor.value?.insert(text)
+  check.value = null
+  message.value = '已修改当前 SQL；保存后发布或验证，运行中作业不会自动改变。'
 }
 watch(
   () => route.query.draft,
@@ -1422,26 +1435,50 @@ watch(
         text="选择 Catalog 后，发布时自动生成初始化 SQL。目录配置变更在下次预览或发布时生效；默认数据库须已存在。"
       />
       <RouterLink class="text-button" to="/catalogs">管理 Catalog ↗</RouterLink>
-      <div v-if="currentCatalog" class="source-item">
-        <div>
-          <strong>{{ currentCatalog.name }}</strong
-          ><small>{{ currentCatalog.type }} · 修订 {{ currentCatalog.revision }}</small>
+      <label
+        >浏览目录<select v-model="browseCatalogId" aria-label="浏览 Catalog">
+          <option value="">当前目录 / 首个登记</option>
+          <option v-for="catalog in flinkCatalogs" :key="catalog.id" :value="catalog.id">
+            {{ catalog.name }} · {{ catalog.type }}
+          </option>
+        </select></label
+      >
+      <template v-if="browseCatalog"
+        ><div class="toolbar-actions">
+          <button
+            class="button"
+            :disabled="busy || !editable || !selected"
+            @click="setCatalog(browseCatalog.id)"
+          >
+            设为当前目录</button
+          ><label class="catalog-include"
+            ><input
+              v-model="runtime.catalogIds"
+              type="checkbox"
+              :value="browseCatalog.id"
+              :disabled="busy || !editable || !selected"
+            />随本作业初始化</label
+          >
         </div>
-      </div>
-      <MetadataBrowser
-        v-if="currentCatalog?.type === 'jdbc' && canBrowse"
-        :key="currentCatalog.id"
-        :endpoint="'/api/sql/catalogs/' + currentCatalog.id + '/metadata'"
-        :action-label="editable ? '插入表引用示例' : undefined"
-        @select="insertTable"
+        <CatalogExplorer
+          :key="selected + ':' + browseCatalog.id"
+          :catalog="browseCatalog"
+          :can-browse="!!canBrowse"
+          :insertable="!!editable && !busy && !!selected"
+          compact
+          @select="insertTable"
+      /></template>
+      <p v-else class="empty-state">暂无 Catalog，请先登记连接和依赖。</p>
+    </aside>
+    <aside v-if="sideTab === 'udf'" class="sql-runtime">
+      <SqlUdfPanel
+        :key="selected"
+        v-model="runtime.udfArtifacts"
+        :scope-id="runtime.workspaceId"
+        :disabled="busy || !editable || !selected"
+        @insert="insertUdf"
+        @uploading="artifactUploading = $event"
       />
-      <p v-else class="empty-state">
-        {{
-          !currentCatalog
-            ? '请先选择 Catalog'
-            : '当前目录在 Flink 运行时初始化；库表浏览仅支持 JDBC 且需开发权限。'
-        }}
-      </p>
     </aside>
     <aside v-if="sideTab === 'history'" class="sql-runtime">
       <SqlHistory
@@ -1462,6 +1499,9 @@ watch(
       :check-summary="check?.message"
       :dirty="dirty"
       :sql="form.sql"
+      :udf-context="runtime.udfArtifacts"
+      :catalog-id="runtime.catalogId"
+      :catalog-ids="runtime.catalogIds"
       :sql-id="selected"
       :flink-version="images.find((i) => i.id === runtime.imageId)?.flinkVersion || ''"
       :context-key="aiContextVersion"
@@ -1499,6 +1539,13 @@ watch(
         @click="sideTab = sideTab === 'sources' ? '' : 'sources'"
       >
         数据源</button
+      ><button
+        v-if="editable"
+        :class="{ active: sideTab === 'udf' }"
+        :aria-expanded="sideTab === 'udf'"
+        @click="sideTab = sideTab === 'udf' ? '' : 'udf'"
+      >
+        UDF 函数</button
       ><button
         :class="{ active: sideTab === 'history' }"
         :aria-expanded="sideTab === 'history'"

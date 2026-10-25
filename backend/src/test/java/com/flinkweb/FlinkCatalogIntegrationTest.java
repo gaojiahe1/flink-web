@@ -131,6 +131,63 @@ class FlinkCatalogIntegrationTest {
     return id;
   }
 
+  /** 多目录发布顺序、依赖去重、引用保护和新作业日志默认值共同验证。 */
+  @Test
+  void multipleCatalogsAndDefaultLogs() {
+    String primary = id(),
+        other = id(),
+        jdbc = id(),
+        source = mysql(),
+        job = "sql-" + id().replace('_', '-');
+    catalogs.save(primary, memory());
+    catalogs.save(other, memory());
+    records.save(
+        "artifacts",
+        "driver-" + jdbc,
+        mapper
+            .createObjectNode()
+            .put("filename", "driver.jar")
+            .put("uri", "https://artifacts.test/driver.jar"),
+        0);
+    var definition =
+        memory().put("type", "jdbc").put("dataSourceId", source).put("defaultDatabase", "sales");
+    definition.putArray("dependencyArtifactIds").add("driver-" + jdbc);
+    catalogs.save(jdbc, definition);
+    var runtime = mapper.createObjectNode().put("catalogId", primary).put("database", "analytics");
+    runtime.putArray("catalogIds").add(other).add(jdbc).add(other);
+    var options = runtime.deepCopy();
+    String initialization = catalogs.prepare(options);
+    assertThat(initialization.split("CREATE CATALOG", -1)).hasSize(4);
+    assertThat(initialization).endsWith("USE CATALOG `" + primary + "`;\nUSE `analytics`;\n");
+    assertThat(options.path("dependencyArtifactIds")).hasSize(1);
+    String prepared = options.toString();
+    catalogs.prepare(options);
+    assertThat(options.toString()).isEqualTo(prepared);
+    var safe = com.flinkweb.service.ai.support.AiCatalogContext.collect(records, mapper, runtime);
+    assertThat(safe).hasSize(3);
+    assertThat(safe.toString()).doesNotContain("passwordRef", "only-test-secret", "mysql.test");
+    var input = new SqlDraftRequest(job, "", "INSERT INTO t VALUES (1)", runtime, 0);
+    var saved = sql.save(job, input);
+    String log = saved.at("/runtime/logConfiguration/log4j-console.properties").asText();
+    assertThat(log).contains("size.size = 10MB", "strategy.max = 1", "${sys:log.file}");
+    assertThat(saved.at("/runtime/dependencyArtifactIds").isMissingNode()).isTrue();
+    assertThat(catalogs.usage(jdbc).path("items")).hasSize(1);
+    assertThatThrownBy(() -> catalogs.delete(other, 1)).hasMessageContaining("引用");
+    assertThatThrownBy(() -> catalogs.delete(jdbc, 1)).hasMessageContaining("引用");
+    var cleared = (ObjectNode) saved.path("runtime");
+    cleared.putObject("logConfiguration");
+    var updated =
+        sql.save(
+            job,
+            new SqlDraftRequest(job, "", input.sql(), cleared, saved.path("revision").asLong()));
+    assertThat(updated.at("/runtime/logConfiguration")).isEmpty();
+    sql.delete(job, updated.path("revision").asLong());
+    catalogs.delete(other, 1);
+    catalogs.delete(jdbc, 1);
+    catalogs.delete(primary, 1);
+    verifyNoInteractions(kubernetes);
+  }
+
   /** 登记修订冲突、非法标识和目录操作权限均在后端校验。 */
   @Test
   void revisionAndPermissions() throws Exception {
@@ -183,8 +240,14 @@ class FlinkCatalogIntegrationTest {
         "CREATE TEMPORARY TABLE sink_table (n INT) WITH ('connector'='blackhole'); INSERT INTO"
             + " sink_table VALUES (1);";
     var input = new SqlDraftRequest(job, "", script, runtime, 0);
-    records.save("artifacts", "runner-" + job, mapper.createObjectNode()
-        .put("filename", "flink-web-sql-runner.jar").put("uri", "https://artifacts.test/flink-web-sql-runner.jar"), 0);
+    records.save(
+        "artifacts",
+        "runner-" + job,
+        mapper
+            .createObjectNode()
+            .put("filename", "flink-web-sql-runner.jar")
+            .put("uri", "https://artifacts.test/flink-web-sql-runner.jar"),
+        0);
     runtime.put("runnerArtifactId", "runner-" + job);
     var saved = sql.save(job, input);
     assertThat(sql.check(script, runtime).statementCount()).isEqualTo(5);
@@ -281,13 +344,13 @@ class FlinkCatalogIntegrationTest {
     verifyNoInteractions(kubernetes);
   }
 
-  /** Catalog 初始化必须在全部 INSERT 之前；无执行写入和破坏性语句仍然被拒绝。 */
+  /** Catalog 初始化必须在全部 INSERT 之前；DDL 可以显式执行，但不能成为无输出脚本。 */
   @Test
   void rejectsUnsafeStatementOrderAndCommands() {
     assertThatThrownBy(() -> validation.validate("INSERT INTO t VALUES (1); USE CATALOG c;"))
         .isInstanceOf(BusinessException.class);
-    assertThatThrownBy(() -> validation.validate("DROP CATALOG c; INSERT INTO t VALUES (1);"))
-        .isInstanceOf(BusinessException.class);
+    assertThat(validation.validate("DROP CATALOG c; INSERT INTO t VALUES (1);").statementCount())
+        .isEqualTo(2);
     assertThatThrownBy(
             () -> validation.validate("CREATE CATALOG c WITH ('type'='generic_in_memory');"))
         .isInstanceOf(BusinessException.class);

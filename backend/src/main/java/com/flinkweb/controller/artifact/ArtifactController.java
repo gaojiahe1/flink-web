@@ -30,6 +30,13 @@ public class ArtifactController {
     return ApiResponse.ok(inspector.inspect(input.path("reference").asText()));
   }
 
+  /** 识别一个 JAR 内全部可实例化的 Flink UDF，不加载用户代码。 */
+  @PostMapping("/udf-functions")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> udfFunctions(@RequestBody ObjectNode input) {
+    return ApiResponse.ok(inspector.inspect(input.path("reference").asText()));
+  }
+
   /** 接收 S3 目录和分页参数，返回制品目录。 */
   @GetMapping("/objects")
   public ApiResponse<ObjectNode> list(

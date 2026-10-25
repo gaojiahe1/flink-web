@@ -59,15 +59,53 @@ class SqlValidationServiceTest {
   /** 验证提前拦截 CTAS，查询及包含相似字符串的 DDL 正常，Application 保留原范围。 */
   @Test
   void verificationRejectsCtasBeforeRunnerAndExplainsQueryScope() {
-    for (String query : java.util.List.of("SELECT 1", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
+    for (String query :
+        java.util.List.of("SELECT 1", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
       assertThat(validation.validateVerification(query).valid()).isTrue();
-    for (String query : java.util.List.of("SELECT 1", "(SELECT 1)", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
-      assertThatThrownBy(() -> validation.validateVerification("CREATE TEMPORARY TABLE t AS " + query))
+    for (String query :
+        java.util.List.of(
+            "SELECT 1", "(SELECT 1)", "WITH t AS (SELECT 1) SELECT * FROM t", "VALUES (1)"))
+      assertThatThrownBy(
+              () -> validation.validateVerification("CREATE TEMPORARY TABLE t AS " + query))
           .hasMessageContaining("验证不执行 CREATE TABLE AS");
-    assertThat(validation.validateVerification("CREATE TABLE t(a STRING) WITH ('comment'='AS SELECT'); SELECT 1").valid()).isTrue();
-    assertThat(validation.validate("CREATE TABLE t AS SELECT 1; INSERT INTO sink SELECT * FROM t").valid()).isTrue();
+    assertThat(
+            validation
+                .validateVerification(
+                    "CREATE TABLE t(a STRING) WITH ('comment'='AS SELECT'); SELECT 1")
+                .valid())
+        .isTrue();
+    assertThat(
+            validation
+                .validate("CREATE TABLE t AS SELECT 1; INSERT INTO sink SELECT * FROM t")
+                .valid())
+        .isTrue();
     assertThatThrownBy(() -> validation.validate("SELECT 1")).hasMessageContaining("请使用 SQL 验证");
     assertThatThrownBy(() -> validation.validateVerification("SET 'a'='b'; SELECT 1"))
-        .hasMessageContaining("验证还支持 SELECT / WITH / VALUES").hasMessageNotContaining("暂不支持 SELECT");
+        .hasMessageContaining("SET / RESET")
+        .hasMessageNotContaining("暂不支持 SELECT");
+  }
+
+  /** SET 与 DDL 按顺序保留，提交目标和依赖参数不可越过部署约束。 */
+  @Test
+  void settingsDropAndFunctionsAreSupportedWithoutClientCommands() {
+    var checked =
+        validation.validate(
+            "SET 'table.local-time-zone'='Asia/Shanghai'; RESET 'parallelism.default'; DROP"
+                + " TEMPORARY SYSTEM FUNCTION IF EXISTS normalize; CREATE TEMPORARY SYSTEM FUNCTION"
+                + " normalize AS 'example.Normalize'; DROP TABLE IF EXISTS old_t; ALTER TABLE t"
+                + " RENAME TO t2; INSERT INTO sink SELECT normalize(v) FROM t2");
+    assertThat(checked.statementCount()).isEqualTo(7);
+    assertThat(checked.statements().get(0)).contains("table.local-time-zone");
+    for (String key :
+        java.util.List.of(
+            "execution.target", "pipeline.jars", "kubernetes.namespace", "tableXexecXfoo"))
+      assertThatThrownBy(
+              () -> validation.validate("SET '" + key + "'='value'; INSERT INTO sink VALUES(1)"))
+          .hasMessageContaining("SET / RESET");
+    assertThatThrownBy(() -> validation.validate("INSERT INTO sink VALUES(1); DROP TABLE old"))
+        .hasMessageContaining("之前");
+    assertThatThrownBy(
+            () -> validation.validate("ADD JAR 'file:///tmp/a.jar'; INSERT INTO sink VALUES(1)"))
+        .hasMessageContaining("UDF");
   }
 }

@@ -23,6 +23,9 @@ public class FlinkUiServiceImpl implements FlinkUiService {
   private final JobService jobs;
   private final com.flinkweb.service.session.SessionClusterService sessions;
   private final String namespace;
+  private final com.flinkweb.service.permission.AccessService access;
+  private final com.flinkweb.service.job.runtime.DiagnosticService diagnostics;
+  private final com.flinkweb.service.ai.support.AiContentGuard guard;
   private final HttpClient client =
       HttpClient.newBuilder()
           .connectTimeout(Duration.ofSeconds(5))
@@ -33,10 +36,16 @@ public class FlinkUiServiceImpl implements FlinkUiService {
   public FlinkUiServiceImpl(
       JobService jobs,
       PlatformProperties properties,
-      com.flinkweb.service.session.SessionClusterService sessions) {
+      com.flinkweb.service.session.SessionClusterService sessions,
+      com.flinkweb.service.permission.AccessService access,
+      com.flinkweb.service.job.runtime.DiagnosticService diagnostics,
+      com.flinkweb.service.ai.support.AiContentGuard guard) {
     this.jobs = jobs;
     this.sessions = sessions;
     this.namespace = properties.namespace();
+    this.access = access;
+    this.diagnostics = diagnostics;
+    this.guard = guard;
   }
 
   /** 重定向到带尾斜杠的 UI 地址，确保相对资源能从代理路径加载。 */
@@ -78,14 +87,30 @@ public class FlinkUiServiceImpl implements FlinkUiService {
       HttpServletRequest request,
       HttpServletResponse response)
       throws IOException {
-    String path = request.getRequestURI().substring(prefix.length());
-    if (!path.matches("[a-zA-Z0-9_./-]*") || path.contains("..") || path.contains("//"))
+    String path = request.getRequestURI().substring(prefix.length()).replaceAll("(?i)%3a", ":");
+    if (!path.matches("[a-zA-Z0-9_:./-]*") || path.contains("..") || path.contains("//"))
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PROXY_PATH", "代理路径无效");
     if (id.startsWith("session:") && path.matches("(?i)(v[0-9]+/)?jars(/.*)?"))
       throw new BusinessException(
           HttpStatus.FORBIDDEN, "SESSION_SUBMIT_DISABLED", "Session Flink UI 不开放上传和提交作业，请通过平台提交");
-    if (path.matches(
-        "(?i).*(^|/)(environment|logs|log|stdout|yarn-cancel|yarn-stop|cancel|stop|run|rescaling)(/|$).*"))
+    boolean logRequest =
+        path.matches(
+            "(?:v1/)?(?:jobmanager|taskmanagers/[a-zA-Z0-9_.:-]+)/(?:log|stdout|logs(?:/[a-zA-Z0-9_.-]+\\.(?:log|out)(?:\\.[0-9]+)?)?)");
+    if (logRequest) {
+      var auth =
+          org.springframework.security.core.context.SecurityContextHolder.getContext()
+              .getAuthentication();
+      if (auth == null
+          || auth.getAuthorities().stream()
+              .noneMatch(
+                  a -> java.util.Set.of("ROLE_ADMIN", "ROLE_OPERATOR").contains(a.getAuthority())))
+        throw new BusinessException(
+            HttpStatus.FORBIDDEN, "LOG_ACCESS_DENIED", "Flink UI 日志仅向管理员及有作业运维权限的运维账号开放");
+      access.require(id, "operate");
+    }
+    if (!logRequest
+        && path.matches(
+            "(?i).*(^|/)(environment|logs|log|stdout|yarn-cancel|yarn-stop|cancel|stop|run|rescaling)(/|$).*"))
       throw new BusinessException(
           HttpStatus.FORBIDDEN, "SENSITIVE_ENDPOINT", "平台代理不开放可能泄露密钥的环境和原始日志接口");
     // 目标地址仅由已登记作业名和固定 Namespace 生成，不接受外部目标 URL。
@@ -130,6 +155,33 @@ public class FlinkUiServiceImpl implements FlinkUiService {
         String type =
             upstream.headers().firstValue("Content-Type").orElse("application/octet-stream");
         response.setContentType(type);
+        if (logRequest) {
+          byte[] bytes = body.readNBytes(10 * 1024 * 1024 + 1);
+          if (bytes.length > 10 * 1024 * 1024)
+            throw new BusinessException(
+                HttpStatus.BAD_GATEWAY, "LOG_TOO_LARGE", "日志超过 10 MB，请查看滚动日志文件");
+          String text = new String(bytes, StandardCharsets.UTF_8);
+          com.fasterxml.jackson.databind.JsonNode evidence =
+              type.contains("json")
+                  ? mapper.readTree(text)
+                  : mapper.getNodeFactory().textNode(text);
+          evidence =
+              id.startsWith("session:")
+                  ? diagnostics.redactSessionEvidence(id.substring(8), evidence)
+                  : diagnostics.redactEvidence(id, evidence);
+          evidence = guard.sanitize(evidence);
+          response.setContentType(
+              type.contains("json")
+                  ? "application/json;charset=UTF-8"
+                  : "text/plain;charset=UTF-8");
+          response
+              .getOutputStream()
+              .write(
+                  (type.contains("json") ? mapper.writeValueAsString(evidence) : evidence.asText())
+                      .getBytes(StandardCharsets.UTF_8));
+          log.info("Flink UI log read resource={} path={}", id, path);
+          return;
+        }
         if (upstream.statusCode() >= 500 && (path.isEmpty() || path.equals("index.html"))) {
           byte[] bytes = body.readNBytes(2 * 1024 * 1024 + 1);
           if (bytes.length > 2 * 1024 * 1024) throw new IOException("Error response too large");

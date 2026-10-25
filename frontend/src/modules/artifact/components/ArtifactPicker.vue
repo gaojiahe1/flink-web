@@ -19,6 +19,8 @@ const props = defineProps<{
   exclude?: string
   disabled?: boolean
   runner?: boolean
+  single?: boolean
+  fileLabel?: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [string | string[]]
@@ -30,6 +32,7 @@ const uploading = ref(false),
   error = ref(''),
   query = ref(''),
   scope = ref(props.runner ? 'runner' : props.scopeId ? 'job' : 'shared')
+const singleSelection = computed(() => props.single || props.category === 'main')
 const source = ref('s3'),
   address = ref('')
 const root = ref(''),
@@ -44,11 +47,13 @@ const visibleDirs = computed(() =>
   ),
 )
 const label = computed(() =>
-  props.runner
-    ? 'SQL Runner 文件'
-    : props.category === 'main'
-      ? '主 JAR 文件'
-      : '附加依赖与配置文件',
+  props.fileLabel
+    ? props.fileLabel
+    : props.runner
+      ? 'SQL Runner 文件'
+      : props.category === 'main'
+        ? '主 JAR 文件'
+        : '附加依赖与配置文件',
 )
 const base = computed(() =>
   scope.value === 'all'
@@ -164,7 +169,7 @@ watch(
   { immediate: true },
 )
 function choose(id: string) {
-  if (props.category === 'main') emit('update:modelValue', id)
+  if (singleSelection.value) emit('update:modelValue', id)
   else
     emit(
       'update:modelValue',
@@ -174,10 +179,7 @@ function choose(id: string) {
     )
 }
 function remove(id: string) {
-  emit(
-    'update:modelValue',
-    props.category === 'main' ? '' : selectedIds.value.filter((v) => v !== id),
-  )
+  emit('update:modelValue', singleSelection.value ? '' : selectedIds.value.filter((v) => v !== id))
 }
 function confirmAddress() {
   error.value = ''
@@ -206,7 +208,7 @@ function confirmAddress() {
           : '地址最后一层须为文件名，仅支持字母、数字、点、下划线和连字符',
       )
     emit('uploaded', { id: raw, name: filename, filename, uri: raw })
-    if (props.category === 'main') emit('update:modelValue', raw)
+    if (singleSelection.value) emit('update:modelValue', raw)
     else emit('update:modelValue', [...new Set([...selectedIds.value, raw])])
     address.value = ''
   } catch (e) {
@@ -229,7 +231,7 @@ async function upload(event: Event) {
       const artifact = await request<Artifact>('/api/artifacts/upload', { method: 'POST', body })
       emit('uploaded', artifact)
       ids = [...new Set([...ids, artifact.id])]
-      emit('update:modelValue', props.category === 'main' ? artifact.id : ids)
+      emit('update:modelValue', singleSelection.value ? artifact.id : ids)
     }
     await load(prefix.value)
   } catch (e) {
@@ -291,7 +293,7 @@ async function upload(event: Event) {
             type="file"
             :aria-label="category === 'main' ? '上传主 JAR' : '上传依赖文件'"
             :accept="category === 'main' ? '.jar' : undefined"
-            :multiple="category === 'dependency'"
+            :multiple="!singleSelection"
             :disabled="disabled || uploading || busy || !!error || !root"
             @change="upload"
           />
@@ -401,8 +403,8 @@ async function upload(event: Event) {
           :title="a.name"
         >
           <input
-            :type="category === 'main' ? 'radio' : 'checkbox'"
-            :name="category === 'main' ? 'main-jar-' + scopeId : undefined"
+            :type="singleSelection ? 'radio' : 'checkbox'"
+            :name="singleSelection ? 'file-' + scopeId : undefined"
             :checked="selectedIds.includes(a.id)"
             :disabled="disabled || uploading || busy"
             @change="choose(a.id)"

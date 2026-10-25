@@ -111,6 +111,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     var draft = sql.get(sqlId);
     if (draft.path("revision").asLong() != revision) fail("REVISION_CONFLICT", "SQL 草稿已修改，请重新检查");
     var runtime = (ObjectNode) draft.path("runtime");
+    artifacts.dependencies(runtime);
     var checked = sql.check(draft.path("sql").asText(), runtime);
     var cluster = sessions.validationCluster();
     var clusterRuntime = cluster.path("runtime");
@@ -125,8 +126,7 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
       fail("TOO_MANY_DEPENDENCIES", "最多选择 50 个依赖");
     for (var dependency : runtime.path("dependencyArtifactIds")) {
       String ref = dependency.asText();
-      String filename =
-          ref.startsWith("s3:") ? ref : records.require("artifacts", ref).path("filename").asText();
+      String filename = artifacts.filename(ref);
       if (!filename.toLowerCase(Locale.ROOT).endsWith(".jar")) {
         boolean mounted = false;
         for (var configured : clusterRuntime.path("dependencyArtifactIds"))
@@ -367,14 +367,16 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     var prepared = new ArrayList<ObjectNode>();
     var knownSecrets = secrets.secrets();
     for (var event : page) {
-      var row = mapper
+      var row =
+          mapper
               .createObjectNode()
               .put("sink", event.sink())
               .put("kind", event.kind())
               .put("value", redact(event.value(), knownSecrets));
       String value = row.path("value").asText().stripLeading();
-      row.put("structureStatus", value.startsWith("{") || value.startsWith("[")
-          ? "INVALID_STRUCTURE" : "LEGACY_TEXT");
+      row.put(
+          "structureStatus",
+          value.startsWith("{") || value.startsWith("[") ? "INVALID_STRUCTURE" : "LEGACY_TEXT");
       try {
         var payload = mapper.readTree(row.path("value").asText());
         if (validResultStructure(payload)) {
@@ -418,16 +420,18 @@ public class SqlExecutionServiceImpl implements SqlExecutionService {
     var columns = payload.path("columns");
     var cells = payload.path("cells");
     var keys = payload.path("keys");
-    if (!columns.isArray() || columns.isEmpty() || !cells.isArray() || !keys.isArray()
+    if (!columns.isArray()
+        || columns.isEmpty()
+        || !cells.isArray()
+        || !keys.isArray()
         || columns.size() != cells.size()) return false;
     var names = new HashSet<String>();
-    for (var column : columns)
-      if (!column.isTextual() || !names.add(column.asText())) return false;
-    for (var cell : cells)
-      if (!cell.isNull() && !cell.isTextual()) return false;
+    for (var column : columns) if (!column.isTextual() || !names.add(column.asText())) return false;
+    for (var cell : cells) if (!cell.isNull() && !cell.isTextual()) return false;
     var keyNames = new HashSet<String>();
     for (var key : keys)
-      if (!key.isTextual() || !names.contains(key.asText()) || !keyNames.add(key.asText())) return false;
+      if (!key.isTextual() || !names.contains(key.asText()) || !keyNames.add(key.asText()))
+        return false;
     return !payload.has("target") || payload.path("target").isTextual();
   }
 

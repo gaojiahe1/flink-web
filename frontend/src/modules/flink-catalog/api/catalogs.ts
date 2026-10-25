@@ -9,6 +9,10 @@ export interface FlinkCatalog {
   warehouse: string
   hiveConfDir: string
   revision: number
+  dependencyArtifactIds?: string[]
+  hiveSiteArtifactId?: string
+  metastoreUris?: string
+  hiveVersion?: string
 }
 export interface ColumnDefinition {
   name: string
@@ -16,6 +20,8 @@ export interface ColumnDefinition {
   nullable?: boolean
   primaryKey?: boolean
   sourceType?: string
+  partition?: boolean
+  comment?: string
 }
 export interface MetadataResult {
   databases?: string[]
@@ -30,6 +36,30 @@ export interface CatalogSnippet {
   env: { name: string; value: string }[]
 }
 export const catalogsApi = {
+  metadata: (id: string, database = '', table = '', signal?: AbortSignal) =>
+    request<MetadataResult>('/api/sql/catalogs/' + encodeURIComponent(id) + '/metadata', {
+      method: 'POST',
+      signal,
+      ...jsonBody({ database, table }),
+    }),
+  functions: (id: string, database: string, name = '', signal?: AbortSignal) =>
+    request<{
+      functions?: { name: string; type: string }[]
+      available: boolean
+      message?: string
+      name?: string
+      className?: string
+      checkedAt: string
+      truncated: boolean
+    }>('/api/sql/catalogs/' + encodeURIComponent(id) + '/functions', {
+      method: 'POST',
+      signal,
+      ...jsonBody({ database, name }),
+    }),
+  usage: (id: string) =>
+    request<{ items: { id: string; name: string; revision: number; jobId: string }[] }>(
+      '/api/sql/catalogs/' + encodeURIComponent(id) + '/usage',
+    ),
   test: (id: string) =>
     request<{ level: string; message: string }>(
       '/api/sql/catalogs/' + encodeURIComponent(id) + '/test',

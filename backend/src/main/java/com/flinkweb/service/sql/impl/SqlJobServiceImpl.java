@@ -39,6 +39,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   private final com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs;
   private final com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts;
   private final com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml;
+  private final org.springframework.transaction.support.TransactionTemplate transactions;
 
   /** 注入草稿持久化、SQL 基础校验及部署渲染依赖。 */
   public SqlJobServiceImpl(
@@ -54,7 +55,10 @@ public class SqlJobServiceImpl implements SqlJobService {
       SqlParserService parser,
       com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs,
       com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts,
-      com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml) {
+      com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml,
+      org.springframework.transaction.PlatformTransactionManager transactionManager) {
+    this.transactions =
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     this.runtimeYaml = runtimeYaml;
     this.runtimeArtifacts = runtimeArtifacts;
     this.records = records;
@@ -94,7 +98,6 @@ public class SqlJobServiceImpl implements SqlJobService {
   }
 
   /** 保存尚在编写的 SQL，使用修订号保护并发修改；不要求未完成脚本通过执行检查。 */
-  @Transactional
   public ObjectNode save(String id, SqlDraftRequest input) {
     access.require("sql:" + id, "edit");
     if (!id.equals(input.name()))
@@ -102,10 +105,18 @@ public class SqlJobServiceImpl implements SqlJobService {
     if (input.sql().getBytes(StandardCharsets.UTF_8).length > 32768)
       throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_SQL", "SQL 脚本不能超过 32 KiB");
     var runtime = runtimeYaml.prepare(input.runtime(), input.name(), false);
+    runtimeArtifacts.validateUdfs(runtime);
     if (runtime.path("upgradeMode").asText().isBlank()) runtime.put("upgradeMode", "stateless");
     if (!runtime.path("deploymentYaml").asText().isBlank()) configuration(input);
     catalogs.prepare(runtime.deepCopy());
+    return transactions.execute(status -> persist(id, input, runtime));
+  }
+
+  /** 外部文件识别完成后，草稿、权限初始化、历史和审计在同一短事务提交。 */
+  private ObjectNode persist(String id, SqlDraftRequest input, ObjectNode runtime) {
+    access.require("sql:" + id, "edit");
     ObjectNode old = records.find("sql_jobs", id);
+    if (old == null) com.flinkweb.config.sql.DefaultJobLog.apply(runtime);
     if (old != null && input.revision() == 0)
       throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
     if (old != null) deploymentLink(old);
@@ -146,7 +157,6 @@ public class SqlJobServiceImpl implements SqlJobService {
   }
 
   /** 将历史 SQL 和运行配置恢复为新草稿修订，不触发集群变更。 */
-  @Transactional
   public ObjectNode restoreVersion(String id, String version, long revision) {
     get(id);
     var record = records.require("sql_versions", version);
@@ -178,12 +188,18 @@ public class SqlJobServiceImpl implements SqlJobService {
               runtime,
               0));
     }
-    var checked = parser.check(
-        validation.validateVerification(catalogs.prepare(runtime.deepCopy()) + script),
-        runtime.path("imageId").asText());
+    var checked =
+        parser.check(
+            validation.validateVerification(catalogs.prepare(runtime.deepCopy()) + script),
+            runtime.path("imageId").asText());
     if (checked.insertCount() == 0)
-      return new com.flinkweb.dto.sql.SqlCheckResult(checked.valid(), checked.level(), checked.statementCount(), 0,
-          checked.message() + " 当前为只读验证查询；发布 Application 需要 INSERT 写入语句。", checked.statements());
+      return new com.flinkweb.dto.sql.SqlCheckResult(
+          checked.valid(),
+          checked.level(),
+          checked.statementCount(),
+          0,
+          checked.message() + " 当前为只读验证查询；发布 Application 需要 INSERT 写入语句。",
+          checked.statements());
     return checked;
   }
 
@@ -201,7 +217,8 @@ public class SqlJobServiceImpl implements SqlJobService {
       args.add("--statement");
       args.add(Base64.getEncoder().encodeToString(statement.getBytes(StandardCharsets.UTF_8)));
     }
-    com.flinkweb.service.sql.support.SqlDeploymentSource.stamp(resource, input.revision(), input.sql());
+    com.flinkweb.service.sql.support.SqlDeploymentSource.stamp(
+        resource, input.revision(), input.sql());
     return rendered.put("yaml", yaml.dump(resource)).put("message", checked.message());
   }
 
@@ -272,9 +289,11 @@ public class SqlJobServiceImpl implements SqlJobService {
       throw new BusinessException(
           HttpStatus.CONFLICT, "SQL_DEPLOYMENT_EXISTS", "请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿");
     records.delete("sql_jobs", id, revision);
-    for(String collection:List.of("ai_summaries","ai_conversations","ai_tasks"))
-      for(var associated:records.list(collection))
-        if(id.equals(associated.path("sqlId").asText()))records.delete(collection,associated.path("id").asText(),associated.path("revision").asLong());
+    for (String collection : List.of("ai_summaries", "ai_conversations", "ai_tasks"))
+      for (var associated : records.list(collection))
+        if (id.equals(associated.path("sqlId").asText()))
+          records.delete(
+              collection, associated.path("id").asText(), associated.path("revision").asLong());
     jobs.releaseName(record.path("name").asText(), "sql:" + id);
     audit.record("SQL_DELETE", id, "SUCCESS");
   }
