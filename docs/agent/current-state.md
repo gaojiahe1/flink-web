@@ -1,6 +1,6 @@
 # 当前状态
 
-2026-10-25最新：7项界面一致性与入口调整已开发、验证并发布app/web0.0.8，现场平台已同步且两容器Ready/imageID匹配。控件32px、记录行64px；SQL历史语法/修改高亮与同排操作，草稿标题统一；取消数据源页面/SQL插入，仅Catalog内维护JDBC连接，网络诊断移至设置、审计中文。后端38项、最终Web88项和代理4类通过，现场只读验收且原SQL修订未变，未启动Flink作业。见 [本轮验收](validation.md#界面一致性与入口调整2026-10-25)。提交/合并与临时资源清理收尾中。以下为历史范围。
+2026-10-25最新：7项界面一致性与入口调整已开发、验证并发布app/web0.0.8，现场平台已同步且两容器Ready/imageID匹配。控件32px、记录行64px；SQL历史语法/修改高亮与同排操作，草稿标题统一；取消数据源页面/SQL插入，仅Catalog内维护JDBC连接，网络诊断移至设置、审计中文。后端38项、最终Web88项和代理4类通过，现场只读验收且原SQL修订未变，未启动Flink作业。见 [本轮验收](validation.md#界面一致性与入口调整2026-10-25)。功能提交`c4970b0`已快进合并本地master，无冲突/新增差异；临时资源清理完成，截图保留，源码Git未由本轮推送。以下为历史范围。
 
 2026-10-25最新：Catalog 管理页和 SQL 浏览入口已重设计，优先 JDBC/Hive；UDF 单包多函数、受控 SET/RESET/DDL、SQL/YAML 高亮对比及 JM/TM 日志修复已实现。已发布 app/web:0.0.8并同步 Kubernetes，downloader不变。真实 PostgreSQL与一个 Flink1.20.5作业联调通过，目标 Hive 服务未提供，Hive当前按协议/配置边界验证。详情见 [本轮验收](validation.md#catalogudfsql与日志2026-10-25) 和 [Catalog模块](modules/catalog-workbench.md)。功能提交`06bfb40`已快进合并本地master，无冲突或新增差异；本轮独占临时资源已清理，源码Git未推送。下方为历史报告。
 
