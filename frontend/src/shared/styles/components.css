@@ -268,7 +268,7 @@ table {
   text-align: left;
 }
 th {
-  height: 40px;
+  height: var(--table-header-height);
   font-size: 13px;
   color: var(--color-muted);
   font-weight: 600;
@@ -276,7 +276,7 @@ th {
 }
 td,
 th {
-  padding: 12px 18px;
+  padding: 8px 16px;
   border-bottom: 1px solid #edf0f1;
   border-color: #eef1f5;
 }
@@ -285,7 +285,8 @@ tbody tr:last-child td {
 }
 .table-description {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
+  line-height: 20px;
   max-width: 400px;
   white-space: nowrap;
   overflow: hidden;
@@ -297,6 +298,8 @@ tbody tr:last-child td {
   font-family: monospace;
 }
 .badge {
+  line-height: 18px;
+  vertical-align: middle;
   padding: 3px 9px;
   background: #f0f4fa;
   color: #65758b;
@@ -610,7 +613,16 @@ input[type='radio'] {
 }
 td {
   font-size: 13px;
-  height: 56px;
+  height: var(--table-row-height);
+  line-height: 20px;
+}
+th {
+  padding-block: 6px;
+  line-height: 20px;
+}
+.table-wrap .job-name {
+  padding-block: 0;
+  line-height: 20px;
 }
 tbody tr:hover {
   background: #f8faff;
@@ -666,12 +678,12 @@ tbody tr:hover {
 }
 .pagination select {
   width: 108px;
-  min-height: 30px;
+  min-height: var(--control-height);
   padding: 5px 8px;
   font-size: 13px;
 }
 .pagination .button {
-  min-height: 29px;
+  min-height: var(--control-height);
   padding: 4px 10px;
   font-size: 13px;
 }
@@ -1096,6 +1108,10 @@ select:not([multiple]) {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.toolbar-actions > .text-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 /* 所有页面共用字段级错误与站内确认对话框。 */
 input.field-invalid,
@@ -1216,6 +1232,9 @@ label small {
 .catalog-records td {
   overflow-wrap: anywhere;
   max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .catalog-records td:first-child {
   min-width: 140px;

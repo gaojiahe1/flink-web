@@ -57,7 +57,6 @@ onBeforeUnmount(() => clearTimeout(timer))
       }}</span>
       <small v-if="message" class="table-description">{{ message }}</small>
     </button>
-    <slot />
     <Teleport to="body"
       ><section
         v-if="open"
@@ -70,6 +69,7 @@ onBeforeUnmount(() => clearTimeout(timer))
       >
         <strong>{{ state }}</strong>
         <pre>{{ content }}</pre>
+        <slot />
         <small>{{ detail }}</small>
       </section></Teleport
     >
@@ -77,6 +77,8 @@ onBeforeUnmount(() => clearTimeout(timer))
 </template>
 <style scoped>
 .session-state-trigger {
+  display: block;
+  line-height: 20px;
   border: 0;
   background: transparent;
   padding: 0;
@@ -89,6 +91,10 @@ onBeforeUnmount(() => clearTimeout(timer))
 .session-state-trigger:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 4px;
+}
+.session-state-trigger .badge {
+  display: flex;
+  width: max-content;
 }
 .session-state-trigger small {
   max-width: min(36vw, 540px);

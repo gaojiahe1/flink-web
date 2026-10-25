@@ -683,6 +683,7 @@
 }
 
 .development-explorer {
+  gap: 10px;
   padding: 12px 10px;
   background: #fafbfd;
 }
@@ -702,7 +703,7 @@
 }
 .development-explorer .explorer-content > .button {
   margin-bottom: 10px;
-  min-height: 34px;
+  min-height: var(--control-height);
   font-size: 12px;
   justify-content: center;
 }
@@ -730,6 +731,8 @@
   gap: 3px;
 }
 .development-explorer .sql-file {
+  height: var(--table-row-height);
+  font-weight: 500;
   padding: 10px 7px;
   align-items: flex-start;
   gap: 7px;

@@ -2,7 +2,7 @@
 import { showValidationError, clearValidationErrors } from '../../../shared/utils/fieldValidation'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import { useDevelopmentStatus } from '../../../shared/composables/useDevelopmentStatus'
-import { Trash2, Box, ChevronLeft, ChevronRight } from '@lucide/vue'
+import { Trash2, Box } from '@lucide/vue'
 import StateStorageForm from '../../../shared/components/form/StateStorageForm.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import FlinkImageSelect from '../../../shared/components/form/FlinkImageSelect.vue'
@@ -10,13 +10,13 @@ import HelpTip from '../../../shared/components/form/HelpTip.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import CatalogExplorer from '../../flink-catalog/components/CatalogExplorer.vue'
 import { catalogsApi, type FlinkCatalog } from '../../flink-catalog/api/catalogs'
+import DraftListHeader from '../../../shared/components/layout/DraftListHeader.vue'
 import SqlHistory from '../components/SqlHistory.vue'
 import SqlUdfPanel, { type UdfArtifact } from '../components/SqlUdfPanel.vue'
 import SqlDraftCreateDialog from '../components/SqlDraftCreateDialog.vue'
 import SqlDeploymentAudit from '../components/SqlDeploymentAudit.vue'
 import AiSqlAssistant from '../../ai/components/AiSqlAssistant.vue'
 import SqlVerificationResults from '../components/SqlVerificationResults.vue'
-import type { WizardTable } from '../../ai/utils/wizard'
 import type { AiResult } from '../../ai/api/ai'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import LogConfigurationFields from '../../../shared/components/editor/LogConfigurationFields.vue'
@@ -176,9 +176,7 @@ const browseCatalog = computed(
 const canBrowse = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
 )
-const sideTab = ref(''),
-  sources = ref<(WizardTable & { id: string; name: string })[]>([]),
-  sourceQuery = ref('')
+const sideTab = ref('')
 const workbench = ref<HTMLElement>()
 const inspectorWidth = ref(Math.min(380, Math.max(300, window.innerWidth * 0.26)))
 const inspectorMax = ref(860)
@@ -239,11 +237,6 @@ onMounted(() => {
 onUnmounted(() => resizeObserver?.disconnect())
 watch(explorerCollapsed, () => nextTick(() => clampInspector()))
 watch(sideTab, () => nextTick(resetInspector))
-const filteredSources = computed(() =>
-  sources.value.filter((s) =>
-    (s.name + s.id + s.connectorType).toLowerCase().includes(sourceQuery.value.toLowerCase()),
-  ),
-)
 const configValues = computed({
   get: () => {
     try {
@@ -475,15 +468,13 @@ onMounted(async () => {
       request<Catalog[]>('/api/catalog/images'),
       Promise.resolve([] as Artifact[]),
       load(),
-      request<any[]>('/api/catalog/datasources'),
       request<Catalog[]>('/api/catalog/templates'),
       catalogsApi.list(),
     ])
     images.value = result[0]
     artifacts.value = result[1]
-    sources.value = result[3]
-    templates.value = result[4]
-    flinkCatalogs.value = result[5]
+    templates.value = result[3]
+    flinkCatalogs.value = result[4]
     savedSnapshot.value = snapshot()
     const requested =
       typeof route.query.draft === 'string'
@@ -775,55 +766,6 @@ async function remove(record?: SqlDraft) {
     message.value = 'SQL 草稿已删除'
   })
 }
-async function refreshSources() {
-  try {
-    sources.value = await request('/api/catalog/datasources')
-  } catch (e) {
-    error.value = showValidationError((e as Error).message)
-  }
-}
-function insertSource(id: string) {
-  return run(async () => {
-    if (editorMode.value === 'form' && !podValid.value)
-      throw new Error('请先修正 PodTemplate YAML，再插入数据源')
-    const document = editorMode.value === 'yaml' ? parseDeploymentYaml(deploymentYaml.value) : null
-    const before = snapshot()
-    const snippet = await request<{ sql: string; env: { name: string; value: string }[] }>(
-      '/api/sql/datasources/' + id + '/snippet',
-    )
-    if (before !== snapshot() || (editorMode.value === 'form' && !podValid.value))
-      throw new Error('SQL 或配置已修改，请重新插入数据源')
-    const template = document
-      ? readPodTemplates(document.toJS().spec).podTemplate
-      : JSON.parse(pod.value)
-    if (!template || typeof template !== 'object' || Array.isArray(template))
-      throw new Error('PodTemplate 必须为 JSON 对象')
-    if (snippet.env.length) {
-      template.spec ??= {}
-      template.spec.containers ??= []
-      let main = template.spec.containers.find((c: any) => c.name === 'flink-main-container')
-      if (!main) {
-        main = { name: 'flink-main-container', env: [] }
-        template.spec.containers.push(main)
-      }
-      main.env ??= []
-      for (const env of snippet.env) {
-        const existing = main.env.find((item: any) => item.name === env.name)
-        if (existing && JSON.stringify(existing) !== JSON.stringify(env))
-          throw new Error('数据源环境变量已存在且配置不同，请先检查 PodTemplate')
-        if (!existing) main.env.push(env)
-      }
-    }
-    if (document) {
-      document.setIn(['spec', 'podTemplate'], template)
-      deploymentYaml.value = document.toString()
-    } else pod.value = JSON.stringify(template, null, 2)
-    form.sql = snippet.sql + '\n' + form.sql
-    check.value = null
-    message.value =
-      '已插入建表语句和密钥引用。继续编写 INSERT，检查通过后可验证数据或在部署配置中部署并启动。'
-  })
-}
 function invalidateContext() {
   check.value = null
   catalogPreview.value = ''
@@ -919,20 +861,17 @@ watch(
     }"
   >
     <aside class="sql-explorer development-explorer">
-      <button
-        class="explorer-toggle text-button"
-        :aria-label="explorerCollapsed ? '展开草稿栏' : '收起草稿栏'"
-        @click="explorerCollapsed = !explorerCollapsed"
+      <DraftListHeader
+        kind="SQL"
+        :count="records.length"
+        :collapsed="explorerCollapsed"
+        @toggle="explorerCollapsed = !explorerCollapsed"
       >
-        <ChevronRight v-if="explorerCollapsed" :size="16" /><ChevronLeft v-else :size="16" />
-      </button>
+        <HelpTip
+          text="编辑 SQL 草稿，保存后可检查、验证并发布；支持 SET、DDL、UDF 和多个 INSERT。"
+        />
+      </DraftListHeader>
       <div v-show="!explorerCollapsed" class="explorer-content">
-        <div class="explorer-title">
-          <strong>SQL 草稿</strong
-          ><HelpTip
-            text="支持 CREATE CATALOG / DATABASE、CREATE TABLE / VIEW、USE CATALOG / DATABASE、INSERT INTO / OVERWRITE；Session 验证也支持源表加 SELECT。Application 发布需要 INSERT，多个 INSERT 合并为一个作业。"
-          /><span class="count">{{ records.length }}</span>
-        </div>
         <button
           v-if="editable"
           class="button full-width"
@@ -1399,33 +1338,6 @@ watch(
         删除 SQL 草稿
       </button>
     </aside>
-    <aside v-if="sideTab === 'sources'" class="sql-runtime datasource-browser">
-      <div class="field-heading">
-        <h3>数据源</h3>
-        <button class="text-button" aria-label="收起数据源" @click="sideTab = ''">×</button>
-      </div>
-      <p class="muted">
-        插入建表 SQL 后可编写 INSERT 语句并部署执行。MySQL 为 JDBC 有界读取，不是 CDC。
-      </p>
-      <div class="filter-bar">
-        <input
-          data-field="sourceQuery"
-          v-model="sourceQuery"
-          placeholder="筛选数据源"
-        /><ManualRefreshButton :action="refreshSources" :disabled="busy" />
-      </div>
-      <div v-for="source in filteredSources" :key="source.id" class="source-item">
-        <div>
-          <strong>{{ source.name }}</strong
-          ><small>{{ source.connectorType.toUpperCase() }} · {{ source.id }}</small>
-        </div>
-        <button v-if="editable" class="button" :disabled="busy" @click="insertSource(source.id)">
-          插入 SQL
-        </button>
-      </div>
-      <p v-if="!filteredSources.length" class="empty-state">暂无匹配的数据源</p>
-      <RouterLink class="text-button" to="/datasources">管理数据源 ↗</RouterLink>
-    </aside>
     <aside v-if="sideTab === 'catalogs'" class="sql-runtime">
       <div class="field-heading">
         <h3>Catalog 资源</h3>
@@ -1533,12 +1445,6 @@ watch(
         @click="sideTab = sideTab === 'runtime' ? '' : 'runtime'"
       >
         部署配置</button
-      ><button
-        :class="{ active: sideTab === 'sources' }"
-        :aria-expanded="sideTab === 'sources'"
-        @click="sideTab = sideTab === 'sources' ? '' : 'sources'"
-      >
-        数据源</button
       ><button
         v-if="editable"
         :class="{ active: sideTab === 'udf' }"

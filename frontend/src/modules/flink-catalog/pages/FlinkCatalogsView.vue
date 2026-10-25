@@ -7,6 +7,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import CodeEditor from '../../../shared/components/editor/CodeEditor.vue'
 import CatalogExplorer from '../components/CatalogExplorer.vue'
+import CatalogConnections from '../components/CatalogConnections.vue'
 import ArtifactPicker, { type Artifact } from '../../artifact/components/ArtifactPicker.vue'
 import { currentUser } from '../../permission/stores/auth'
 import { request } from '../../../shared/api/http'
@@ -23,6 +24,14 @@ const query = ref(''),
 const selected = ref<FlinkCatalog>(),
   snippet = ref<CatalogSnippet>(),
   element = ref<HTMLFormElement>()
+const connectionsOpen = ref(false)
+async function refreshConnections() {
+  try {
+    sources.value = await request('/api/catalog/datasources')
+  } catch (e) {
+    error.value = (e as Error).message
+  }
+}
 const admin = computed(() => currentUser.value?.roles.includes('ROLE_ADMIN'))
 const developer = computed(() =>
   currentUser.value?.roles.some((r) => ['ROLE_ADMIN', 'ROLE_DEVELOPER'].includes(r)),
@@ -205,6 +214,7 @@ async function remove(row: FlinkCatalog) {
     title="Catalog 工作台"
     description="管理 JDBC / Hive 目录，浏览库表与函数，在 SQL 中直接引用。"
     ><template #actions
+      ><button v-if="admin" class="button" @click="connectionsOpen = true">管理 JDBC 连接</button
       ><ManualRefreshButton :action="load" :disabled="loading || busy" label="刷新目录" /><button
         v-if="admin"
         class="button primary"
@@ -396,13 +406,13 @@ async function remove(row: FlinkCatalog) {
                 pattern="[A-Za-z_][A-Za-z0-9_\-]{0,63}"
             /></label>
             <label v-if="form.type === 'jdbc'"
-              >JDBC 数据源<select
+              >JDBC 连接<select
                 data-field="dataSourceId"
                 v-model="form.dataSourceId"
                 required
                 @change="sourceChanged"
               >
-                <option value="">选择 MySQL / PostgreSQL 数据源</option>
+                <option value="">选择 MySQL / PostgreSQL 连接</option>
                 <option
                   v-for="source in sources.filter((s) =>
                     ['mysql', 'postgresql'].includes(s.connectorType),
@@ -412,8 +422,17 @@ async function remove(row: FlinkCatalog) {
                 >
                   {{ source.name }} · {{ source.database }}
                 </option></select
-              ><HelpTip text="复用连接与密钥引用；运行镜像需要 JDBC Catalog 插件及对应数据库驱动。"
-            /></label>
+              ><HelpTip
+                text="复用连接与密钥引用；运行镜像需要 JDBC Catalog 插件及对应数据库驱动。"
+              /><button
+                v-if="admin"
+                class="text-button"
+                type="button"
+                @click="connectionsOpen = true"
+              >
+                管理 JDBC 连接
+              </button></label
+            >
             <label v-if="form.type === 'hive'"
               >Hive 配置目录<input
                 data-field="hiveConfDir"
@@ -494,6 +513,11 @@ async function remove(row: FlinkCatalog) {
       </form>
     </section>
   </dialog>
+  <CatalogConnections
+    v-if="connectionsOpen"
+    @close="connectionsOpen = false"
+    @changed="refreshConnections"
+  />
 </template>
 <style scoped>
 .catalog-workspace {
@@ -522,13 +546,38 @@ async function remove(row: FlinkCatalog) {
   overflow: auto;
 }
 .catalog-profile-items button {
-  padding: 12px;
+  height: var(--table-row-height);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 6px;
   margin-bottom: 6px;
   width: 100%;
   background: none;
   border: 0;
   text-align: left;
   border-radius: 6px;
+}
+.catalog-profile-items .badge {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 1px 4px;
+  font-size: 10px;
+}
+.catalog-profile-items strong {
+  grid-column: 1;
+  grid-row: 1;
+}
+.catalog-profile-items small {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.catalog-profile-items strong,
+.catalog-profile-items small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .catalog-profile-items button.active {
   background: #eaf2ff;

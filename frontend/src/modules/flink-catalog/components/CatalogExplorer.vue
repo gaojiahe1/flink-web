@@ -324,6 +324,7 @@ async function copy() {
   min-height: 160px;
 }
 .catalog-object-items button {
+  min-height: var(--table-row-height);
   width: 100%;
   display: flex;
   justify-content: space-between;

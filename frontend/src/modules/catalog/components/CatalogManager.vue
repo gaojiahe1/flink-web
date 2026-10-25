@@ -8,6 +8,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../../permission/stores/auth'
 import { definitions, titles, type CatalogModule } from '../model/catalogDefinitions'
+import { auditActionLabel, auditOutcomeLabel } from '../../audit/utils/auditLabels'
 type Row = Record<string, any>
 const props = defineProps<{ module: CatalogModule }>()
 const type = computed(() => props.module)
@@ -40,7 +41,14 @@ const fields = computed(() =>
   ),
 )
 const filtered = computed(() =>
-  rows.value.filter((r) => JSON.stringify(r).toLowerCase().includes(query.value.toLowerCase())),
+  rows.value.filter((r) =>
+    (
+      JSON.stringify(r) +
+      (type.value === 'audit' ? auditActionLabel(r.action) + auditOutcomeLabel(r.outcome) : '')
+    )
+      .toLowerCase()
+      .includes(query.value.toLowerCase()),
+  ),
 )
 const sorted = computed(() =>
   type.value === 'audit'
@@ -275,9 +283,9 @@ function resetFilters() {
           <tr v-for="row in visible" :key="row.id">
             <td>{{ row.time }}</td>
             <td>{{ row.actor }}</td>
-            <td>{{ row.action }}</td>
-            <td>{{ row.target }}</td>
-            <td>{{ row.outcome }}</td>
+            <td :title="row.action">{{ auditActionLabel(row.action) }}</td>
+            <td :title="row.target">{{ row.target }}</td>
+            <td :title="row.outcome">{{ auditOutcomeLabel(row.outcome) }}</td>
           </tr>
         </tbody>
       </table>
@@ -304,8 +312,8 @@ function resetFilters() {
         <tbody>
           <tr v-for="row in visible" :key="row.id">
             <td class="mono">{{ row.id }}</td>
-            <td>{{ row.name || row.role }}</td>
-            <td>
+            <td :title="row.name || row.role">{{ row.name || row.role }}</td>
+            <td :title="summary(row)">
               {{ summary(row) }}
               <small v-if="type === 'images' && row.flinkVersion" class="muted table-description"
                 >Flink {{ row.flinkVersion }}</small

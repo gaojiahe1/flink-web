@@ -2,7 +2,7 @@
 
 更新：2026-10-25。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前 app/web 已按 Catalog、UDF、SQL 与日志改造覆盖发布0.0.8，downloader不变；现场 Kubernetes 已恢复，平台 StatefulSet 已重启并核对两容器发布摘要。最新结果见 [本轮发布](#catalogudfsql与日志2026-10-25)，历史清理记录仍见 [10-21发布](#ai-一致性修复与版本发布2026-10-21)。
+当前 app/web 已按界面一致性与入口调整覆盖发布0.0.8，downloader不变；现场平台StatefulSet已同步。最新结果见 [本轮发布](#界面一致性与入口调整2026-10-25)，历史结果各自保留。
 
 ## 1. 部署拓扑与前置条件
 
@@ -646,8 +646,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:9e5e75d5a627d9773898b279ecb37c84febe228b960e2b46d969a0ae09cba6bc |
-| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:68c5bf01c35bd4292af5f049ba5df450e233d536659f6ea38d19bc4444e6a077 |
+| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:415c29c10325a9bd7f953803ffcfaf0ea20b6a648b67bf74e21fbffcebc388a5 |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:714550762778ed1eae7c1b9b4b6ec0e4e8aff23ef4ebbc7370718bfa5916aab0 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -772,3 +772,16 @@ Hive 浏览的 SASL/TLS/Compact/Framed 和目标 Hive 服务未作实环境验�
 新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
 
 清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。
+
+## 界面一致性与入口调整（2026-10-25）
+
+app/web沿用0.0.8，平台API/前端版本同步；从正式Dockerfile、干净Kylin基础和当前通过检查的制品构建，不继承旧业务镜像。不改latest、downloader、Parser/Runner或既有连接数据。指定LAN仓库核对manifest响应/正文、config、全部压缩大小/哈希与解压diff_id后，平台StatefulSet重启完成，两个容器Ready且实际imageID匹配。
+
+| 组件 | Manifest | Config | 层数 |
+| --- | --- | --- | --- |
+| app:0.0.8 | `sha256:415c29c10325a9bd7f953803ffcfaf0ea20b6a648b67bf74e21fbffcebc388a5` | `sha256:48a43519921e5d4d55bdc8ad1ba683270515ede6945f7e9ab123ff120414f3e6` | 11 |
+| web:0.0.8 | `sha256:714550762778ed1eae7c1b9b4b6ec0e4e8aff23ef4ebbc7370718bfa5916aab0` | `sha256:db4306bd5f47eadfb68ba00786079082c27807d074f264d5701bb361a080ada0` | 8 |
+
+前端最终只读镜像88项页面回归、4类代理验证通过；后端平台专项38项通过。独立临时数据库实际加密登录、JDBC连接/Catalog保存、SQL历史、TCP与中文审计通过。现场仅做只读页面验收；原SQL修订未变，未启动或重启Flink作业，PVC/数据库/主密钥未替换、不做PVC备份。入口与权限见 [功能说明](features.md#5-flink-catalog-与连接管理)。
+
+本轮验证资源收尾：两独占容器（tmpfs数据库）、网络、推送别名、1份无标签中间镜像及预览进程已清理；末次新增缓存1条为正式镜像共享层，保留，未全局prune。独占临时文件删除，截图保留聊天可视化目录；原registry、正式标签和未知/既有缓存保留。

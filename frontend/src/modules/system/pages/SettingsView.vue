@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useOperator } from '../../../shared/composables/useOperator'
 const { status, hint, refresh, disabled, remaining, busy } = useOperator()
+import NetworkProbe from '../../data-management/components/NetworkProbe.vue'
 import DownloaderSettings from '../components/DownloaderSettings.vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import { systemInfo } from '../stores/system'
@@ -11,6 +12,7 @@ import { currentUser } from '../../permission/stores/auth'
     ><template #title>系统设置</template
     ><template #description>当前服务的部署配置与接入状态。</template></PageHeader
   >
+  <NetworkProbe />
   <DownloaderSettings />
   <section v-if="currentUser?.roles.includes('ROLE_ADMIN')" class="panel form-panel operator-panel">
     <div class="panel-toolbar">

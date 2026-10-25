@@ -74,12 +74,14 @@ summary {
 }
 .network-form {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 12px;
   margin: 10px 0;
 }
 .network-form label:first-child {
   width: 280px;
+  max-width: 100%;
 }
 .network-form label:nth-child(2) {
   width: 110px;

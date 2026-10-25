@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import DraftListHeader from '../../../shared/components/layout/DraftListHeader.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDevelopmentStatus } from '../../../shared/composables/useDevelopmentStatus'
-import { Box, ChevronLeft, ChevronRight, Trash2 } from '@lucide/vue'
+import { Box, Trash2 } from '@lucide/vue'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import ManualRefreshButton from '../../../shared/components/form/ManualRefreshButton.vue'
 import { request } from '../../../shared/api/http'
@@ -109,17 +110,12 @@ onBeforeUnmount(() => {
   <p v-if="message" class="notice" role="status">{{ message }}</p>
   <section class="jar-workbench" :class="{ 'list-collapsed': collapsed }">
     <aside class="jar-explorer" aria-label="JAR 草稿列表">
-      <div class="jar-explorer-heading">
-        <strong v-if="!collapsed"
-          >JAR 草稿 <span class="badge">{{ jobs.length }}</span></strong
-        ><button
-          class="text-button"
-          :aria-label="collapsed ? '展开 JAR 草稿栏' : '收起 JAR 草稿栏'"
-          @click="collapsed = !collapsed"
-        >
-          <ChevronRight v-if="collapsed" :size="16" /><ChevronLeft v-else :size="16" />
-        </button>
-      </div>
+      <DraftListHeader
+        kind="JAR"
+        :count="jobs.length"
+        :collapsed="collapsed"
+        @toggle="collapsed = !collapsed"
+      />
       <template v-if="!collapsed">
         <RouterLink v-if="editable" class="button jar-create" to="/jar/new"
           >＋ 新建 JAR 作业</RouterLink
@@ -271,6 +267,7 @@ onBeforeUnmount(() => {
   background: #eaf1ff;
 }
 .jar-draft-open {
+  height: var(--table-row-height);
   min-width: 0;
   flex: 1;
   display: flex;

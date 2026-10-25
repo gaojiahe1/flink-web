@@ -1,5 +1,15 @@
 # 治理与记忆系统验收
 
+## 界面一致性与入口调整（2026-10-25）
+
+- 起点干净本地master `ee64718`，工作分支 `codex/platform-density-navigation`。SQL历史并排操作与CodeDiff高亮；32px控件/36px表头/64px记录行及SQL/JAR共用标题；Session额外详情转入原可聚焦弹层。平台版本0.0.8，与前端包及当前app/web标签设回归约束。
+- 用户明确移除独立数据源和SQL插入，仅保留Catalog连接；旧路由转/catalogs，Catalog内管理员维护JDBC连接，密码仍引用配置、保留原存储修订和删除保护。网络诊断移至设置，不改变后端权限/触发边界。审计中文映射不修改原始记录，未知码保留。
+- 类型/生产构建、Java中文文档/分层223类1334方法通过；后端PlatformIntegrationTest38项全过。最终非root/只读Web镜像88项全过，含8项新增一致性/权限/短屏、AI、Catalog、JAR、模板、文件和作业操作；代理4类通过。初轮新夹具误拦截Vite源码路径及过早读取页面、隐藏option等待均已修正，不作为产品问题；Session额外行/行内基线引起高度差已修复。原搜索控件34px断言随要求改32px后通过。
+- 隔离真实app/web使用随机临时凭据和tmpfs数据库，加密登录、连接/Catalog实际保存、两次SQL保存及历史修改高亮、手动TCP和中文审计通过；没有连接目标业务库或启动Flink作业。
+- 指定LAN仓库核对app/web全部11/8层、manifest和config；现场StatefulSet重启完成、两容器Ready/imageID匹配。只读页面登录验证版本、历史布局、Catalog跳转、SQL取消数据源及设置入口；待实际数据加载后核对作业4行、模板2行、镜像2行、Session1行和审计10行均为64px，原SQL修订保持。最终摘要见 [部署记录](../deployment.md#界面一致性与入口调整2026-10-25)。
+
+本轮两测试容器/tmpfs数据库、独占网络、推送别名和1份无标签中间镜像已清理，预览端口已关闭。末次构建新增1条缓存属于正式镜像共享层，保留，未全局prune；原registry和未知/既有缓存保留。独占临时目录已清理，截图保留聊天可视化目录。提交/合并完成后补录。
+
 ## Catalog、UDF、SQL与日志（2026-10-25）
 
 - 起点干净 master `2fa305d`，工作分支 `codex/sql-udf-diff-logging`。Catalog 管理和 SQL 侧栏共用浏览，优先 JDBC/Hive；支持运行依赖、Hive XML、函数、引用作业和多目录初始化。UDF 单包多函数静态分析，元信息保存时在服务端重建；AI 带入选中函数和目录语义。SQL/YAML 对比红绿高亮，生成后从设置区域开始左右分栏。

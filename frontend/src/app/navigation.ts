@@ -39,7 +39,7 @@ export const navigationGroups: NavigationGroup[] = [
       { path: '/images', icon: Box, title: '运行镜像' },
       { path: '/configs', icon: KeyRound, title: '配置管理' },
       { path: '/artifacts', icon: FolderOpen, title: '文件与制品' },
-      { path: '/datasources', icon: Database, title: '数据管理' },
+      { path: '/catalogs', icon: Database, title: 'Catalog 管理' },
     ],
   },
   {

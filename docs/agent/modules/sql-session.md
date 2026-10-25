@@ -1,5 +1,7 @@
 # SQL 与 Session
 
+2026-10-25：SQL历史版本选择/恢复并排，复用CodeDiff提供完整SQL语法和行内修改高亮，不再按2000行截断；恢复仍只更新草稿。移除SQL数据源侧栏及其登记/片段请求，Catalog对象引用仍保留。Session表格只显示状态和摘要，额外TM信息转入原可聚焦详情弹层。
+
 更新：2026-10-25。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。

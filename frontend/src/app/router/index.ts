@@ -17,11 +17,11 @@ const router = createRouter({
         },
         {
           path: 'datasources',
-          component: () => import('../../modules/data-management/pages/DataManagementView.vue'),
+          redirect: '/catalogs',
         },
         {
           path: 'catalogs',
-          redirect: '/datasources?tab=catalogs',
+          component: () => import('../../modules/flink-catalog/pages/FlinkCatalogsView.vue'),
         },
         { path: 'sql', component: () => import('../../modules/sql/pages/SqlStudioView.vue') },
         {

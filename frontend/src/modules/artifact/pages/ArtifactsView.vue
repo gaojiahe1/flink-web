@@ -622,7 +622,7 @@ function openFolderDialog() {
   background: #edf4ff;
 }
 .object-table td {
-  padding: 13px 10px;
+  padding: 8px 10px;
   font-size: 12px;
 }
 .object-name {

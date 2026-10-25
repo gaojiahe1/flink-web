@@ -2,6 +2,10 @@
 
 更新：2026-10-20。本文说明当前实现与必须保留的业务规则；安装、环境变量和故障处理见 [部署指南](deployment.md)。
 
+## 界面一致性（2026-10-25）
+
+单行输入、下拉及常规按钮统一32px；常规记录行64px、表头36px，长摘要省略并可查看，Session额外运行详情放入可点击/聚焦弹层。SQL/JAR草稿标题、计数和行格式统一。SQL历史选择与恢复同排，语法和修改位置高亮；审计动作与结果中文展示/搜索，原始码保留且未知码不丢失。平台版本与app/web镜像统一0.0.8。
+
 ## 1. 平台定位与规则
 
 Flink Web 使用 Spring Boot / JDK 17 和 Vue 3 / TypeScript，通过运维已部署的 Flink Kubernetes Operator 管理固定 namespace 中的 Application 作业和 Session 集群。平台维护 FlinkDeployment 声明，Operator 负责实际协调；平台不安装 Operator，不修改其 Webhook。
@@ -84,7 +88,7 @@ SQL保存与发布仍分开：修改后先“保存SQL”，再“生成部署�
 
 SQL 工作台提供可折叠、独立滚动的草稿列表、编辑器及部署配置。支持保存、修订控制、历史对比/恢复、SQL 检查、部署配置表单/YAML 双向编辑、最终 YAML 预览和发布为 Application 作业。
 
-2026-10-13：SQL 与 Session 配置支持表单/YAML 切换；配置转换不保存、不启动，也不要求未完成 SQL 通过语法检查。YAML 原文随草稿保存，后端重新解析可编辑字段，`baseYaml` 保留表单之外的配置。语法错误时保留原文并阻止转换/保存；固定 namespace、资源名称及平台标签仍受校验，Session 禁止 `spec.job`，SQL 的 Runner 入口和下载器配置受所选文件约束，执行 args 由脚本在预览/发布时生成。配置变化使 SQL 检查失效。三处 PodTemplate 任一无效时拦截数据源插入；异步返回期间上下文变化也不覆盖新编辑。
+2026-10-13：SQL 与 Session 配置支持表单/YAML 切换；配置转换不保存、不启动，也不要求未完成 SQL 通过语法检查。YAML 原文随草稿保存，后端重新解析可编辑字段，`baseYaml` 保留表单之外的配置。语法错误时保留原文并阻止转换/保存；固定 namespace、资源名称及平台标签仍受校验，Session 禁止 `spec.job`，SQL 的 Runner 入口和下载器配置受所选文件约束，执行 args 由脚本在预览/发布时生成。配置变化使 SQL 检查失效。三处 PodTemplate 任一无效时保留原文并阻止配置转换/保存；2026-10-25已移除数据源插入入口。
 
 YAML 中省略的资源字段不自动补入表单默认值，保留由 Flink 配置或 Operator 提供资源的语义。缺少显式账号/资源字段，或内存单位不能由当前表单表示时，允许继续保存 YAML，但拒绝无损条件不满足的表单回填并说明原因；不会擅自补账号、改内存单位或覆盖原文。
 
@@ -93,7 +97,7 @@ YAML 中省略的资源字段不自动补入表单默认值，保留由 Flink �
 - 支持基础 CREATE CATALOG / DATABASE、USE CATALOG / DATABASE、CREATE TABLE / VIEW 和 INSERT INTO / OVERWRITE，具体语法以选定 Flink 版本为准。
 - 初始化语句须位于 INSERT 之前；多个 INSERT 合并为一个 StatementSet 作业。
 - 当前 Catalog、数据库、运行镜像、Flink 配置、依赖及 PodTemplate 随草稿保存。选择已登记 Catalog 时自动生成初始化前缀，不必重复手写相同初始化。
-- 从数据源插入建表 SQL，或从 JDBC Catalog 浏览库表字段并插入完整表引用；不读取业务行。
+- 从 Catalog 浏览库表字段并插入完整限定名 SQL；不读取业务行。
 - 保存草稿不执行 SQL。“生成部署草稿”与实际执行/部署是不同阶段；发布后在作业管理中启停、检查状态和恢复。
 - 2026-10-09：移除重复“执行 SQL”按钮，部署配置保留“部署并启动”。删除关联部署草稿会清除 SQL 的 jobId/publishedAt 并增加修订；SQL 列表恢复为未生成部署状态，重新发布生成新的作业。仍被 SQL 开发草稿引用的专属依赖先复制到新的草稿目录并更新引用，再清理原部署目录；共享文件不复制，状态文件仍按原规则删除。旧悬空关联在读取时也不再显示为已生成部署。SQL 作业不能直接复制成丢失开发关联的 JAR，应在 SQL 开发中新建草稿。
 - SQL 保存历史恢复只修改开发草稿；普通作业发布版本恢复不会同步改写 SQL 草稿。被草稿引用的 Catalog 有删除保护。
@@ -130,34 +134,19 @@ SQL/Session 的 Runner 选择区提供“下载平台 SQL Runner”：管理员/
 
 2026-10-13：Parser 协议区分 INPUT、SYNTAX、RUNTIME，兼容旧的 valid/位置字段；无有效位置不生成零行列提示。错误正文不返回 SQL 内容，安装扫描/运行日志仅记录关联 ID、版本、阶段、故障类型或错误码及退出码，不记录凭据或完整 stderr。验证上传 JAR 删除失败记录验证 ID 和故障类型，保持原验证终态，不自动重试。
 
-## 5. 数据源与 Flink Catalog
+## 5. Flink Catalog 与连接管理
 
-“数据管理”集中提供数据源和 Catalog 两个页签。登记只是保存定义，远端测试/库表浏览均由用户显式触发。
-
-| 数据源 | 主要配置 | 平台测试与浏览 |
-| --- | --- | --- |
-| MySQL | JDBC、字段、主键、精度、密码引用、TLS | JDBC 连接与库表字段/主键 |
-| PostgreSQL | JDBC、数据库、Schema、密码引用、TLS | JDBC 连接与登记数据库内指定 Schema 的表字段 |
-| Kafka | Topic、消费组、格式、起始位点/时间戳 | Topic 元数据，不消费业务消息 |
-| Upsert Kafka | 主键、key/value 格式 | Topic 元数据 |
-| 文件系统 | S3/S3A/HDFS/file URI、文件格式 | 配置校验，不在平台读取文件 |
-| DataGen / Print | 生成速率、字段或调试输出 | 配置校验，无远端连接 |
-
-JDBC 数据源是有界读取，不代表 CDC。Kafka 当前使用 PLAINTEXT，未支持 SASL/SSL。字段支持精度、非空、主键与事件时间 Watermark；元数据映射后仍应核对业务类型。
+2026-10-25：资源中心使用“Catalog 管理”入口（/catalogs），旧 /datasources 自动跳转。独立数据源页面及 SQL 数据源插入已移除；已有记录保留，MySQL/PostgreSQL 连接仅供 JDBC Catalog 使用。管理员在工作台或 JDBC 配置中的“管理 JDBC 连接”维护地址、数据库、Schema、账号及密码配置引用，不填写业务表/字段。旧存储/API 保留兼容，但不再提供其他连接器的数据源登记页面。
 
 | Catalog | 当前能力 | 所需运行环境 |
 | --- | --- | --- |
-| 内存 | generic_in_memory、默认数据库 | Flink Table 环境 |
-| JDBC | MySQL / PostgreSQL 数据源引用、按需库表浏览 | 对应 JDBC Catalog/Connector、数据库驱动 |
-| Hive | hive-site.xml 目录配置 | Hive/Hadoop 依赖及配置挂载 |
-| Paimon | Filesystem metastore、Warehouse | Paimon 插件及存储配置 |
-| Iceberg | Hadoop Catalog、Warehouse | Iceberg 插件及存储配置 |
+| JDBC | MySQL/PostgreSQL 连接引用、按需库表浏览 | JDBC Catalog/Connector、数据库驱动 |
+| Hive | hive-site.xml、Metastore 库表/函数浏览 | 匹配的 Hive/Hadoop 依赖及配置 |
+| 内存 / Paimon / Iceberg | 既有登记兼容及初始化配置 | 对应插件及存储配置 |
 
-JDBC Catalog 当前只复用默认 PREFERRED TLS；显式 TLS 模式须使用保留相应参数的数据源建表 SQL，不能静默降级。PostgreSQL 的 schema.table 在该目录中作为一个表标识。平台侧 JDBC 元数据一次最多返回 200 个库/表（超出标记 truncated），字段最多 100 个。
+JDBC Catalog 当前仅接受 PREFERRED TLS，显式其他策略明确拒绝而不降级。PostgreSQL 的 schema.table 作为一个 Flink 表标识。元数据按需读取、不读业务行，最多200个库/表、100字段，超限显示截断。Hive协议及认证边界见 [Catalog模块](agent/modules/catalog-workbench.md)。配置保存不影响运行中的作业。
 
-Hive/Paimon/Iceberg 只做初始化配置校验，后端不加载其插件；不提供远端建库、删表或业务数据预览。注册配置变化在下一次预览/发布时生效，不影响已运行作业。
-
-管理员可单独验证一个 host:port 的 TCP 可达性，端口范围 1–65535；连接超时 3 秒。结果区分 TCP、PROTOCOL、CONFIGURATION，配置校验成功不表示网络已连通。网络测试从平台后端发出，不能代表 Flink Pod 的网络或权限。
+“网络端口验证”移至系统设置，仅管理员手动执行；从后端验证单个 host:port，端口1–65535、超时3秒。TCP可达不代表协议认证或Flink Pod网络可用。
 
 ## 6. 配置、密钥与制品
 
@@ -181,7 +170,7 @@ spec:
               value: "{{secret:db-password}}"
 ~~~
 
-SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用数据源/Catalog 生成的引用，避免手工环境变量冲突。
+SQL 连接属性引用为 'password' = '{{env:DB_PASSWORD}}'。优先使用 Catalog 生成的引用，避免手工环境变量冲突。
 
 2026-10-01：文件页采用桶信息、存储位置导航、限高文件表格和所选文件详情侧栏；JAR/SQL 依赖选择器使用内嵌的文件夹/文件列表、统一搜索、面包屑及限高滚动，显示文件大小和选中状态；目录不再弹出遮挡其他字段。文件页为 S3 对象浏览器，提供目录面包屑、筛选、分页、创建目录、上传、单文件下载和所选目录/文件删除，取消制品登记表单。上传直接写入当前目录，使用条件写入拒绝同名覆盖，不生成新的制品登记记录。作业依赖直接从配置前缀下的 jobs/{平台 UUID}/ 或 shared/ 选择，创建前预分配 UUID，保存后保持同一目录。已有登记记录仅供历史 YAML/API 兼容。2026-10-10：单文件删除仍只删除该对象；目录删除递归清理所选目录标记、全部子目录和文件。管理员/开发者可勾选目录，确认框明确显示递归范围及作业依赖风险。禁止删除桶根、穿越路径及无末尾斜杠的前缀，按精确前缀每批最多 1000 个当前对象清理，保留相邻同名前缀目录；单项失败不能显示成功，刷新结果后可重试。版本化桶的历史版本仍由生命周期策略管理。直接引用对象时仅查询存在性和大小，不下载计算 SHA-256，单文件限制 1 GiB；Java 源文件可存放，不能作为主 JAR 执行。公共 spec.podTemplate 定义一次 initContainer，Operator 将其应用到 JM/TM Pod；下载不再校验 SHA-256；下载失败阻止主容器启动。镜像插件、目录遮蔽与凭据配置见部署指南。
 

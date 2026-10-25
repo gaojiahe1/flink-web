@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { version as platformVersion } from '../../../package.json'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Activity, Settings, PanelLeftClose, PanelLeftOpen, LogOut } from '@lucide/vue'
@@ -102,7 +103,7 @@ async function signOut() {
         </div>
         <div class="topbar-right">
           <span class="namespace-tag">{{ systemInfo?.namespace || '—' }}</span
-          ><span class="version-tag">v{{ systemInfo?.version || '0.3.0' }}</span
+          ><span class="version-tag">v{{ systemInfo?.version || platformVersion }}</span
           ><span class="avatar">{{ currentUser?.username.slice(0, 1).toUpperCase() }}</span
           ><span>{{ currentUser?.username }}</span
           ><button class="icon-button" aria-label="退出" title="退出" @click="signOut">

@@ -18,7 +18,9 @@
   --space-3: 12px;
   --space-4: 16px;
   --space-6: 24px;
-  --control-height: 34px;
+  --control-height: 32px;
+  --table-header-height: 36px;
+  --table-row-height: 64px;
   --sidebar: 218px;
   --blue: var(--color-primary);
   --text: var(--color-text);

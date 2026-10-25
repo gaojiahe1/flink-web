@@ -1,5 +1,7 @@
 # 元数据、权限与数据管理
 
+2026-10-25界面变更：独立数据源页面和SQL插入入口移除；/datasources兼容跳转/catalogs，Catalog内管理员维护MySQL/PostgreSQL连接和密钥引用。沿用datasources存储/API及修订/引用删除保护，不删除既有记录；其他连接器旧数据/API仅兼容保留。网络端口验证移至系统设置，管理员/后端权限及手动触发规则不变。审计动作/结果中文展示并支持中文搜索，原码保留在title，未知码原样显示。平台API与前端包版本均0.0.8，与当前镜像标签一致，回归断言三者约定。
+
 2026-10-20后续：ai_summaries按SQL草稿或JAR生命周期保存唯一总结及待核对项，两入口按授权共享总结、私有消息仍隔离；正文会话不重复保存总结，sharedSummaryRevision绑定读写，模型上下文持总结修订。ai_job_runtime按jobId只留当前一次稳定运行身份；运行成功清旧诊断与删除清理规则见[ADR-006](../decisions/ADR-006-job-ai-repair.md)。两集合复用主体索引，无表迁移；MySQL未新增现场认证。
 
 更新：2026-10-20。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。

@@ -56,5 +56,5 @@
   min-width: 0;
 }
 .catalog-context .text-button {
-  min-height: 34px;
+  min-height: var(--control-height);
 }
