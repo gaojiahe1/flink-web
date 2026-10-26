@@ -68,26 +68,39 @@ public class AiJobEvidenceDetails {
       try {var log=flink.read(job.deploymentName(),"jobmanager/log");result.put("jobManagerLog",excerpt(log.path("text").asText())).put("logTruncated",log.path("truncated").asBoolean());}
       catch(RuntimeException error){missing.add("Flink JM日志不可用或超过传输预算，可改查受限容器日志");}
     } else if(category.equals("flinkMetrics")) {
-      try {result.set("jobManager",jvm(job,"jobmanager/metrics"));}catch(RuntimeException error){missing.add("JobManager JVM / GC指标暂不可用");}
+      try {result.set("jobManager",jvm(job,"jobmanager/metrics",missing,"JobManager"));}catch(RuntimeException error){missing.add("JobManager JVM / GC指标读取失败或暂不可用，不能视为正常或使用量为0");}
       try {
         var managers=flink.read(job.deploymentName(),"taskmanagers");var output=result.putArray("taskManagers");int count=0;
         for(var manager:managers.path("taskmanagers")) {
           if(count++>=2){missing.add("本轮JVM指标仅采集前2个TaskManager");break;}
           String id=manager.path("id").asText();
           if(!id.matches("[A-Za-z0-9_.:-]{1,200}"))continue;
-          var tm=output.addObject().put("id",id);tm.set("metrics",jvm(job,"taskmanagers/"+id+"/metrics"));
+          var tm=output.addObject().put("id",id);tm.set("metrics",jvm(job,"taskmanagers/"+id+"/metrics",missing,"TaskManager "+id));
         }
       }catch(RuntimeException error){missing.add("部分TaskManager JVM指标不可用或已退出");}
     }
   }
 
   /** 按当前JVM实际注册的指标选择Heap/NonHeap/Metaspace/GC/CPU/线程，避免假设GC名称。 */
-  private JsonNode jvm(JobDraft job,String path) {
-    var names=new ArrayList<String>();for(var metric:flink.read(job.deploymentName(),path)) {
+  private JsonNode jvm(JobDraft job,String path,com.fasterxml.jackson.databind.node.ArrayNode missing,String label) {
+    var registered=flink.read(job.deploymentName(),path);
+    if(!registered.isArray())throw new IllegalStateException("Invalid metric list");
+    if(registered.isEmpty()) {
+      missing.add(label+" JVM指标列表为空，可能尚未注册或版本未提供；不能视为正常或使用量为0");
+      return mapper.createArrayNode();
+    }
+    var names=new ArrayList<String>();for(var metric:registered) {
       String id=metric.path("id").asText();
       if(id.matches("[A-Za-z0-9_.-]{1,200}") && id.matches("Status\\.JVM\\.(Memory\\..*|CPU\\..*|GarbageCollector\\..*|Threads\\..*)") && names.size()<32)names.add(id);
     }
-    return names.isEmpty()?mapper.createArrayNode():flink.read(job.deploymentName(),path+"?get="+String.join(",",names));
+    if(names.isEmpty()) {
+      missing.add(label+" 已注册指标中没有匹配的JVM / GC指标，可能版本或命名不同；不能视为正常或使用量为0");
+      return mapper.createArrayNode();
+    }
+    var values=flink.read(job.deploymentName(),path+"?get="+String.join(",",names));
+    if(!values.isArray())throw new IllegalStateException("Invalid metric values");
+    if(values.isEmpty())missing.add(label+" JVM指标值响应为空，可能已退出或采集暂不可用；不能视为正常或使用量为0");
+    return values;
   }
 
   /** 单个REST端点失败明确标记，不吞掉同组其它已取证数据。 */
@@ -97,10 +110,34 @@ public class AiJobEvidenceDetails {
 
   /** 保留ERROR/WARN/异常栈附近内容，附带尾部；摘录不宣称是完整日志。 */
   public static String excerpt(String text) {
+    if(text.isEmpty())return "";
     var lines=text.split("\\R");var indices=new TreeSet<Integer>();
     for(int i=0;i<lines.length;i++)if(lines[i].matches("(?i).*(ERROR|WARN|Exception|Caused by|OOMKilled|OutOfMemory|Failed|Backpressure|Checkpoint).*"))for(int n=Math.max(0,i-2);n<=Math.min(lines.length-1,i+4);n++)indices.add(n);
-    for(int i=Math.max(0,lines.length-20);i<lines.length;i++)indices.add(i);
-    var output=new StringBuilder();for(int index:indices) {if(output.length()+lines[index].length()>10000)break;output.append(index+1).append(": ").append(lines[index]).append('\n');}
-    return output.toString();
+    // 最新尾部先占预算，避免早期密集异常耗尽摘录后丢失当前故障进展。
+    int tailStart=Math.max(0,lines.length-20),remaining=4000;
+    var tail=new ArrayDeque<String>();
+    for(int i=lines.length-1;i>=tailStart && remaining>=40;i--) {
+      String line=excerptLine(i+1,lines[i],Math.min(1000,remaining));
+      tail.addFirst(line);remaining-=line.length();
+    }
+    String latest=String.join("",tail), separator="… [以下为最新尾部摘录] …\n";
+    var output=new StringBuilder();int budget=10000-latest.length()-separator.length();
+    for(int index:indices) {
+      if(index>=tailStart || budget-output.length()<40)break;
+      output.append(excerptLine(index+1,lines[index],Math.min(1500,budget-output.length())));
+    }
+    if(!output.isEmpty())output.append(separator);
+    return output.append(latest).toString();
+  }
+
+  /** 对超长单行保留开头和最新结尾，预算包含行号、换行和省略标记。 */
+  private static String excerptLine(int number,String text,int budget) {
+    String prefix=number+": ",marker=" …[单行省略]… ";
+    if(prefix.length()+text.length()+1<=budget)return prefix+text+"\n";
+    int size=Math.max(0,budget-prefix.length()-marker.length()-1),head=size/2,tail=size-head;
+    if(head>0 && Character.isHighSurrogate(text.charAt(head-1)))head--;
+    int start=text.length()-tail;
+    if(start<text.length() && Character.isLowSurrogate(text.charAt(start)))start++;
+    return prefix+text.substring(0,head)+marker+text.substring(start)+"\n";
   }
 }

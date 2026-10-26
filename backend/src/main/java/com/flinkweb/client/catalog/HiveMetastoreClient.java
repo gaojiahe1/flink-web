@@ -29,21 +29,24 @@ public class HiveMetastoreClient {
         || (!object.isBlank()
             && (database.isBlank() || !object.matches("[A-Za-z_][A-Za-z0-9_$-]{0,127}"))))
       throw failure("Hive 数据库或对象名称无效");
-    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
+    long deadline = nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
     for (URI uri : uris) {
-      try (Socket socket = new Socket()) {
-        socket.connect(
-            new InetSocketAddress(uri.getHost(), uri.getPort() == -1 ? 9083 : uri.getPort()), 2000);
-        socket.setSoTimeout(3000);
+      if (remainingMillis(deadline) <= 0) break;
+      try (Socket socket = openSocket()) {
+        var address = new InetSocketAddress(uri.getHost(), uri.getPort() == -1 ? 9083 : uri.getPort());
+        long remaining = remainingMillis(deadline);
+        if (remaining <= 0) break;
+        socket.connect(address, (int) Math.min(2000, remaining));
+        remaining = remainingMillis(deadline);
+        if (remaining <= 0) break;
+        socket.setSoTimeout((int) Math.min(3000, remaining));
         var input =
             new FilterInputStream(socket.getInputStream()) {
               int count;
 
               /** 每次读取前更新剩余预算，慢速响应也不能无限延长请求。 */
               private void before() throws IOException {
-                long remaining =
-                    java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
-                        deadline - System.nanoTime());
+                long remaining = remainingMillis(deadline);
                 if (remaining <= 0) throw new SocketTimeoutException("Hive metadata deadline");
                 socket.setSoTimeout((int) Math.min(3000, Math.max(1, remaining)));
               }
@@ -85,11 +88,22 @@ public class HiveMetastoreClient {
         JsonNode result = call(protocol, method, args);
         return project(result, database, object, functions);
       } catch (Exception ignored) {
-        if (System.nanoTime() >= deadline) break;
+        if (nanoTime() >= deadline) break;
       }
     }
     throw failure("Hive Metastore 查询失败，请检查 URI、网络、服务协议及认证配置；平台未执行任何写入");
   }
+
+  /** 使用单调时钟计算同一次查询的剩余预算，亚毫秒不足时不再启动阻塞操作。 */
+  private long remainingMillis(long deadline) {
+    return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - nanoTime());
+  }
+
+  /** 创建每地址独立的套接字；查询结束或失败即关闭。 */
+  Socket openSocket() { return new Socket(); }
+
+  /** 提供同一次连接和读取共用的单调计时来源。 */
+  long nanoTime() { return System.nanoTime(); }
 
   /** 按官方 field id 编码只读请求，拒绝异常或不同请求号的响应。 */
   private JsonNode call(TProtocol p, String method, List<String> args) throws Exception {

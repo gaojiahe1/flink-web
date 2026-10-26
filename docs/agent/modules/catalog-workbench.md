@@ -1,8 +1,10 @@
 # Catalog 工作台
 
+2026-10-26：Hive 元数据多地址回退共用8秒单调时钟预算；创建 socket 前及地址解析后再次检查剩余时间，连接上限取2秒与剩余预算较小值，连接完成及读取超时同样受剩余预算约束。不足1毫秒不再启动新连接；地址解析本身仍由系统/JVM控制，不承诺包含系统 DNS 阻塞的严格8秒墙钟上限。受控时钟/socket与现有 TCP Thrift 回归通过，未验证目标真实 Hive 环境。见 [本轮验收](../validation.md#pod诊断与证据边界修复2026-10-26)。
+
 2026-10-25后续：主路由/catalogs，旧/datasources跳转；移除数据源页签和SQL数据源插入。CatalogConnections在工作台或JDBC配置内弹出，内层关闭保留未保存Catalog配置，连接保存后刷新候选项；管理员维护MySQL/PostgreSQL，复用原密码引用、修订和引用删除保护。兼容原存储所需的表/列占位字段不用于Catalog，不建远端表。
 
-更新：2026-10-25。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[ADR-007](../decisions/ADR-007-catalog-workbench.md)。
+更新：2026-10-26。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[ADR-007](../decisions/ADR-007-catalog-workbench.md)。
 
 管理页使用目录列表、数据库/对象列表和对象详情三栏；SQL 开发共用 CatalogExplorer。读取数据库、表/视图、字段和 Hive 函数均由用户触发，切换目录/修订或销毁组件取消旧请求，不复用迟到结果。当前账号可读的引用草稿单独展示，删除保护核对全部草稿。修改登记不修改远端对象或运行中的作业。
 

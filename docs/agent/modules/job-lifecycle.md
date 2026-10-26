@@ -1,6 +1,8 @@
 # 作业生命周期
 
-更新：2026-10-25。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
+2026-10-26：作业及 Session 共用 Pod 抽屉左边缘支持拖动和方向键/Home/End 调宽，最大到导航栏右侧，关闭/取消拖动释放状态。Pod 列表与详情独立滚动；日志底部原生横向滑条与虚拟编辑器双向同步，长行右端可见，窄屏保留工具栏和滑条。控件类名限定在 Pod 抽屉内，避免全局日志样式挤压。相关边界见 [本轮验收](../validation.md#pod诊断与证据边界修复2026-10-26)。按需查询、归属核验、日志预算和完整复制规则不变。
+
+更新：2026-10-26。关联 [需求](../requirements/REQ-001-lifecycle.md)、[决策](../decisions/ADR-002-safe-stop.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：作业查询/纳管、身份绑定、启动停止、快照、诊断和只读 Flink UI。调用链由 controller → query/management/operation/stop 服务 → repository/collector/KubernetesClient；前端 JobsView/工作台按需发起。
 

@@ -1,8 +1,8 @@
 # Flink Web 部署指南
 
-更新：2026-10-25。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-26。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前 app/web 已按界面一致性与入口调整覆盖发布0.0.8，downloader不变；现场平台StatefulSet已同步。最新结果见 [本轮发布](#界面一致性与入口调整2026-10-25)，历史结果各自保留。
+当前 app/web 已按Pod诊断与证据边界修复覆盖发布0.0.8，downloader不变；用户确认集群关闭、先发布镜像，本轮未更新实际工作负载。最新结果见 [本轮发布](#pod诊断与证据边界修复2026-10-26)，历史结果各自保留。
 
 ## 1. 部署拓扑与前置条件
 
@@ -646,8 +646,8 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
-| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:415c29c10325a9bd7f953803ffcfaf0ea20b6a648b67bf74e21fbffcebc388a5 |
-| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:714550762778ed1eae7c1b9b4b6ec0e4e8aff23ef4ebbc7370718bfa5916aab0 |
+| 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:ea8d57990cece64b41b3d4e4a5677e22546a73ad91e6921b3871fddf3bcde3b0 |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:10e9b8c6518b192f523a0cabbf45616debda76c352a4799034a4ab39430ad537 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -772,6 +772,17 @@ Hive 浏览的 SASL/TLS/Compact/Framed 和目标 Hive 服务未作实环境验�
 新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
 
 清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。
+
+## Pod诊断与证据边界修复（2026-10-26）
+
+app/web沿用0.0.8，使用正式Dockerfile、干净Kylin运行基础和已验证离线制品构建；非root只读镜像完成测试后推送。指定LAN仓库已核对manifest正文/响应摘要、config、全部压缩层大小/哈希及解压diff_id。不更新latest，downloader和共享Runner/Parser保持。
+
+| 镜像 | Manifest | Config / Image ID | 压缩层总字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.8 | `sha256:ea8d57990cece64b41b3d4e4a5677e22546a73ad91e6921b3871fddf3bcde3b0` | `sha256:4017a2121c62b4a8d3fe78ecedfa610f0337d8b479bd320a5b21dc70ff67e959` | 283643933 | 11 |
+| web:0.0.8 | `sha256:10e9b8c6518b192f523a0cabbf45616debda76c352a4799034a4ab39430ad537` | `sha256:b62f23b14dff9da61e453c2908c468033bd935c15cc9fbe8ccd8dd1c9fa517df` | 111359672 | 8 |
+
+后端305通过/3条件跳过；最终Web17项相关回归及镜像内两份Parser实际调用通过，代理4类通过。完整范围见 [验收](agent/validation.md#pod诊断与证据边界修复2026-10-26)。用户确认集群关闭、先发布镜像，本轮未同步Kubernetes或启动Flink作业；集群恢复后需显式拉取新镜像并更新平台，页面才会生效。原PVC、数据库、主密钥保留，不备份PVC。
 
 ## 界面一致性与入口调整（2026-10-25）
 

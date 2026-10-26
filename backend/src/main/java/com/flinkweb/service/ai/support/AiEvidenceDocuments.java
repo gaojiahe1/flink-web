@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.flinkweb.service.job.creation.YamlService;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.util.*;
 import org.springframework.stereotype.Component;
 
@@ -36,8 +39,8 @@ public class AiEvidenceDocuments {
   public String sql(JsonNode source) {
     var statements=new ArrayList<String>();var args=source.at("/spec/job/args");
     for(int i=0;i<args.size()-1;i++) if(args.get(i).asText().equals("--statement")) {
-      try {statements.add(guard.redact(new String(Base64.getDecoder().decode(args.get(++i).asText()),StandardCharsets.UTF_8)));}
-      catch(IllegalArgumentException ignored) {return "部署参数不是有效的SQL编码，请核对已发布配置";}
+      try {statements.add(guard.redact(decodeStatement(args.get(++i).asText())));}
+      catch(IllegalArgumentException | CharacterCodingException ignored) {return "部署参数不是有效的SQL编码，请核对已发布配置";}
     }
     return String.join(";\n",statements);
   }
@@ -56,10 +59,17 @@ public class AiEvidenceDocuments {
       if(object.path("args").isArray()) {
         var args=(com.fasterxml.jackson.databind.node.ArrayNode)object.path("args");
         for(int i=0;i<args.size()-1;i++)if(args.get(i).asText().equals("--statement")) {
-          try {String text=new String(Base64.getDecoder().decode(args.get(i+1).asText()),StandardCharsets.UTF_8);args.set(++i,com.fasterxml.jackson.databind.node.TextNode.valueOf(Base64.getEncoder().encodeToString(guard.redact(text).getBytes(StandardCharsets.UTF_8))));}
-          catch(IllegalArgumentException ignored) {args.set(++i,com.fasterxml.jackson.databind.node.TextNode.valueOf("[UNREADABLE SQL]"));}
+          try {String text=decodeStatement(args.get(i+1).asText());args.set(++i,com.fasterxml.jackson.databind.node.TextNode.valueOf(Base64.getEncoder().encodeToString(guard.redact(text).getBytes(StandardCharsets.UTF_8))));}
+          catch(IllegalArgumentException | CharacterCodingException ignored) {args.set(++i,com.fasterxml.jackson.databind.node.TextNode.valueOf("[UNREADABLE SQL]"));}
         }
       }
     } else if(node.isArray())for(var child:node)scrub(child);
+  }
+
+  /** 严格按UTF-8解码，拒绝损坏字节，不用替换字符伪造可核对SQL。 */
+  private static String decodeStatement(String encoded) throws CharacterCodingException {
+    return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(Base64.getDecoder().decode(encoded))).toString();
   }
 }

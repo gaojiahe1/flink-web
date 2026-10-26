@@ -15,6 +15,46 @@ const props = defineProps<{
 const api = computed(() => (props.kind === 'session' ? sessionsApi : workbenchApi))
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
+const drawerWidth = ref(1120),
+  availableWidth = ref(window.innerWidth - 16),
+  resizing = ref(false)
+const minDrawerWidth = computed(() => Math.min(640, availableWidth.value))
+let sidebarObserver: ResizeObserver | undefined
+let resizeStart = { x: 0, width: 0 }
+function measureDrawer() {
+  const viewport = document.documentElement.clientWidth
+  const sidebar = document.querySelector('.sidebar')?.getBoundingClientRect()
+  availableWidth.value = Math.max(240, Math.min(viewport - 16, viewport - (sidebar?.right || 0)))
+  drawerWidth.value = Math.max(
+    minDrawerWidth.value,
+    Math.min(drawerWidth.value, availableWidth.value),
+  )
+}
+function startResize(event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  resizeStart = { x: event.clientX, width: drawerWidth.value }
+  resizing.value = true
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+function resizeDrawer(event: PointerEvent) {
+  if (resizing.value)
+    drawerWidth.value = Math.max(
+      minDrawerWidth.value,
+      Math.min(availableWidth.value, resizeStart.width + resizeStart.x - event.clientX),
+    )
+}
+function resizeKey(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const width =
+    event.key === 'Home'
+      ? 1120
+      : event.key === 'End'
+        ? availableWidth.value
+        : drawerWidth.value + (event.key === 'ArrowLeft' ? 40 : -40)
+  drawerWidth.value = Math.max(minDrawerWidth.value, Math.min(availableWidth.value, width))
+}
 const data = ref<Diagnostic | null>(null),
   error = ref(''),
   selected = ref(''),
@@ -107,10 +147,17 @@ function showLog(name: string) {
   void readLog()
 }
 onMounted(() => {
+  measureDrawer()
+  window.addEventListener('resize', measureDrawer)
+  sidebarObserver = new ResizeObserver(measureDrawer)
+  const sidebar = document.querySelector('.sidebar')
+  if (sidebar) sidebarObserver.observe(sidebar)
   dialog.value?.showModal()
   void refresh()
 })
 onUnmounted(() => {
+  window.removeEventListener('resize', measureDrawer)
+  sidebarObserver?.disconnect()
   disposed = true
   logEpoch++
 })
@@ -119,10 +166,30 @@ onUnmounted(() => {
   <dialog
     ref="dialog"
     class="pod-drawer"
+    :class="{ resizing }"
+    :style="{ width: drawerWidth + 'px', maxWidth: availableWidth + 'px' }"
     aria-labelledby="pod-drawer-title"
     @close="emit('close')"
     @cancel.prevent="emit('close')"
   >
+    <div
+      class="pod-drawer-resizer"
+      role="separator"
+      aria-label="调整 Pod 状态弹窗宽度"
+      aria-orientation="vertical"
+      tabindex="0"
+      :aria-valuemin="minDrawerWidth"
+      :aria-valuemax="availableWidth"
+      :aria-valuenow="Math.round(drawerWidth)"
+      @pointerdown="startResize"
+      @pointermove="resizeDrawer"
+      @pointerup="resizing = false"
+      @pointercancel="resizing = false"
+      @lostpointercapture="resizing = false"
+      @keydown="resizeKey"
+    >
+      <span />
+    </div>
     <header class="drawer-heading">
       <div>
         <span class="muted">{{ kind === 'session' ? 'Session 集群诊断' : '作业运行诊断' }}</span>
@@ -142,7 +209,7 @@ onUnmounted(() => {
         }}
       </button>
     </div>
-    <div class="drawer-scroll">
+    <div class="drawer-scroll" :class="{ 'showing-logs': tab === 'logs' && pod }">
       <p v-if="error" class="notice error" role="alert">{{ error }}</p>
       <div v-if="data?.error" class="notice error">
         <strong>部署错误</strong>
@@ -180,7 +247,7 @@ onUnmounted(() => {
         <main v-if="pod" class="pod-detail">
           <div class="pod-detail-heading">
             <div>
-              <h3>{{ pod.name }}</h3>
+              <h3 :title="pod.name">{{ pod.name }}</h3>
               <p class="muted">
                 节点 {{ pod.node || '尚未调度' }} · 创建 {{ time(pod.createdAt) }}
               </p>
@@ -252,7 +319,7 @@ onUnmounted(() => {
             </section>
           </template>
           <section v-else-if="canReadLogs" class="pod-logs">
-            <div class="log-controls">
+            <div class="pod-log-controls">
               <label
                 >日志容器<select v-model="container">
                   <option v-for="name in pod.containers" :key="name" :value="name">
@@ -280,7 +347,7 @@ onUnmounted(() => {
             <p v-if="logBusy" class="empty-state">正在读取容器日志…</p>
             <template v-else-if="logLoaded"
               ><p class="muted">日志查询：{{ time(logTime) }}</p>
-              <LogViewer v-if="log" :text="log" />
+              <LogViewer v-if="log" :text="log" fill />
               <p v-else class="empty-state">该容器暂无日志输出</p></template
             >
             <p v-else-if="!logError" class="empty-state">选择容器后读取最新日志</p>
@@ -304,6 +371,8 @@ onUnmounted(() => {
 </template>
 <style scoped>
 .pod-drawer {
+  overflow: hidden;
+  container: pod-drawer / inline-size;
   position: fixed;
   inset: 0 0 0 auto;
   margin: 0;
@@ -323,6 +392,85 @@ onUnmounted(() => {
 }
 .pod-drawer::backdrop {
   background: #15263d66;
+}
+.pod-drawer-resizer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 3;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  display: grid;
+  place-items: center;
+  outline-offset: -2px;
+}
+.pod-drawer-resizer span {
+  width: 3px;
+  height: 64px;
+  border-radius: 4px;
+  background: var(--line);
+}
+.pod-drawer-resizer:hover,
+.pod-drawer-resizer:focus-visible {
+  background: #edf3ff;
+}
+.pod-drawer-resizer:hover span {
+  background: var(--blue);
+}
+.resizing {
+  user-select: none;
+}
+.drawer-heading,
+.drawer-summary,
+footer {
+  flex-shrink: 0;
+}
+.drawer-scroll.showing-logs {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.showing-logs > .notice {
+  flex: none;
+  max-height: 120px;
+  overflow: auto;
+}
+.showing-logs .pod-layout {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+.showing-logs .pod-list {
+  min-height: 0;
+  overflow: auto;
+}
+.showing-logs .pod-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.showing-logs .pod-detail-heading,
+.showing-logs .segmented {
+  flex: none;
+}
+.showing-logs .segmented {
+  margin: 8px 0;
+}
+.pod-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.pod-logs > :not(.log-viewer) {
+  flex-shrink: 0;
+}
+.pod-logs > .log-viewer {
+  flex: 1;
+  min-height: 96px;
 }
 .drawer-heading {
   display: flex;
@@ -491,20 +639,20 @@ h3 {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
-.log-controls {
+.pod-log-controls {
   display: flex;
   align-items: flex-end;
   gap: 12px;
   flex-wrap: wrap;
 }
-.log-controls > label:first-child {
+.pod-log-controls > label:first-child {
   flex: 1 1 180px;
   min-width: 0;
 }
-.log-controls select {
+.pod-log-controls select {
   width: 100%;
 }
-.log-controls .inline-check {
+.pod-log-controls .inline-check {
   padding-bottom: 7px;
 }
 .log-hint {
@@ -517,13 +665,16 @@ footer {
   font-size: 12px;
   background: var(--color-surface);
 }
-@media (max-width: 760px) {
+@container pod-drawer (max-width: 760px) {
   .pod-layout {
     grid-template-columns: minmax(0, 1fr);
   }
   .pod-list {
     max-height: 240px;
     overflow: auto;
+  }
+  .showing-logs .pod-layout {
+    grid-template-rows: 90px minmax(0, 1fr);
   }
   .drawer-heading,
   .drawer-summary,
@@ -538,6 +689,29 @@ footer {
   }
   .pod-detail {
     padding: 12px;
+  }
+  .pod-log-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+  .pod-log-controls > label:first-child {
+    grid-column: 1 / -1;
+  }
+  .pod-log-controls .inline-check {
+    padding: 0;
+  }
+  .showing-logs .pod-detail-heading > div {
+    min-width: 0;
+  }
+  .showing-logs .pod-detail-heading h3 {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .showing-logs .pod-detail-heading .muted,
+  .showing-logs .pod-detail-heading > .badge {
+    display: none;
   }
 }
 </style>
