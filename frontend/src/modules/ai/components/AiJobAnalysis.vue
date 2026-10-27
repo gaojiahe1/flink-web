@@ -48,12 +48,14 @@ const body = ref<HTMLElement>(),
   largeView = ref<'summary' | 'evidence' | 'comparison' | 'current'>(),
   stacked = ref(false)
 const drawerWidth = ref(1180),
-  availableWidth = ref(window.innerWidth)
+  availableWidth = ref(window.innerWidth),
+  drawerHeight = ref(document.documentElement.clientHeight)
 const consentRequest = ref<{ kind: 'chat' | 'repair'; repeat: boolean }>()
 let sidebarObserver: ResizeObserver | undefined
 let stopDrawerResize: (() => void) | undefined
 const minDrawerWidth = computed(() => Math.min(640, availableWidth.value))
 function measureDrawer() {
+  drawerHeight.value = document.documentElement.clientHeight
   const sidebar = document.querySelector('.sidebar')?.getBoundingClientRect()
   availableWidth.value = Math.max(240, document.documentElement.clientWidth - (sidebar?.right || 0))
   drawerWidth.value = Math.max(
@@ -134,6 +136,35 @@ const { task, busy, error: taskError, uncertain, retry, start, cancel, resume } 
 let disposed = false
 const working = computed(
   () => busy.value || saving.value || applying.value || loading.value || collecting.value,
+)
+const progressText = computed(() => {
+  if (uncertain.value) return '任务状态待核对，请核对原任务后继续。'
+  if (applying.value) return '正在提交已确认的修复，请稍候…'
+  if (collecting.value) return '正在采集本轮证据，请稍候…'
+  if (busy.value) {
+    if (task.value?.state === 'QUEUED') return '分析任务已排队，等待 AI 处理…'
+    if (task.value?.state === 'RUNNING') return 'AI 正在取证并分析，请稍候…'
+    return '正在提交本轮分析，请稍候…'
+  }
+  if (saving.value) return '正在保存本轮内容，请稍候…'
+  return ''
+})
+const elapsedSeconds = ref(0)
+let progressTimer: ReturnType<typeof setInterval> | undefined
+watch(
+  working,
+  (active) => {
+    if (progressTimer) clearInterval(progressTimer)
+    progressTimer = undefined
+    elapsedSeconds.value = 0
+    if (active) {
+      const startedAt = Date.now()
+      progressTimer = setInterval(() => {
+        elapsedSeconds.value = Math.floor((Date.now() - startedAt) / 1000)
+      }, 1000)
+    }
+  },
+  { immediate: true },
 )
 const plan = computed(() => conversation.value?.plan)
 const displayedError = computed(() =>
@@ -220,6 +251,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   disposed = true
+  if (progressTimer) clearInterval(progressTimer)
   stopResize?.()
   stopDrawerResize?.()
   sidebarObserver?.disconnect()
@@ -409,7 +441,11 @@ async function continueApplication() {
     ref="dialog"
     class="ai-analysis-drawer"
     :class="{ 'ai-drawer-narrow': drawerWidth <= 1000 }"
-    :style="{ width: drawerWidth + 'px', maxWidth: availableWidth + 'px' }"
+    :style="{
+      width: drawerWidth + 'px',
+      maxWidth: availableWidth + 'px',
+      '--ai-drawer-height': drawerHeight + 'px',
+    }"
     :aria-label="'AI 作业助手：' + job.name"
     @cancel.prevent="emit('close')"
   >
@@ -527,7 +563,7 @@ async function continueApplication() {
           }}</span>
           <span class="muted">打开大视图 ↗</span>
         </button>
-        <div ref="messages" class="ai-job-messages" aria-label="近期对话">
+        <div ref="messages" class="ai-job-messages" aria-label="近期对话" :aria-busy="busy">
           <div v-if="!conversation?.messages.length" class="ai-job-empty">
             <Sparkles :size="25" />
             <h4>结合当前作业一起排查</h4>
@@ -545,9 +581,6 @@ async function continueApplication() {
             <small>{{ item.role === 'user' ? '你' : 'AI 助手' }}</small>
             <AiRichText :text="item.content" />
           </article>
-          <p v-if="busy" class="ai-job-progress" role="status">
-            <LoaderCircle :size="15" class="ai-job-spin" /> 正在收集证据并分析，可继续查看已有对话…
-          </p>
         </div>
         <div class="ai-job-evidence">
           <p v-if="busy || collecting" class="muted" role="status">
@@ -573,6 +606,14 @@ async function continueApplication() {
           </button>
         </div>
         <div class="ai-job-input">
+          <div v-if="progressText" class="ai-job-progress" role="status" aria-live="polite">
+            <RefreshCw v-if="uncertain" :size="16" aria-hidden="true" />
+            <LoaderCircle v-else :size="16" class="ai-job-spin" aria-hidden="true" />
+            <span>{{ progressText }}</span>
+            <small v-if="!uncertain" class="ai-job-elapsed" aria-hidden="true"
+              >已等待 {{ elapsedSeconds }} 秒</small
+            >
+          </div>
           <label for="ai-job-question">问题或补充说明</label
           ><textarea
             id="ai-job-question"
@@ -891,8 +932,9 @@ async function continueApplication() {
   inset: 0 0 0 auto;
   margin: 0 0 0 auto;
   width: 1180px;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: var(--ai-drawer-height, 100vh);
+  min-height: var(--ai-drawer-height, 100vh);
+  max-height: var(--ai-drawer-height, 100vh);
   max-width: 100vw;
   border: 0;
   background: var(--color-surface);
@@ -1183,8 +1225,18 @@ async function continueApplication() {
   display: flex;
   align-items: center;
   gap: 7px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #eef4ff;
   font-size: 12px;
   color: var(--color-primary);
+}
+.ai-job-elapsed {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-muted);
 }
 .ai-job-input {
   border-top: 1px solid var(--line);
@@ -1329,6 +1381,8 @@ async function continueApplication() {
 .ai-job-spin {
   animation: ai-job-spin 1s linear infinite;
   flex: none;
+  transform-origin: center;
+  transform-box: fill-box;
 }
 @keyframes ai-job-spin {
   to {

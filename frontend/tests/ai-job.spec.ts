@@ -497,3 +497,96 @@ test('修复分栏顶部对齐、对话优先，缩窄后仍可滚动到应用�
   await expect(apply).toBeInViewport()
   expect(f.errors).toEqual([])
 })
+
+test('AI抽屉在无方案和有方案时均铺满视口高度', async ({ page }) => {
+  const f = await fixture(page)
+  async function fillsViewport() {
+    await expect.poll(() => f.drawer.evaluate(el => ({
+      top: Math.round(el.getBoundingClientRect().top),
+      bottom: Math.round(el.getBoundingClientRect().bottom),
+      viewport: window.innerHeight,
+    }))).toEqual({ top: 0, bottom: page.viewportSize()!.height, viewport: page.viewportSize()!.height })
+    await expect(f.drawer.getByLabel('问题或补充说明', { exact: true })).toBeInViewport()
+    await expect(f.drawer.locator('.ai-job-footer')).toBeInViewport()
+  }
+  for (const size of [{ width: 1920, height: 1080 }, { width: 1440, height: 900 }, { width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(size)
+    await fillsViewport()
+  }
+  await generate(f)
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await fillsViewport()
+  await page.screenshot({ path: test.info().outputPath('ai-drawer-full-height.png') })
+  expect(f.errors).toEqual([])
+})
+
+test('取消分析后等待提示消失，关闭再打开不会恢复已结束的加载状态', async ({ page }) => {
+  const f = await fixture(page)
+  await page.route('**/api/ai/tasks/*', route => {
+    if (route.request().url().endsWith('/cancel')) return route.fallback()
+    return route.fulfill({ json: { data: { id: f.tasks.at(-1)?.requestId, state: 'RUNNING' } } })
+  })
+  await f.drawer.getByRole('button', { name: '开始 AI 分析', exact: true }).first().click()
+  await expect(f.drawer.locator('.ai-job-input .ai-job-progress')).toBeVisible()
+  await f.drawer.getByRole('button', { name: '取消分析', exact: true }).click()
+  await expect(f.drawer.locator('.ai-job-progress')).toHaveCount(0)
+  await expect(f.drawer.getByLabel('问题或补充说明', { exact: true })).toBeEnabled()
+  await f.drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
+  await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
+  await expect(f.drawer.getByLabel('任务模型')).toBeEnabled()
+  await expect(f.drawer.locator('.ai-job-progress')).toHaveCount(0)
+  expect(f.tasks).toHaveLength(1)
+  expect(f.errors).toEqual([])
+})
+
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`分析期间固定展示真实任务状态与等待时间：${reducedMotion}`, async ({ page }) => {
+    await page.emulateMedia({ reducedMotion })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const f = await fixture(page)
+    f.memory.messages = Array.from({ length: 24 }, (_, i) => ({ id: `old-${i}`, role: i % 2 ? 'assistant' : 'user', content: '较早的排障记录。'.repeat(30), mode: 'chat' }))
+    await f.drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
+    await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
+    await expect(f.drawer.locator('.ai-job-message')).toHaveCount(24)
+    let releaseMessage!: () => void
+    const messageGate = new Promise<void>(resolve => { releaseMessage = resolve })
+    await page.route('**/api/ai/jobs/job-ai/messages', async route => {
+      await messageGate
+      await route.fallback()
+    })
+    let stage = 'QUEUED'
+    await page.route('**/api/ai/tasks/*', route => route.fulfill({ json: { data: { id: f.tasks.at(-1)?.requestId, kind: 'diagnosis', state: stage } } }))
+    const question = f.drawer.getByLabel('问题或补充说明', { exact: true })
+    await question.fill('继续核对最新报错')
+    await f.drawer.getByRole('button', { name: '发送并更新证据', exact: true }).click()
+    const progress = f.drawer.locator('.ai-job-input .ai-job-progress')
+    await expect(progress).toContainText('正在保存本轮内容')
+    await expect(progress).toBeInViewport()
+    releaseMessage()
+    await expect(progress).toContainText('分析任务已排队')
+    const spinner = progress.locator('.ai-job-spin')
+    if (reducedMotion === 'no-preference') {
+      const transform = await spinner.evaluate(el => getComputedStyle(el).transform)
+      await expect.poll(() => spinner.evaluate(el => getComputedStyle(el).transform)).not.toBe(transform)
+    } else {
+      await expect(spinner).toHaveCSS('animation-name', 'none')
+    }
+    stage = 'RUNNING'
+    await expect(progress).toContainText('AI 正在取证并分析')
+    await expect(progress.locator('.ai-job-elapsed')).not.toHaveText('已等待 0 秒')
+    await f.drawer.locator('.ai-job-messages').evaluate(el => { el.scrollTop = 0 })
+    await expect(progress).toBeInViewport()
+    await expect(question).toBeDisabled()
+    expect(f.tasks).toHaveLength(1)
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await expect(progress).toBeInViewport()
+    await expect(f.drawer.getByRole('button', { name: '取消分析', exact: true })).toBeInViewport()
+    await page.screenshot({ path: test.info().outputPath(`ai-thinking-${reducedMotion}.png`) })
+    await page.unroute('**/api/ai/tasks/*')
+    await expect(progress).toHaveCount(0)
+    await expect(question).toBeEnabled()
+    await expect(f.drawer).toContainText('AI 已回答')
+    expect(f.tasks).toHaveLength(1)
+    expect(f.errors).toEqual([])
+  })
+}
