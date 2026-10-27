@@ -1,8 +1,10 @@
 # SQL 与 Session
 
+2026-10-27全站UI：工作台与表单密度见 [UI设计系统](ui-design-system.md)。SQL辅助栏调整时优先给正文保留320px，中等屏幕缩窄草稿栏，必要时同步降低辅助栏最小宽度；删除当前草稿成功后重置空编辑状态与地址，不再遗留旧内容或强行打开新建窗口。取消/失败保留原文，删除其他草稿保留当前未保存内容。
+
 2026-10-25：SQL历史版本选择/恢复并排，复用CodeDiff提供完整SQL语法和行内修改高亮，不再按2000行截断；恢复仍只更新草稿。移除SQL数据源侧栏及其登记/片段请求，Catalog对象引用仍保留。Session表格只显示状态和摘要，额外TM信息转入原可聚焦详情弹层。
 
-更新：2026-10-25。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-27。关联 [需求](../requirements/REQ-003-sql-session.md)、[决策](../decisions/ADR-001-on-demand.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：SQL 草稿/修订/历史、基础与精确 Parser 检查、Application 发布、Session 配置启停、限额运行验证。SqlJobService 处理草稿关联和生成；SqlExecutionService 重新检查并提交固定 JobID，SessionClusterService 保证专用 sql-validation 唯一。
 

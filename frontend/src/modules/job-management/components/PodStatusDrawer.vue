@@ -477,13 +477,13 @@ footer {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  padding: 20px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--color-surface);
 }
 h2 {
   margin: 6px 0;
-  font-size: 18px;
+  font-size: 15px;
   overflow-wrap: anywhere;
 }
 h3 {

@@ -4,11 +4,10 @@ defineProps<{ eyebrow?: string; title?: string; description?: string }>()
 <template>
   <header class="page-title">
     <div class="page-heading">
-      <p v-if="eyebrow" class="eyebrow">{{ eyebrow }}</p>
       <h1>
         <slot name="title">{{ title }}</slot>
       </h1>
-      <p class="muted">
+      <p v-if="description || $slots.description" class="muted">
         <slot name="description">{{ description }}</slot>
       </p>
     </div>

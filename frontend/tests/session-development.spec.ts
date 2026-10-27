@@ -410,25 +410,10 @@ test('SQL 配置 YAML 可回填资源，修改后检查失效，保存重开保�
 })
 
 for (const invalidField of ['共享', 'JobManager', 'TaskManager']) {
-  test(`无效 ${invalidField} PodTemplate 阻止数据源插入并保留全部编辑原文`, async ({ page }) => {
+  test(`无效 ${invalidField} PodTemplate 阻止保存并保留全部编辑原文`, async ({ page }) => {
     await fixture(page)
-    let inserts = 0
-    await page.route('**/api/catalog/datasources', (route) =>
-      route.fulfill({
-        json: { data: [{ id: 'source', name: 'test-source', connectorType: 'JDBC' }] },
-      }),
-    )
-    await page.route('**/api/sql/datasources/source/snippet', (route) => {
-      inserts++
-      return route.fulfill({
-        json: {
-          data: {
-            sql: 'CREATE TABLE injected(n INT);',
-            env: [{ name: 'DS_SECRET', value: '{{secret:test}}' }],
-          },
-        },
-      })
-    })
+    let saves = 0
+    page.on('request', request => { if (request.method() === 'PUT' && new URL(request.url()).pathname === '/api/sql/jobs/sql-draft') saves++ })
     await page.goto('/#/sql?draft=sql-draft')
     const sqlEditor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
     await expect(sqlEditor).toContainText('CREATE TABLE sink')
@@ -437,36 +422,18 @@ for (const invalidField of ['共享', 'JobManager', 'TaskManager']) {
     await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
     const names = ['共享', 'JobManager', 'TaskManager']
     for (const [index, name] of names.entries()) {
-      await page
-        .locator(
-          `[data-field="${['podTemplate', 'jmPodTemplate', 'tmPodTemplate'][index]}"] summary`,
-        )
-        .click()
-      await page
-        .getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true })
-        .fill(
-          name === invalidField
-            ? 'spec: [unfinished'
-            : 'metadata:\n  annotations:\n    keep: ' + name,
-        )
+      await page.locator(`[data-field="${['podTemplate', 'jmPodTemplate', 'tmPodTemplate'][index]}"] summary`).click()
+      await page.getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true }).fill(name === invalidField ? 'spec: [unfinished' : 'metadata:\n  annotations:\n    keep: ' + name)
     }
-    await page.getByRole('button', { name: '数据源', exact: true }).click()
-    await page.getByRole('button', { name: '插入 SQL', exact: true }).click()
+    await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
     await expect(page.locator('.notice.error')).toContainText('修正 PodTemplate YAML')
-    expect(inserts).toBe(0)
+    expect(saves).toBe(0)
     await expect(sqlEditor).toHaveText(original)
-    await page.getByRole('button', { name: '部署配置', exact: true }).click()
-    for (const name of names)
-      await expect(
-        page.getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true }),
-      ).toContainText(name === invalidField ? 'spec: [unfinished' : 'keep: ' + name)
-    await page
-      .getByRole('textbox', { name: invalidField + ' PodTemplate（YAML）', exact: true })
-      .fill('{}')
-    await page.getByRole('button', { name: '数据源', exact: true }).click()
-    await page.getByRole('button', { name: '插入 SQL', exact: true }).click()
-    await expect(sqlEditor).toContainText('CREATE TABLE injected')
-    expect(inserts).toBe(1)
+    for (const name of names) await expect(page.getByRole('textbox', { name: name + ' PodTemplate（YAML）', exact: true })).toContainText(name === invalidField ? 'spec: [unfinished' : 'keep: ' + name)
+    await page.getByRole('textbox', { name: invalidField + ' PodTemplate（YAML）', exact: true }).fill('{}')
+    await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
+    await expect.poll(() => saves).toBe(1)
+    await expect(sqlEditor).toHaveText(original)
   })
 }
 
@@ -692,14 +659,18 @@ test('SQL 列表删除保留关联保护并重置已删除的当前草稿', asyn
 test('删除其他 SQL 草稿不丢失当前未保存内容', async ({ page }) => {
   const f = await fixture(page)
   f.draftOnly()
-  await page.goto('/#/sql')
-  await page.getByRole('button', { name: '＋ 新建 SQL', exact: true }).click()
+  const current = { id: 'current', name: 'current', description: '', sql: sqlText(), runtime, revision: 1 }
+  const other = { ...current, id: 'sql-draft', name: 'sql-draft' }
+  await page.route('**/api/sql/jobs', route => route.fulfill({ json: { data: f.deletes() ? [current] : [current, other] } }))
+  await page.goto('/#/sql?draft=current')
   const editor = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
-  await editor.fill(sqlText())
+  const unsaved = sqlText() + '\n-- current unsaved'
+  await editor.fill(unsaved)
   await page.getByRole('button', { name: '删除 SQL 草稿「sql-draft」', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确定', exact: true }).click()
-  await expect(page.locator('.sql-file')).toHaveCount(0)
-  await expect(editor).toContainText(sqlText())
+  await expect(page.locator('.sql-file')).toHaveCount(1)
+  await expect(editor.locator('.cm-line')).toHaveText(unsaved.split('\n'))
+  await expect(page).toHaveURL(/draft=current/)
 })
 
 test('只读角色不显示开发草稿删除入口', async ({ page }) => {

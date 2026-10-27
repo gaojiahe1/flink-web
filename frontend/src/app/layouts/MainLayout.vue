@@ -111,11 +111,13 @@ async function signOut() {
           </button>
         </div>
       </header>
-      <main class="content">
+      <main class="content" :data-page="route.path.split('/')[1] || 'jobs'">
         <div v-if="error" class="notice error">{{ error }}</div>
         <RouterView />
       </main>
-      <footer>Flink Platform<span>按需查询 · 配置驱动 · 独立工作空间</span></footer>
+      <footer class="app-footer">
+        Flink Platform<span>按需查询 · 配置驱动 · 独立工作空间</span>
+      </footer>
     </section>
   </div>
 </template>

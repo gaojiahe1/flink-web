@@ -2,25 +2,25 @@
 .login-page {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
 }
 .login-story {
   background: #111827;
   color: #bbd0cb;
-  padding: 55px 65px;
+  padding: 36px 48px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 }
 .login-story h1 {
   color: #f2f7f4;
-  font-size: 39px;
-  line-height: 1.6;
-  margin-bottom: 22px;
+  font-size: 28px;
+  line-height: 1.5;
+  margin-bottom: 16px;
   font-weight: 600;
 }
 .login-story p {
-  font-size: 14px;
+  font-size: 13px;
   line-height: 2;
 }
 .login-story small {
@@ -34,15 +34,15 @@
 }
 .login-form {
   width: 100%;
-  max-width: 380px;
+  max-width: 340px;
 }
 .login-form > .muted {
-  margin: 10px 0 30px;
+  margin: 8px 0 20px;
   font-size: 13px;
 }
 .login-form > label {
   display: block;
-  margin: 18px 0 6px;
+  margin: 14px 0 6px;
 }
 .login-form input:not([type='checkbox']):not([type='radio']) {
   height: var(--control-height);
@@ -55,7 +55,7 @@
   margin-top: 22px;
 }
 .login-form h2 {
-  font-size: 22px;
+  font-size: 20px;
   margin: 0;
 }
 .login-form .form-help {
@@ -100,7 +100,7 @@
 }
 @media (max-width: 1050px) {
   .login-story h1 {
-    font-size: 30px;
+    font-size: 26px;
   }
 }
 @media (max-width: 760px) {

@@ -189,9 +189,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .jar-workbench {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
-  height: calc(100dvh - 205px);
-  min-height: 520px;
+  grid-template-columns: 210px minmax(0, 1fr);
+  height: var(--workbench-height);
+  min-height: 420px;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: var(--panel-radius);
@@ -205,8 +205,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 10px;
+  gap: 8px;
+  padding: 10px;
   background: #fafbfd;
   border-right: 1px solid var(--line);
 }
@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 12px;
   scrollbar-width: thin;
 }
 .jar-editor-empty {
@@ -331,12 +331,12 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 .jar-edit-pane :deep(.embedded-editor-title) {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   gap: 12px;
   align-items: center;
 }
 .jar-edit-pane :deep(.embedded-editor-title h1) {
-  font-size: 17px;
+  font-size: 15px;
 }
 .jar-edit-pane :deep(.embedded-editor-title .muted) {
   font-size: 12px;

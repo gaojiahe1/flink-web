@@ -29,17 +29,17 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 20px;
+  font-size: var(--font-title);
   line-height: 1.4;
-  font-weight: 650;
-  letter-spacing: -0.4px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--color-text);
 }
 h2 {
-  font-size: 18px;
+  font-size: 15px;
 }
 h3 {
-  font-size: 13px;
+  font-size: var(--font-section);
   font-weight: 650;
 }
 input,
@@ -69,8 +69,8 @@ a:focus-visible {
 }
 label {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-small);
+  font-weight: 500;
 }
 label input,
 label textarea,
@@ -114,13 +114,14 @@ label small,
 .page-title {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-4);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--page-gap);
+  min-height: 36px;
 }
 .page-title .muted {
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: 0;
+  font-size: var(--font-small);
 }
 .button {
   display: inline-flex;
@@ -135,8 +136,10 @@ label small,
   white-space: nowrap;
   min-height: var(--control-height);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--font-small);
   gap: 6px;
+  height: var(--control-height);
+  line-height: 1.4;
 }
 .button:hover {
   background: #f8fafc;
@@ -155,9 +158,9 @@ label small,
 .text-button {
   background: none;
   border: 0;
-  font-size: 13px;
+  font-size: var(--font-small);
   color: var(--blue);
-  padding: 4px 6px;
+  padding: 3px 5px;
 }
 .danger {
   color: var(--color-danger);
@@ -169,14 +172,14 @@ label small,
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 15px;
+  padding: 8px 12px;
   border: 1px solid #dbe8e4;
   background: #f0f6ff;
   color: #365679;
   margin: 0 0 20px;
   border-color: #d5e6ff;
-  margin-bottom: 16px;
-  font-size: 13px;
+  margin-bottom: 12px;
+  font-size: var(--font-small);
   border-radius: var(--radius-sm);
 }
 .notice.error {
@@ -202,12 +205,12 @@ label small,
   box-shadow: var(--shadow-panel);
 }
 .panel-toolbar {
-  padding: 16px 20px;
+  padding: 10px 14px;
   border-bottom: 1px solid #edf0f1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   border-color: var(--line);
 }
 .panel-heading {
@@ -236,19 +239,19 @@ label small,
 }
 .empty-state {
   text-align: center;
-  padding: 55px 20px;
+  padding: 32px 16px;
   color: #5e6e86;
 }
 .empty-icon {
-  height: 58px;
-  width: 58px;
+  height: 40px;
+  width: 40px;
   display: grid;
   place-items: center;
   color: #7b99c4;
   background: #f2f6fd;
   border: 1px solid #e1eee6;
-  border-radius: 15px;
-  margin: 0 auto 20px;
+  border-radius: 8px;
+  margin: 0 auto 12px;
   font-size: 30px;
   border-color: #e3ebf9;
 }
@@ -269,14 +272,14 @@ table {
 }
 th {
   height: var(--table-header-height);
-  font-size: 13px;
+  font-size: var(--font-small);
   color: var(--color-muted);
   font-weight: 600;
   background: #f7f9fc;
 }
 td,
 th {
-  padding: 8px 16px;
+  padding: 6px 14px;
   border-bottom: 1px solid #edf0f1;
   border-color: #eef1f5;
 }
@@ -285,13 +288,13 @@ tbody tr:last-child td {
 }
 .table-description {
   display: block;
-  margin-top: 2px;
+  margin-top: 0;
   line-height: 20px;
   max-width: 400px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: var(--font-small);
   color: var(--color-muted);
 }
 .mono {
@@ -300,7 +303,7 @@ tbody tr:last-child td {
 .badge {
   line-height: 18px;
   vertical-align: middle;
-  padding: 3px 9px;
+  padding: 1px 6px;
   background: #f0f4fa;
   color: #65758b;
   white-space: nowrap;
@@ -308,8 +311,8 @@ tbody tr:last-child td {
   align-items: center;
   gap: 6px;
   font-weight: 500;
-  font-size: 13px;
-  border-radius: var(--radius-sm);
+  font-size: 11px;
+  border-radius: 4px;
 }
 .badge.amber {
   background: #fbf1df;
@@ -327,13 +330,13 @@ tbody tr:last-child td {
   gap: 22px;
 }
 .form-panel {
-  padding: 25px;
+  padding: var(--panel-padding);
 }
 .form-panel h3 {
-  margin-bottom: 25px;
+  margin-bottom: 12px;
 }
 .form-panel label {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 .form-panel .notice {
   margin: 0;
@@ -359,7 +362,9 @@ tbody tr:last-child td {
   grid-column: 1/-1;
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
 }
 .module-placeholder {
   text-align: center;
@@ -389,10 +394,11 @@ tbody tr:last-child td {
 }
 .settings-list {
   display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: 18px;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px 16px;
   margin-bottom: 28px;
-  font-size: 13px;
+  font-size: var(--font-small);
+  margin: 12px 0 16px;
 }
 .settings-list dt {
   color: #83979a;
@@ -446,7 +452,7 @@ tbody tr:last-child td {
 .field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 24px;
+  gap: 10px 16px;
 }
 select {
   width: 100%;
@@ -592,7 +598,7 @@ input[type='radio'] {
   vertical-align: middle;
 }
 .filter-bar {
-  padding: 14px 20px;
+  padding: 10px 14px;
   display: flex;
   gap: 10px;
   align-items: center;
@@ -609,7 +615,7 @@ input[type='radio'] {
 .filter-count {
   margin-left: auto;
   color: #939eae;
-  font-size: 13px;
+  font-size: var(--font-small);
 }
 td {
   font-size: 13px;
@@ -619,6 +625,7 @@ td {
 th {
   padding-block: 6px;
   line-height: 20px;
+  font-size: var(--font-small);
 }
 .table-wrap .job-name {
   padding-block: 0;
@@ -667,12 +674,12 @@ tbody tr:hover {
   color: #6c82a3;
 }
 .pagination {
-  padding: 13px 20px;
+  padding: 9px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  font-size: 13px;
+  font-size: var(--font-small);
   color: #95a0af;
   border-top: 1px solid var(--line);
 }
@@ -680,12 +687,12 @@ tbody tr:hover {
   width: 108px;
   min-height: var(--control-height);
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--font-small);
 }
 .pagination .button {
   min-height: var(--control-height);
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--font-small);
 }
 .segmented {
   display: inline-flex;
@@ -696,11 +703,11 @@ tbody tr:hover {
 }
 .segmented button {
   border: 0;
-  padding: 7px 14px;
+  padding: 4px 10px;
   border-radius: 5px;
   color: #7c899c;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--font-small);
 }
 .segmented button.active {
   background: #fff;
@@ -708,7 +715,7 @@ tbody tr:hover {
   box-shadow: 0 1px 3px #1e293b0b;
 }
 .compact-form {
-  padding: 18px 20px;
+  padding: var(--panel-padding);
 }
 .compact-form h3 {
   margin-bottom: 18px;
@@ -717,20 +724,20 @@ tbody tr:hover {
   gap: 9px;
 }
 .compact-form .field-grid {
-  gap: 13px 16px;
+  gap: 10px 16px;
 }
 .compact-form label {
-  font-size: 13px;
+  font-size: var(--font-small);
   font-weight: 500;
   margin: 0;
 }
 .compact-form label small,
 .artifact-picker > small {
-  font-size: 13px;
+  font-size: var(--font-small);
   line-height: 1.6;
   color: #97a1b1;
   display: block;
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   font-weight: 400;
 }
 .compact-form label input,
@@ -765,8 +772,8 @@ tbody tr:hover {
   border-left: 0;
 }
 .artifact-picker {
-  padding: 0 0 15px;
-  margin-bottom: 15px;
+  padding: 0 0 10px;
+  margin-bottom: 10px;
   border-bottom: 1px solid var(--line);
 }
 .field-heading {
@@ -774,7 +781,7 @@ tbody tr:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 9px;
+  margin-bottom: 8px;
 }
 .field-heading strong {
   font-size: 13px;
@@ -915,7 +922,7 @@ tbody tr:hover {
   }
 }
 .page-title h1 {
-  font-size: 22px;
+  font-size: var(--font-title);
 }
 .page-title .eyebrow {
   display: none;
@@ -970,12 +977,17 @@ button:disabled,
 }
 .page-heading {
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  flex: 1 1 240px;
 }
 .page-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding-top: 4px;
+  gap: 8px;
+  padding-top: 0;
   flex-wrap: wrap;
 }
 .button:disabled,
@@ -1000,17 +1012,19 @@ select {
 
 /* Shared density and help conventions: keep actionable errors visible. */
 .field-grid {
-  gap: 12px 16px;
+  gap: 10px 16px;
 }
 .form-panel {
-  padding: 16px;
+  padding: var(--panel-padding);
 }
 .form-actions {
-  margin-top: 16px;
-  padding-top: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  gap: 8px;
 }
 label {
   font-weight: 500;
+  font-size: var(--font-small);
 }
 .help-tip {
   display: inline-flex;
@@ -1036,7 +1050,7 @@ label {
   border-radius: 4px;
   color: #fff;
   background: #25344b;
-  font-size: 13px;
+  font-size: var(--font-small);
   line-height: 1.6;
   white-space: normal;
   box-shadow: 0 3px 12px #15223820;
@@ -1068,7 +1082,7 @@ label {
 }
 
 .compact-form {
-  padding: 14px 16px;
+  padding: var(--panel-padding);
 }
 .compact-form h3 {
   margin-bottom: 12px;
@@ -1134,9 +1148,9 @@ textarea.field-invalid,
 }
 .app-confirm-dialog {
   width: min(460px, calc(100vw - 40px));
-  padding: 24px;
+  padding: 20px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   color: var(--text);
   background: white;
   box-shadow: 0 20px 60px #10243d30;
@@ -1179,6 +1193,9 @@ tbody tr:hover {
 .notice {
   overflow-wrap: anywhere;
   line-height: 1.7;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: var(--font-small);
 }
 .form-help,
 label small {
@@ -1248,4 +1265,52 @@ label small {
 }
 .datasource-records td:last-child {
   min-width: 280px;
+}
+
+/* 表单栅格统一由 gap 控制间距，避免标签自身 margin 叠加。 */
+.field-grid > label,
+.field-grid > .wide-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.page-heading > .muted {
+  max-width: 78ch;
+}
+.panel.form-panel > .panel-toolbar {
+  padding: 0 0 10px;
+  margin-bottom: 12px;
+}
+.form-panel > .field-grid + .field-grid {
+  margin-top: 12px;
+}
+.form-panel .code-editor {
+  min-width: 0;
+}
+.registry-editor {
+  margin-bottom: 16px;
+}
+.registry-editor form {
+  max-width: 1040px;
+}
+.registry-editor .code-editor {
+  height: 340px;
+}
+.registry-list .toolbar-actions > input {
+  width: 240px;
+  max-width: 45vw;
+}
+.row-actions .text-button {
+  padding-inline: 4px;
+}
+@media (max-width: 600px) {
+  .page-heading {
+    flex-basis: 100%;
+  }
+  .page-actions {
+    width: 100%;
+  }
+  .registry-list .toolbar-actions > input {
+    max-width: none;
+    width: 100%;
+  }
 }

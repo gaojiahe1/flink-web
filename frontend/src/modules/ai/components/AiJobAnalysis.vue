@@ -939,7 +939,7 @@ async function continueApplication() {
   border: 0;
   background: var(--color-surface);
   color: var(--color-text);
-  padding: 20px 24px 12px;
+  padding: 16px 20px 12px;
   box-shadow: -5px 0 24px #1522381a;
   display: flex;
   flex-direction: column;

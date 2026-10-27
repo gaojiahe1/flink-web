@@ -522,16 +522,16 @@ async function remove(row: FlinkCatalog) {
 <style scoped>
 .catalog-workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  min-height: 500px;
-  height: calc(100dvh - 330px);
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 420px;
+  height: var(--workbench-height);
   background: white;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
 }
 .catalog-profiles {
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -597,7 +597,7 @@ async function remove(row: FlinkCatalog) {
   flex-direction: column;
 }
 .catalog-heading {
-  padding: 14px 18px;
+  padding: 12px 16px;
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -617,12 +617,15 @@ async function remove(row: FlinkCatalog) {
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
   flex: none;
+  overflow-x: auto;
 }
 .catalog-detail-tabs button {
+  white-space: nowrap;
+  flex: none;
   background: none;
   border: 0;
   border-bottom: 2px solid transparent;
-  padding: 10px 0;
+  padding: 7px 0;
   color: var(--color-muted);
   font-size: 12px;
 }
@@ -635,7 +638,7 @@ async function remove(row: FlinkCatalog) {
   min-height: 0;
 }
 .catalog-info {
-  padding: 20px;
+  padding: 16px;
   overflow: auto;
 }
 .catalog-info > * {
@@ -648,7 +651,7 @@ async function remove(row: FlinkCatalog) {
   width: min(900px, calc(100vw - 32px));
   max-height: 90dvh;
   overflow: auto;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--color-text);

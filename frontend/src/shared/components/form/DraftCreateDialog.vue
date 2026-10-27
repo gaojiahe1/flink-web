@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .sql-create-dialog {
   width: min(460px, calc(100vw - 32px));
-  padding: 24px;
+  padding: 20px;
 }
 .sql-create-dialog h3 {
   margin: 0 0 12px;
@@ -164,7 +164,7 @@ onBeforeUnmount(() => {
   line-height: 1.65;
 }
 .sql-create-dialog label {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 .sql-name-confirm {
   display: flex;
@@ -183,6 +183,6 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 .dialog-footer {
-  margin-top: 24px;
+  margin-top: 16px;
 }
 </style>

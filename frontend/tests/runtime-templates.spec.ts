@@ -157,7 +157,7 @@ test('Ctrl+F 搜索与替换面板统一控件样式并在窄屏正常换行', a
   await panel.getByRole('textbox', { name: 'Find', exact: true }).fill('find-me')
   await panel.getByRole('textbox', { name: 'Find', exact: true }).press('End')
   await expect(page.locator('.cm-searchMatch')).toHaveCount(1)
-  await expect(panel.locator('.cm-textfield').first()).toHaveCSS('height', '32px')
+  await expect(panel.locator('.cm-textfield').first()).toHaveCSS('height', '30px')
   await expect(panel.locator('.cm-button').first()).toHaveCSS('border-radius', '6px')
   await panel.getByRole('textbox', { name: 'Replace', exact: true }).fill('replaced')
   await panel.getByRole('textbox', { name: 'Replace', exact: true }).press('End')

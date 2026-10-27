@@ -517,7 +517,7 @@ async function upload(event: Event) {
   align-items: center;
   gap: 6px;
   margin: 0;
-  min-height: 32px;
+  min-height: var(--control-height);
   white-space: nowrap;
 }
 .picker-actions .is-disabled {

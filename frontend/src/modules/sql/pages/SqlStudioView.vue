@@ -191,10 +191,12 @@ function clampInspector(width = inspectorWidth.value) {
       ? 0
       : parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
   inspectorMax.value = Math.max(
-    300,
-    Math.min(sideTab.value === 'ai' ? 1400 : 860, element.clientWidth - explorer - 42 - 8 - 260),
+    220,
+    Math.min(sideTab.value === 'ai' ? 1400 : 860, element.clientWidth - explorer - 42 - 8 - 320),
   )
-  inspectorWidth.value = Math.round(Math.min(inspectorMax.value, Math.max(300, width)))
+  inspectorWidth.value = Math.round(
+    Math.min(inspectorMax.value, Math.max(Math.min(300, inspectorMax.value), width)),
+  )
 }
 function startResize(event: PointerEvent) {
   if (event.button !== 0) return
@@ -758,7 +760,10 @@ async function remove(record?: SqlDraft) {
     })
     if (id === selected.value) {
       savedSnapshot.value = snapshot()
-      await create()
+      await open(
+        { id: '', name: '', description: '', sql: '', revision: 0, runtime: initialRuntime() },
+        true,
+      )
       if (route.query.draft === id)
         await router.replace({ path: '/sql', query: { ...route.query, draft: undefined } })
     }
@@ -1106,7 +1111,7 @@ watch(
       role="separator"
       aria-label="调整辅助面板宽度"
       aria-orientation="vertical"
-      :aria-valuemin="300"
+      :aria-valuemin="Math.min(300, inspectorMax)"
       :aria-valuemax="inspectorMax"
       :aria-valuenow="inspectorWidth"
       tabindex="0"

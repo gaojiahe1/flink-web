@@ -1,10 +1,15 @@
 /* SQL 工作台：窄草稿栏、优先编辑区、按需辅助面板。 */
+@media (min-width: 1001px) and (max-width: 1200px) {
+  .sql-workbench:not(.explorer-collapsed) {
+    --explorer-width: 180px;
+  }
+}
 .sql-workbench {
-  --explorer-width: 230px;
+  --explorer-width: 210px;
   display: grid;
   grid-template-columns: var(--explorer-width) minmax(0, 1fr) 42px;
-  height: calc(100vh - 184px);
-  min-height: 520px;
+  height: var(--workbench-height);
+  min-height: 420px;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: var(--panel-radius);
@@ -159,7 +164,7 @@
   border-bottom: 1px solid var(--line);
   font-size: 12px;
   gap: 8px;
-  min-height: 42px;
+  min-height: 36px;
 }
 .sql-tabbar > span:first-child {
   min-width: 0;
@@ -175,7 +180,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: #fcfdff;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
@@ -518,11 +523,11 @@
 .sql-wizard-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  padding: 6px 12px;
+  gap: 8px;
+  padding: 5px 10px;
   background: white;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   margin-bottom: 10px;
 }
 .sql-wizard-steps button {
@@ -554,7 +559,7 @@
 }
 .sql-workbench.with-inspector.ai-guided {
   grid-template-columns: minmax(300px, var(--inspector-width)) 8px minmax(260px, 1fr) 42px;
-  height: calc(100dvh - 200px);
+  height: calc(var(--workbench-height) - 42px);
   min-height: 400px;
 }
 .ai-guided > .sql-explorer {

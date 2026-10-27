@@ -30,14 +30,14 @@ onMounted(() => dialog.value?.showModal())
   max-width: 96vw;
   max-height: 96dvh;
   margin: auto;
-  padding: 20px 24px;
+  padding: 16px 20px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--color-surface);
   color: var(--text);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   overflow: hidden;
   box-shadow: 0 12px 48px #15223833;
 }
@@ -53,7 +53,7 @@ header {
 }
 h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
 }
 .ai-content-body {
   flex: 1;

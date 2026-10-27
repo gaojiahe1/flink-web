@@ -13,24 +13,24 @@
   z-index: 20;
   transition: width 0.15s;
   background: var(--color-sidebar);
-  padding: 20px 14px;
+  padding: 14px 10px;
   overflow-y: auto;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   color: #fff;
   white-space: nowrap;
-  padding: 0 8px 12px;
+  padding: 2px 6px 14px;
 }
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   color: white;
   font-weight: 800;
   font-size: 25px;
@@ -50,23 +50,23 @@
   color: #c4cddd;
 }
 .nav-label {
-  margin: 8px 10px 6px;
+  margin: 6px 10px;
   color: #8294af;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.7px;
 }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 42px;
+  gap: 10px;
+  height: 36px;
   white-space: nowrap;
   position: relative;
-  font-size: 13px;
-  min-height: 38px;
+  font-size: 12px;
+  min-height: 36px;
   border-radius: 5px;
-  padding: 8px 11px;
-  margin-bottom: 3px;
+  padding: 6px 10px;
+  margin-bottom: 2px;
   color: #b7c6dd;
 }
 .nav-item:hover {
@@ -92,12 +92,12 @@
 .workspace {
   margin-top: 22px;
   border-top: 1px solid #315052;
-  padding: 20px 0 0;
+  padding: 12px 0 0;
   display: flex;
   gap: 10px;
-  font-size: 13px;
+  font-size: 11px;
   border-color: #233044;
-  margin: 20px 9px 0;
+  margin: 12px 8px 0;
   color: #8090a9;
 }
 .workspace small {
@@ -105,7 +105,7 @@
   color: #c5d0e1;
   font-family: monospace;
   margin-top: 5px;
-  font-size: 13px;
+  font-size: 11px;
 }
 .main-shell {
   margin-left: var(--sidebar);
@@ -122,10 +122,10 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 var(--page-gutter);
   font-size: 13px;
   border-color: var(--line);
-  height: 58px;
+  height: var(--topbar-height);
   border-bottom: 1px solid var(--color-border);
   box-shadow: none;
 }
@@ -156,19 +156,19 @@
 .content {
   flex: 1;
   min-width: 0;
-  padding: 24px 28px;
+  padding: 16px var(--page-gutter) 12px;
 }
-footer {
+.app-footer {
   color: #a0aaba;
   display: flex;
   justify-content: space-between;
-  padding: 16px 28px;
+  padding: 8px var(--page-gutter);
   font-size: 11px;
 }
 .panel-footer {
   border-top: 1px solid #edf0f1;
-  padding: 12px 20px;
-  font-size: 13px;
+  padding: 8px 14px;
+  font-size: 12px;
   color: #93a0b1;
 }
 @media (max-width: 1050px) {
@@ -251,7 +251,7 @@ footer {
   }
 }
 @media (max-width: 760px) {
-  footer span {
+  .app-footer span {
     display: none;
   }
 }
@@ -279,11 +279,12 @@ footer {
 .sidebar-collapsed .nav-item {
   justify-content: center;
   padding: 0;
+  min-height: 36px;
 }
 .header-location {
   display: flex;
   align-items: center;
-  gap: 19px;
+  gap: 12px;
 }
 .breadcrumb strong {
   font-weight: 500;
@@ -293,7 +294,7 @@ footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 15px 24px;
+  padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
 @media (max-width: 1000px) {
@@ -331,7 +332,7 @@ footer {
 .navigation-groups {
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 12px;
 }
 .navigation-group {
   min-width: 0;
@@ -362,15 +363,25 @@ footer {
 }
 .workspace small {
   overflow-wrap: anywhere;
+  font-size: 11px;
 }
 .topbar {
   flex-shrink: 0;
+  height: var(--topbar-height);
+  padding: 0 var(--page-gutter);
 }
 .sidebar {
   background: linear-gradient(180deg, #152238 0%, #19263b 100%);
+  padding: 14px 10px;
 }
 .nav-item {
   font-weight: 500;
+  height: 36px;
+  min-height: 36px;
+  padding: 6px 10px;
+  gap: 10px;
+  margin-bottom: 2px;
+  font-size: 12px;
 }
 .nav-item.router-link-active {
   box-shadow:
@@ -379,9 +390,11 @@ footer {
 }
 .nav-label {
   font-weight: 500;
+  font-size: 10px;
+  margin: 6px 10px;
 }
 .sidebar-collapsed .nav-item {
-  min-height: 42px;
+  min-height: 36px;
 }
 @media (max-width: 760px) {
   .sidebar .nav-item {

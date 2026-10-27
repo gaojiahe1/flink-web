@@ -202,7 +202,7 @@ function openFolderDialog() {
 </script>
 <template>
   <PageHeader eyebrow="OBJECT STORAGE"
-    ><template #title>对象浏览器</template
+    ><template #title>文件与制品</template
     ><template #description
       >浏览 S3 文件与目录，作业依赖从 jobs/作业 ID/ 或 shared/ 目录选择。</template
     ></PageHeader
@@ -483,21 +483,21 @@ function openFolderDialog() {
 .storage-heading {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 22px 24px;
+  gap: 12px;
+  padding: 12px 16px;
   flex-wrap: wrap;
 }
 .bucket-symbol {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   background: #eaf2ff;
   color: var(--primary);
 }
 .bucket-title h2 {
-  font-size: 18px;
+  font-size: 14px;
   margin: 0 0 3px;
 }
 .bucket-title small,
@@ -518,7 +518,7 @@ function openFolderDialog() {
   display: flex;
   gap: 20px;
   border-bottom: 1px solid var(--line);
-  padding: 0 24px;
+  padding: 0 16px;
 }
 .storage-locations button {
   display: flex;
@@ -527,7 +527,7 @@ function openFolderDialog() {
   border: 0;
   background: transparent;
   color: var(--muted);
-  padding: 13px 3px;
+  padding: 8px 3px;
   cursor: pointer;
   border-bottom: 2px solid transparent;
 }
@@ -542,7 +542,7 @@ function openFolderDialog() {
 }
 .object-body main {
   min-width: 0;
-  padding: 20px 24px;
+  padding: 14px 16px;
 }
 .object-tools {
   display: flex;

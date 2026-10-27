@@ -119,7 +119,6 @@ onMounted(load)
     <div v-if="message" class="notice" role="status">{{ message }}</div>
     <div class="model-overview">
       <div>
-        <span class="eyebrow">MODEL CONNECTIONS</span>
         <h2>为 SQL 与运维选择合适的模型</h2>
         <p>统一管理服务连接，先测试，再在需求向导中选择。</p>
       </div>
@@ -177,7 +176,6 @@ onMounted(load)
       <form class="panel model-form" @submit.prevent="save">
         <div class="model-form-heading">
           <div>
-            <span class="eyebrow">CONNECTION SETTINGS</span>
             <h3>{{ selected ? '编辑模型' : '添加模型' }}</h3>
           </div>
           <span class="badge">{{ selected ? '已登记' : '新连接' }}</span>
@@ -307,20 +305,20 @@ onMounted(load)
 <style scoped>
 .models-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.15fr);
-  gap: 24px;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.6fr);
+  gap: 16px;
   align-items: start;
 }
 .model-list,
 .model-form {
-  padding: 20px;
+  padding: 16px;
   min-width: 0;
 }
 .model-list article {
-  padding: 20px 16px;
+  padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  margin-top: 14px;
+  border-radius: 6px;
+  margin-top: 10px;
   overflow-wrap: anywhere;
 }
 .model-overview {
@@ -328,15 +326,15 @@ onMounted(load)
   justify-content: space-between;
   align-items: center;
   gap: 24px;
-  margin: 8px 0 24px;
-  padding: 24px 28px;
-  background: linear-gradient(110deg, #edf4ff, #f7faff);
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  background: #fff;
   border: 1px solid #dce8fb;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 .model-overview h2 {
-  font-size: 21px;
-  margin: 8px 0;
+  font-size: 15px;
+  margin: 2px 0;
 }
 .model-overview p {
   color: var(--color-muted);
@@ -348,7 +346,7 @@ onMounted(load)
   gap: 32px;
 }
 .model-metrics strong {
-  font-size: 28px;
+  font-size: 22px;
   color: var(--color-primary);
   text-align: center;
 }
@@ -362,11 +360,11 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 .model-form-heading h3 {
-  font-size: 19px;
-  margin: 7px 0 0;
+  font-size: 14px;
+  margin: 0;
 }
 .provider-preset {
   display: flex;
@@ -376,8 +374,8 @@ onMounted(load)
   border: 1px solid #dbe6f7;
   border-radius: 8px;
   background: #f8faff;
-  padding: 14px;
-  margin-bottom: 20px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
 }
 .provider-preset small {
   display: block;
@@ -392,7 +390,7 @@ onMounted(load)
   overflow-wrap: anywhere;
 }
 .model-form label {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 .model-search {
   margin: 10px 0;

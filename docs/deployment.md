@@ -2,7 +2,7 @@
 
 更新：2026-10-27。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前web已按AI抽屉高度与等待反馈覆盖发布0.0.8，app/downloader不变；现场地址从本机访问超时，本轮未更新实际工作负载。最新结果见 [本轮发布](#ai抽屉高度与等待反馈2026-10-27)，历史结果各自保留。
+当前web已按全站UI重设计覆盖发布0.0.8，app/downloader不变；现场地址从本机访问超时，本轮未更新实际工作负载。最新结果见 [本轮发布](#全站ui重设计2026-10-27)，历史结果各自保留。
 
 ## 1. 部署拓扑与前置条件
 
@@ -647,7 +647,7 @@ BES starter 未映射 basedir 且优先读取进程 installRoot，[适配配置]
 | 当前镜像 | 仓库 manifest SHA-256 |
 | --- | --- |
 | 192.168.68.1:5000/flink-web/app:0.0.8 | sha256:ea8d57990cece64b41b3d4e4a5677e22546a73ad91e6921b3871fddf3bcde3b0 |
-| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:883f06e4444fceb2525944a0a3a168bed3bc074211edaaf8c2f0cdf02030e1c8 |
+| 192.168.68.1:5000/flink-web/web:0.0.8 | sha256:b1b32e9c263f4429d68c0aad9273b5349dbd6cc03c2dceefad31f7275f1dbc01 |
 | 192.168.68.1:5000/flink-web/downloader:0.0.8 | sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0 |
 
 | 镜像 | 原逻辑字节 → 新逻辑字节 | 原压缩层字节 → 新压缩层字节 | 原层数 → 新层数 |
@@ -772,6 +772,16 @@ Hive 浏览的 SASL/TLS/Compact/Framed 和目标 Hive 服务未作实环境验�
 新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
 
 清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。
+
+## 全站UI重设计（2026-10-27）
+
+仅web:0.0.8覆盖发布，不更新latest；app/downloader/Runner/Parser及业务数据库不变。正式Dockerfile、干净Kylin及验证命名context构建，最终UID/GID10001、只读根镜像148项前端/页面回归与代理4类通过。指定LAN仓库已核对manifest正文/响应摘要、config、全部8层压缩大小/哈希与解压diff_id。
+
+| 镜像 | Manifest | Config / Image ID | 压缩层总字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| web:0.0.8 | `sha256:b1b32e9c263f4429d68c0aad9273b5349dbd6cc03c2dceefad31f7275f1dbc01` | `sha256:aced881d30ebcf9e8f8a573576049f95965a7ad74a4d554f0254e71696e6af01` | 111360140 | 8 |
+
+页面采用新密度30px控件/56px记录基准/34px表头和18px页标题，替代此前32/64/36px，完整规则见 [UI设计系统](agent/modules/ui-design-system.md)。现场30080仍从本机访问超时，本轮未更新实际Kubernetes、未启动或修改Flink作业；现场同步与用户浏览器效果未验证。原PVC/数据库/主密钥保留，不做PVC备份。测试和边界见 [本轮验收](agent/validation.md#全站ui重设计2026-10-27)。
 
 ## AI抽屉高度与等待反馈（2026-10-27）
 

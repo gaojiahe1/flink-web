@@ -60,24 +60,26 @@ async function saveGroup() {
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
     <p class="muted">平台角色决定功能权限，用户组决定作业范围；在作业详情“归属与链接”中授权。</p>
-    <table>
-      <thead>
-        <tr>
-          <th>组标识</th>
-          <th>名称</th>
-          <th>成员</th>
-          <th>操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in groups" :key="row.id">
-          <td>{{ row.id }}</td>
-          <td>{{ row.name }}</td>
-          <td>{{ row.members.join('、') }}</td>
-          <td><button v-if="admin" class="text-button" @click="editGroup(row)">编辑</button></td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>组标识</th>
+            <th>名称</th>
+            <th>成员</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in groups" :key="row.id">
+            <td>{{ row.id }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.members.join('、') }}</td>
+            <td><button v-if="admin" class="text-button" @click="editGroup(row)">编辑</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <form v-if="admin" class="group-form" @submit.prevent="saveGroup">
       <h3>{{ group.revision ? '编辑用户组' : '新增用户组' }}</h3>
       <div class="field-grid">

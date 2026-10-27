@@ -179,7 +179,7 @@ function resetFilters() {
   >
   <div v-if="error" class="notice error" role="alert">{{ error }}</div>
   <div v-if="message" class="notice">{{ message }}</div>
-  <section v-if="editing" class="panel form-panel detail-panel">
+  <section v-if="editing" class="panel form-panel registry-editor" aria-label="记录编辑">
     <h3>{{ form.revision ? '编辑记录' : '新增记录' }}</h3>
     <form @submit.prevent="save">
       <div class="field-grid">
@@ -255,7 +255,7 @@ function resetFilters() {
       </div>
     </form>
   </section>
-  <section class="panel detail-panel">
+  <section class="panel registry-list">
     <div class="panel-toolbar">
       <h3>记录列表</h3>
       <div class="toolbar-actions">

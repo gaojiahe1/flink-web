@@ -1,190 +1,6 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { stringify } from 'yaml'
-const runtime = {
-  imageId: 'flink',
-  runnerArtifactId: '',
-  workspaceId: 'w',
-  parallelism: 1,
-  slots: 1,
-  jmCpu: 1,
-  tmCpu: 1,
-  jmMemory: '2g',
-  tmMemory: '2g',
-  flinkConfiguration: {},
-  podTemplate: {},
-  dependencyArtifactIds: [],
-}
-const sql =
-  "CREATE TABLE source_events (id BIGINT) WITH ('connector'='datagen');\nSELECT id + 2 FROM source_events;"
-const yaml = stringify({
-  apiVersion: 'flink.apache.org/v1beta1',
-  kind: 'FlinkDeployment',
-  metadata: { name: 'flink-0000001', labels: { 'flink-web/editor': 'jar-v1' } },
-  spec: {
-    image: 'test/flink:1.20.5',
-    flinkVersion: 'v1_20',
-    serviceAccount: 'team-flink',
-    flinkConfiguration: {},
-    jobManager: { resource: { cpu: 1, memory: '2g' } },
-    taskManager: { resource: { cpu: 1, memory: '2g' } },
-    job: { jarURI: 'local:///opt/flink/usrlib/a.jar', parallelism: 1, upgradeMode: 'stateless' },
-  },
-})
-async function fixture(page: Page, role = 'ROLE_ADMIN') {
-  const errors: string[] = [],
-    calls: string[] = [],
-    writes: any[] = []
-  const job = {
-    id: 'jar',
-    jobNumber: 1,
-    deploymentName: 'flink-0000001',
-    name: 'test-job',
-    revision: 1,
-    flinkVersion: '1.20.5',
-    description: '',
-    yaml,
-  }
-  const draft = { id: 's', name: 'sql-job', description: '', revision: 2, sql, runtime }
-  const session = {
-    id: 'session',
-    name: 'sql-check',
-    revision: 1,
-    deploymentName: 'fw-session',
-    validation: true,
-    desiredState: 'stopped',
-    state: 'STOPPED',
-    message: 'Session 资源不存在',
-    runtime,
-  }
-  const connections: any[] = [
-    {
-      id: 'db',
-      name: '业务库',
-      connectorType: 'mysql',
-      host: 'mysql',
-      port: '3306',
-      database: 'business',
-      username: 'reader',
-      passwordRef: 'password',
-      tableName: 'orders',
-      table: 'orders',
-      columns: [{ name: 'id', type: 'BIGINT' }],
-      revision: 1,
-    },
-  ]
-  page.on('pageerror', (e) => errors.push(e.message))
-  await page.route('**/api/**', async (route) => {
-    const req = route.request(),
-      path = new URL(req.url()).pathname
-    if (!path.startsWith('/api/')) return route.continue()
-    calls.push(req.method() + ' ' + path)
-    let data: any = []
-    if (path === '/api/auth/me') data = { username: 'admin', roles: [role] }
-    else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
-    else if (path === '/api/system')
-      data = { namespace: 'team', version: '0.0.8', storageType: 'local' }
-    else if (path === '/api/system/operator')
-      data = { found: false, compatibility: { known: false, supported: [] } }
-    else if (path === '/api/system/downloader')
-      data = { image: 'registry/downloader:0.0.8', revision: 1 }
-    else if (path === '/api/platform/network/test')
-      data = { connected: true, message: '连接成功', elapsedMs: 1 }
-    else if (path === '/api/catalog/images')
-      data = [
-        {
-          id: 'flink',
-          name: 'Flink',
-          repository: 'test/flink',
-          version: '1.20.5',
-          flinkVersion: '1.20.5',
-          revision: 1,
-        },
-        {
-          id: 'old',
-          name: '旧镜像',
-          repository: 'test/flink',
-          version: '1.20.3',
-          flinkVersion: '1.20.3',
-          revision: 2,
-        },
-      ]
-    else if (path === '/api/catalog/templates')
-      data = [
-        { id: 'basic', name: '基础模板', description: '独立作业基础模板', revision: 1, yaml: '' },
-        {
-          id: 'pod',
-          name: 'Pod 模板',
-          description: '增加 Pod 标签和环境变量',
-          revision: 1,
-          yaml: '',
-        },
-      ]
-    else if (path === '/api/catalog/configs')
-      data = [{ id: 'password', name: '数据库密码', kind: 'secret', revision: 1 }]
-    else if (path === '/api/catalog/datasources') data = connections
-    else if (path.startsWith('/api/catalog/datasources/')) {
-      writes.push(req.postDataJSON())
-      data = { ...req.postDataJSON(), revision: 1 }
-      connections.push(data)
-    } else if (path === '/api/sql/catalogs')
-      data = [
-        {
-          id: 'business',
-          name: '业务目录',
-          type: 'jdbc',
-          defaultDatabase: 'business',
-          dataSourceId: 'db',
-          revision: 1,
-          dependencyArtifactIds: [],
-        },
-      ]
-    else if (path === '/api/sql/jobs') data = [draft]
-    else if (path.endsWith('/versions'))
-      data = [
-        {
-          id: 'v1',
-          sql: sql.replace('+ 2', '+ 1'),
-          actor: 'admin',
-          createdAt: '2026-10-25T06:00:00Z',
-        },
-      ]
-    else if (path === '/api/sql/jobs/s') data = draft
-    else if (path === '/api/jobs' || path === '/api/development/jar/jobs') data = [job]
-    else if (path === '/api/jobs/jar') data = job
-    else if (path === '/api/jobs/refresh') data = { items: [], queriedAt: new Date().toISOString() }
-    else if (path === '/api/jobs/render-form') data = { yaml, flinkVersion: '1.20.5' }
-    else if (path === '/api/sessions' || path === '/api/sessions/refresh') data = [session]
-    else if (path.endsWith('/status')) data = session
-    else if (path === '/api/platform/job-access')
-      data = { jar: { canEdit: true, canOperate: true } }
-    else if (path.endsWith('/access'))
-      data = { canEdit: role === 'ROLE_ADMIN', canOperate: role === 'ROLE_ADMIN' }
-    else if (path === '/api/artifacts/defaults') data = { bucket: 'test', rootPrefix: 'artifacts/' }
-    else if (path === '/api/artifacts/objects') data = { objects: [], directories: [] }
-    else if (path === '/api/audit')
-      data = [
-        {
-          id: 'a',
-          time: '2026-10-25T06:00:00Z',
-          action: 'SQL_PUBLISH',
-          actor: 'admin',
-          target: 's',
-          outcome: 'ACCEPTED',
-        },
-        {
-          id: 'b',
-          time: '2026-10-25T05:00:00Z',
-          action: 'FUTURE_ACTION',
-          actor: 'admin',
-          target: 's',
-          outcome: 'NEW_STATE',
-        },
-      ]
-    await route.fulfill({ json: { data, error: null } })
-  })
-  return { errors, calls, writes }
-}
+import { platformFixture as fixture } from './fixtures/platform'
 
 test('版本显示与发布镜像标签一致，审计中文动作可搜索并保留未知码', async ({ page }) => {
   const f = await fixture(page)
@@ -237,13 +53,13 @@ test('模板、镜像、Session、作业使用相同列表行高与控件高度'
     const heights = await page
       .locator('.table-wrap tbody tr')
       .evaluateAll((rows) => rows.map((r) => r.getBoundingClientRect().height))
-    for (const height of heights) expect(height, route).toBeCloseTo(64, 0)
+    for (const height of heights) expect(height, route).toBeCloseTo(56, 0)
     const controls = await page
       .locator(
         'input:visible:not([type=checkbox]):not([type=radio]), select:visible, .button:visible',
       )
       .evaluateAll((items) => items.map((i) => i.getBoundingClientRect().height))
-    for (const height of controls) expect(height, route).toBeCloseTo(32, 0)
+    for (const height of controls) expect(height, route).toBeCloseTo(30, 0)
   }
   expect(f.errors).toEqual([])
 })
@@ -372,7 +188,7 @@ test('JAR、SQL、Catalog 和系统设置的表单在短屏统一控件高度', 
     for (const height of await controls.evaluateAll((items) =>
       items.map((item) => item.getBoundingClientRect().height),
     ))
-      expect(height, path).toBeCloseTo(32, 0)
+      expect(height, path).toBeCloseTo(30, 0)
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       path,

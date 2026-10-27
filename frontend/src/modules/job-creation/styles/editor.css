@@ -16,7 +16,7 @@
 .editor-form-column {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 .section-number {
@@ -30,6 +30,8 @@
 .jar-split > .yaml-panel {
   position: sticky;
   top: 16px;
+  height: calc(100vh - 260px);
+  min-height: 340px;
 }
 .jar-split .yaml-panel > .code-editor {
   height: calc(100vh - 300px);
@@ -37,7 +39,7 @@
 }
 .preview-actions {
   display: flex;
-  padding: 14px 18px;
+  padding: 10px 14px;
   gap: 8px;
   border-top: 1px solid var(--line);
 }
@@ -50,12 +52,12 @@
 .editor-actionbar {
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 13px 18px;
+  border-radius: 6px;
+  padding: 10px 14px;
   align-items: center;
   grid-column: 1/-1;
   position: sticky;
-  bottom: 8px;
+  bottom: 0;
   z-index: 10;
 }
 .editor-actionbar > .muted {
@@ -94,8 +96,8 @@
 }
 @media (min-width: 1001px) {
   .jar-split .editor-form-column {
-    height: calc(100vh - 340px);
-    min-height: 560px;
+    height: calc(100vh - 260px);
+    min-height: 340px;
     overflow: auto;
     padding-right: 4px;
     scrollbar-width: thin;
@@ -105,8 +107,8 @@
 @media (min-width: 1001px) {
   .jar-split > .yaml-panel {
     position: static;
-    height: calc(100vh - 340px);
-    min-height: 560px;
+    height: calc(100vh - 260px);
+    min-height: 340px;
   }
 }
 @media (min-width: 1001px) {
@@ -124,7 +126,7 @@
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 .resource-pair > label {
   min-width: 0;

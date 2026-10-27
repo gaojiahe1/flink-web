@@ -1,11 +1,11 @@
 /* base：统一设计系统中的职责样式。 */
 :root {
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
   background: var(--color-background);
-  font-size: 13px;
+  font-size: var(--font-body);
   font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-synthesis: none;
 }
@@ -16,7 +16,7 @@ body {
   background: var(--bg);
   margin: 0;
   min-width: 360px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 ::selection {

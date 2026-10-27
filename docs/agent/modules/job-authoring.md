@@ -1,8 +1,8 @@
 # 作业配置与表单
 
-2026-10-25界面统一：共享control-height=32px、table-row-height=64px、table-header-height=36px；SQL/JAR标题共用DraftListHeader，无状态圆点差异。表单含登录、查询下拉和编辑器搜索控件同步密度；代码正文、多行输入和导航不按单行控件裁剪。
+2026-10-27界面重设计：共享control-height=30px、table-row-height=56px、table-header-height=34px，替代10-25密度；SQL/JAR标题共用DraftListHeader，表单间距去重、缩小辅助文本，工作区高度与外框统一。代码正文、多行输入和导航不按单行控件裁剪。参见 [UI设计系统](ui-design-system.md)。
 
-更新：2026-10-25。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-27。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：JAR 开发映射、表单/YAML 双向编辑、模板/镜像、程序入口与资源配置。数据流：JobEditorView → jarForm/hydrateJar → render-form/FormServiceImpl → YamlServiceImpl.validate；最终发布另走生命周期/ReleaseService。
 
