@@ -328,8 +328,8 @@ onMounted(load)
   gap: 24px;
   margin: 0 0 16px;
   padding: 12px 16px;
-  background: #fff;
-  border: 1px solid #dce8fb;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 .model-overview h2 {
@@ -371,9 +371,9 @@ onMounted(load)
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  border: 1px solid #dbe6f7;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
-  background: #f8faff;
+  background: var(--color-surface-soft);
   padding: 10px 12px;
   margin-bottom: 12px;
 }
@@ -405,21 +405,21 @@ onMounted(load)
   white-space: pre-wrap;
 }
 .model-test-result.success {
-  background: #edf9f1;
-  color: #17764c;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 .model-test-result.failed {
-  background: #fff1f0;
-  color: #a73b3b;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 .model-test-result.checking {
-  background: #eef4ff;
-  color: #2467c5;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 .eyebrow {
   font-size: 10px;
   letter-spacing: 1.5px;
-  color: #6c89b3;
+  color: var(--color-muted);
   font-weight: 600;
 }
 @media (max-width: 600px) {
@@ -440,7 +440,7 @@ onMounted(load)
   }
 }
 .model-list article.active {
-  background: #edf3ff;
+  background: var(--color-primary-soft);
   border-radius: 6px;
 }
 .model-name {

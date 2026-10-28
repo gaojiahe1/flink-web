@@ -493,7 +493,7 @@ function openFolderDialog() {
   border-radius: 6px;
   display: grid;
   place-items: center;
-  background: #eaf2ff;
+  background: var(--color-primary-soft);
   color: var(--primary);
 }
 .bucket-title h2 {
@@ -601,7 +601,7 @@ function openFolderDialog() {
 .object-table th {
   position: sticky;
   top: 0;
-  background: #f5f8fc;
+  background: var(--color-surface-soft);
   z-index: 1;
 }
 .object-table th:first-child,
@@ -619,7 +619,7 @@ function openFolderDialog() {
   width: auto;
 }
 .object-table tr.selected {
-  background: #edf4ff;
+  background: var(--color-primary-soft);
 }
 .object-table td {
   padding: 8px 10px;
@@ -642,11 +642,11 @@ button.object-name {
 }
 .object-name svg {
   flex: none;
-  color: #7189ac;
+  color: var(--color-muted);
 }
 .folder-row .object-name svg {
-  color: #d8ab43;
-  fill: #fff2c9;
+  color: var(--color-warning);
+  fill: var(--color-warning-soft);
 }
 .object-name span {
   overflow: hidden;
@@ -664,7 +664,7 @@ button.object-name {
 .object-body aside {
   padding: 24px 20px;
   border-left: 1px solid var(--line);
-  background: #fbfcfe;
+  background: var(--color-surface-soft);
   min-width: 0;
 }
 aside h3 {
@@ -676,7 +676,7 @@ aside h3 {
 .detail-file-icon {
   display: block;
   margin: 20px auto 12px;
-  color: #7b96bc;
+  color: var(--color-muted);
 }
 .selected-name {
   display: block;

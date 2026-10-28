@@ -10,7 +10,7 @@
   grid-template-columns: var(--explorer-width) minmax(0, 1fr) 42px;
   height: var(--workbench-height);
   min-height: 420px;
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: var(--panel-radius);
   overflow: hidden;
@@ -21,13 +21,13 @@
 .sql-inspector-resizer {
   cursor: col-resize;
   touch-action: none;
-  background: #f4f7fc;
+  background: var(--color-surface-soft);
   border-inline: 1px solid var(--line);
 }
 .sql-inspector-resizer:hover,
 .sql-inspector-resizer:focus-visible,
 .inspector-resizing .sql-inspector-resizer {
-  background: #c7dbff;
+  background: var(--color-primary-border);
   outline: none;
 }
 .inspector-resizing {
@@ -42,7 +42,7 @@
 .sql-explorer {
   min-width: 0;
   padding: 9px;
-  background: #fbfcfe;
+  background: var(--color-surface-soft);
   border-right: 1px solid var(--line);
   overflow: hidden;
   display: flex;
@@ -95,7 +95,7 @@
   text-align: left;
   padding: 4px 4px;
   font-size: 12px;
-  color: #4c5666;
+  color: var(--color-muted);
   border-radius: 4px;
 }
 .sql-file-row {
@@ -128,22 +128,22 @@
 }
 .sql-file small {
   display: block;
-  color: #939ba7;
+  color: var(--color-muted);
   font-size: 11px;
   margin-top: 0;
 }
 .sql-file:hover,
 .sql-file.active {
-  background: #edf3ff;
+  background: var(--color-primary-soft);
   color: var(--color-primary);
 }
 .sql-file-icon {
   font:
     9px Consolas,
     monospace;
-  background: #edf4ff;
-  border: 1px solid #d4e4fa;
-  color: #2876d3;
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
+  color: var(--color-primary);
   border-radius: 3px;
   padding: 3px;
   flex-shrink: 0;
@@ -181,7 +181,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: #fcfdff;
+  background: var(--color-surface-soft);
   border-bottom: 1px solid var(--line);
   font-size: 12px;
   flex-wrap: wrap;
@@ -205,13 +205,13 @@
   padding: 10px 14px;
   font-size: 12px;
   line-height: 1.7;
-  background: #fbfcfe;
+  background: var(--color-surface-soft);
   max-height: 155px;
   overflow: auto;
 }
 .sql-diagnostics .muted {
   margin-top: 6px;
-  color: #8a95a3;
+  color: var(--color-muted);
 }
 .sql-preview {
   flex: none;
@@ -231,7 +231,7 @@
   overflow: auto;
   border-left: 1px solid var(--line);
   padding: 16px;
-  background: #fff;
+  background: var(--color-surface);
   scrollbar-width: thin;
 }
 .sql-runtime h3 {
@@ -271,7 +271,7 @@
   font-size: 12px;
   line-height: 1.6;
   margin-bottom: 0;
-  color: #939ca8;
+  color: var(--color-muted);
 }
 .sql-runtime input,
 .sql-runtime select {
@@ -310,7 +310,7 @@
 }
 .studio-rail {
   border-left: 1px solid var(--line);
-  background: #f9fbfe;
+  background: var(--color-surface-soft);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -322,15 +322,15 @@
   background: transparent;
   border: 0;
   border-left: 2px solid transparent;
-  color: #76839a;
+  color: var(--color-muted);
   padding: 13px 9px;
   align-self: stretch;
   font-size: 12px;
 }
 .studio-rail button.active {
   border-left-color: var(--color-primary);
-  background: #edf3ff;
-  color: #3263bc;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
 }
 .source-item {
   padding: 14px 0;
@@ -346,7 +346,7 @@
 }
 .source-item small {
   display: block;
-  color: #9aa4b2;
+  color: var(--color-muted);
   font-size: 12px;
   margin-top: 0;
 }
@@ -374,7 +374,7 @@
   inset: 12px;
   height: auto;
   z-index: 100;
-  box-shadow: 0 0 0 100vmax #15223870;
+  box-shadow: 0 0 0 100vmax var(--color-shadow-soft);
 }
 @media (max-width: 1250px) {
   .sql-workbench {
@@ -525,7 +525,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 5px 10px;
-  background: white;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: 6px;
   margin-bottom: 10px;
@@ -536,7 +536,7 @@
   gap: 10px;
   border: 0;
   background: none;
-  color: #7f91a9;
+  color: var(--color-muted);
   text-align: left;
   font-size: 12px;
 }
@@ -547,15 +547,15 @@
   height: 25px;
   border: 1px solid var(--line);
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-surface);
 }
 .sql-wizard-steps button.active {
-  color: #2869db;
+  color: var(--color-primary);
 }
 .sql-wizard-steps button.active span {
-  background: #2869ed;
-  color: white;
-  border-color: #2869ed;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary);
 }
 .sql-workbench.with-inspector.ai-guided {
   grid-template-columns: minmax(300px, var(--inspector-width)) 8px minmax(260px, 1fr) 42px;
@@ -690,7 +690,7 @@
 .development-explorer {
   gap: 10px;
   padding: 12px 10px;
-  background: #fafbfd;
+  background: var(--color-surface-soft);
 }
 .development-explorer .explorer-toggle {
   width: auto;

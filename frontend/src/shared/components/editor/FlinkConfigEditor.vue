@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import HelpTip from '../form/HelpTip.vue'
+import { createEditorAppearance } from '../../utils/editorTheme'
 import { clearValidationErrors } from '../../utils/fieldValidation'
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { EditorView, basicSetup } from 'codemirror'
@@ -18,6 +19,8 @@ const host = ref<HTMLElement>(),
 let view: EditorView | undefined,
   lastEmitted = '',
   syncing = false
+const appearance = createEditorAppearance()
+let stopAppearance: (() => void) | undefined
 function complete(context: CompletionContext) {
   const line = context.state.doc.lineAt(context.pos),
     before = line.text.slice(0, context.pos - line.from)
@@ -42,6 +45,7 @@ onMounted(() => {
       doc: formatFlinkConfig(props.modelValue),
       extensions: [
         basicSetup,
+        appearance.extension,
         lintGutter(),
         autocompletion({ override: [complete] }),
         editability.of([
@@ -85,12 +89,12 @@ onMounted(() => {
             overflow: 'auto',
           },
           '.cm-content': { padding: '10px 0' },
-          '.cm-gutters': { background: '#f8fafc' },
           '&.cm-focused': { outline: 'none' },
         }),
       ],
     }),
   })
+  stopAppearance = appearance.attach(view)
   emit('valid', true)
 })
 watch(
@@ -122,7 +126,10 @@ watch(
       ]),
     }),
 )
-onBeforeUnmount(() => view?.destroy())
+onBeforeUnmount(() => {
+  stopAppearance?.()
+  view?.destroy()
+})
 </script>
 <template>
   <div class="flink-config-editor" :class="{ 'field-invalid': !!error }" :aria-invalid="!!error">

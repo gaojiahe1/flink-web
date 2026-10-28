@@ -117,6 +117,6 @@ select option {
   min-width: 0;
 }
 .field-error {
-  color: #c23a43;
+  color: var(--color-danger);
 }
 </style>

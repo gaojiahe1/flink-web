@@ -64,7 +64,7 @@ async function test() {
 .network-diagnostic {
   margin-bottom: 12px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: 4px;
 }

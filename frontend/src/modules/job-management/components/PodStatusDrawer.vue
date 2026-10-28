@@ -391,7 +391,7 @@ onUnmounted(() => {
   flex-direction: column;
 }
 .pod-drawer::backdrop {
-  background: #15263d66;
+  background: var(--color-overlay);
 }
 .pod-drawer-resizer {
   position: absolute;
@@ -412,7 +412,7 @@ onUnmounted(() => {
 }
 .pod-drawer-resizer:hover,
 .pod-drawer-resizer:focus-visible {
-  background: #edf3ff;
+  background: var(--color-primary-soft);
 }
 .pod-drawer-resizer:hover span {
   background: var(--blue);
@@ -543,7 +543,7 @@ h3 {
 }
 .pod-choice.active {
   border-color: var(--blue);
-  background: #f1f6ff;
+  background: var(--color-surface-soft);
 }
 .pod-choice strong,
 .pod-choice small {

@@ -804,7 +804,7 @@ onBeforeUnmount(() => {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  background: var(--surface-soft, #f4f7fc);
+  background: var(--surface-soft, var(--color-surface-soft));
   display: grid;
   place-items: center;
   font-size: 11px;
@@ -812,7 +812,7 @@ onBeforeUnmount(() => {
 }
 .assistant .ai-avatar {
   color: var(--blue);
-  background: var(--color-primary-light, #eef4ff);
+  background: var(--color-primary-light, var(--color-primary-soft));
 }
 .ai-message-meta {
   display: flex;
@@ -829,7 +829,7 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 .user p {
-  background: var(--surface-soft, #f4f7fc);
+  background: var(--surface-soft, var(--color-surface-soft));
   padding: 9px 11px;
   border-radius: 0 7px 7px 7px;
 }
@@ -854,7 +854,7 @@ onBeforeUnmount(() => {
 }
 .ai-inline-summary {
   flex-shrink: 0;
-  background: var(--surface-soft, #f8faff);
+  background: var(--surface-soft, var(--color-surface-soft));
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 6px 9px;
@@ -934,7 +934,7 @@ onBeforeUnmount(() => {
 }
 .ai-unknowns {
   font-size: 12px;
-  color: #9b621d;
+  color: var(--color-warning);
   margin: 7px 0 0;
   padding-left: 18px;
 }
@@ -943,7 +943,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 8px 10px;
-  background: var(--surface, #fff);
+  background: var(--surface, var(--color-surface));
 }
 .ai-compose-modes {
   display: flex;
@@ -985,7 +985,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--surface-soft, #f4f7fc);
+  background: var(--surface-soft, var(--color-surface-soft));
   padding: 8px 10px;
   font-size: 12px;
   flex-shrink: 0;
@@ -1070,10 +1070,10 @@ onBeforeUnmount(() => {
   border-radius: 9px;
   padding: 18px;
   color: var(--text);
-  background: var(--surface, #fff);
+  background: var(--surface, var(--color-surface));
 }
 .ai-full-review::backdrop {
-  background: #14243e66;
+  background: var(--color-overlay);
 }
 .ai-comparison {
   display: grid;

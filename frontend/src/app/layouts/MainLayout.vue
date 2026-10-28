@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { version as platformVersion } from '../../../package.json'
+import ThemePicker from '../../shared/components/layout/ThemePicker.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Activity, Settings, PanelLeftClose, PanelLeftOpen, LogOut } from '@lucide/vue'
@@ -11,10 +12,19 @@ import type { SystemInfo } from '../../shared/types/api'
 const router = useRouter(),
   route = useRoute(),
   error = ref('')
-const collapsed = ref(localStorage.getItem('flink-sidebar-collapsed') === 'true')
+const collapsed = ref(false)
+try {
+  collapsed.value = localStorage.getItem('flink-sidebar-collapsed') === 'true'
+} catch {
+  /* Storage may be blocked. */
+}
 function toggle() {
   collapsed.value = !collapsed.value
-  localStorage.setItem('flink-sidebar-collapsed', String(collapsed.value))
+  try {
+    localStorage.setItem('flink-sidebar-collapsed', String(collapsed.value))
+  } catch {
+    /* Keep in-memory navigation usable. */
+  }
 }
 const links = navigationGroups.flatMap((group) => group.items)
 const visibleGroups = computed(() =>
@@ -51,9 +61,7 @@ async function signOut() {
     <aside class="sidebar">
       <RouterLink to="/jobs" class="brand" title="Flink Platform"
         ><span class="brand-mark"><Activity :size="24" /></span
-        ><span class="brand-copy"
-          >Flink <span class="brand-light">Platform</span><small>REALTIME COMPUTE</small></span
-        ></RouterLink
+        ><span class="brand-copy">Flink <span class="brand-light">Platform</span></span></RouterLink
       >
       <nav aria-label="主导航" class="navigation-groups">
         <section v-for="group in visibleGroups" :key="group.title" class="navigation-group">
@@ -102,6 +110,7 @@ async function signOut() {
           </div>
         </div>
         <div class="topbar-right">
+          <ThemePicker />
           <span class="namespace-tag">{{ systemInfo?.namespace || '—' }}</span
           ><span class="version-tag">v{{ systemInfo?.version || platformVersion }}</span
           ><span class="avatar">{{ currentUser?.username.slice(0, 1).toUpperCase() }}</span

@@ -7,6 +7,7 @@ import { EditorState, Compartment } from '@codemirror/state'
 import { yaml } from '@codemirror/lang-yaml'
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { parseDocument } from 'yaml'
+import { createEditorAppearance } from '../../utils/editorTheme'
 const props = withDefaults(
   defineProps<{
     modelValue: string
@@ -21,6 +22,8 @@ const host = ref<HTMLElement>(),
   issues = ref<string[]>([])
 const editability = new Compartment()
 const language = new Compartment()
+const appearance = createEditorAppearance()
+let stopAppearance: (() => void) | undefined
 const languageError = ref('')
 const formatError = ref('')
 async function formatSql() {
@@ -83,6 +86,7 @@ onMounted(() => {
           },
         ]),
         basicSetup,
+        appearance.extension,
         language.of(props.language === 'yaml' ? yaml() : []),
         lintGutter(),
         editability.of([
@@ -123,12 +127,13 @@ onMounted(() => {
             lineHeight: '1.8',
           },
           '.cm-content': { padding: '16px 0' },
-          '.cm-gutters': { backgroundColor: '#f8fafc', color: '#94a3b8', border: 'none' },
+          '.cm-gutters': { border: 'none' },
           '&.cm-focused': { outline: 'none' },
         }),
       ],
     }),
   })
+  stopAppearance = appearance.attach(view)
   void updateLanguage()
 })
 watch(
@@ -156,6 +161,7 @@ watch(
 )
 onBeforeUnmount(() => {
   disposed = true
+  stopAppearance?.()
   view?.destroy()
 })
 </script>
@@ -206,7 +212,7 @@ onBeforeUnmount(() => {
   font: inherit;
 }
 :deep(.cm-search .cm-textfield:focus) {
-  outline: 2px solid #2468ee26;
+  outline: 2px solid var(--color-focus);
   border-color: var(--blue);
 }
 :deep(.cm-search .cm-button) {
@@ -223,7 +229,7 @@ onBeforeUnmount(() => {
 :deep(.cm-search .cm-button:hover) {
   border-color: var(--blue);
   color: var(--blue);
-  background: #2468ee08;
+  background: var(--color-primary-soft);
 }
 :deep(.cm-search label) {
   display: inline-flex;
@@ -251,14 +257,14 @@ onBeforeUnmount(() => {
 }
 :deep(.cm-search.cm-panel [name='close']:hover) {
   color: var(--blue);
-  background: #2468ee0a;
+  background: var(--color-primary-soft);
 }
 :deep(.cm-searchMatch) {
-  background: #fef3c7;
-  outline: 1px solid #fbbf24;
+  background: var(--code-search);
+  outline: 1px solid var(--code-search-border);
 }
 :deep(.cm-searchMatch-selected) {
-  background: #bfdbfe;
+  background: var(--code-selection);
   outline: 1px solid var(--blue);
 }
 </style>

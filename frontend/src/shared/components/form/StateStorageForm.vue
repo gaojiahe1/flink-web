@@ -364,13 +364,13 @@ fieldset {
 }
 .strategy-description {
   padding: 10px 12px;
-  background: var(--surface-soft, #f5f8fc);
+  background: var(--surface-soft, var(--color-surface-soft));
   border-radius: 6px;
   line-height: 1.7;
 }
 .strategy-help {
   margin-top: 12px;
-  color: var(--muted, #62758b);
+  color: var(--muted, var(--color-muted));
   line-height: 1.7;
 }
 .strategy-help dt {

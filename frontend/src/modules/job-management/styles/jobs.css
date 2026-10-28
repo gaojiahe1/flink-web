@@ -2,26 +2,31 @@
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 0;
   margin-bottom: 16px;
+  border-block: 1px solid var(--line);
+  padding-block: 10px;
 }
 .stat-card {
-  padding: 12px 16px;
-  border: 1px solid #e4e9eb;
-  background: #fff;
-  border-radius: 8px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 2px 4px #10262e02;
+  padding: 0 16px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 0 12px;
+  box-shadow: none;
   position: relative;
 }
 .stat-card > span {
   font-size: 12px;
-  color: #728096;
+  color: var(--color-muted);
 }
 .stat-card strong {
   font-size: 24px;
-  color: #202c40;
+  color: var(--color-text);
   font-weight: 600;
   line-height: 1.3;
   margin-top: 4px;
@@ -29,7 +34,8 @@
 }
 .stat-card small {
   font-size: 11px;
-  color: #9aa4b3;
+  color: var(--color-muted);
+  grid-column: 1 / -1;
 }
 .stat-card strong em {
   font-size: 12px;
@@ -37,15 +43,28 @@
   font-style: normal;
 }
 .stat-card.accent {
-  background: #fff;
+  background: transparent;
   border-color: var(--line);
 }
+.stat-card:first-child {
+  padding-left: 0;
+}
+.stat-card:last-child {
+  border-right: 0;
+}
+.stat-card strong {
+  margin: 0;
+  font-size: 22px;
+}
+.stat-card:nth-child(2) strong {
+  color: var(--color-success);
+}
 .stat-card .muted-number {
-  color: #b1c1c4;
+  color: var(--color-muted);
 }
 .job-name {
   font-size: 13px;
-  color: #2a528c;
+  color: var(--color-primary);
   font-weight: 600;
   padding-left: 0;
 }
@@ -74,21 +93,20 @@
 .job-name {
   color: var(--color-primary);
 }
-.panel,
-.stat-card {
+.panel {
   border-radius: 8px;
   box-shadow: none;
   border: 1px solid var(--line);
 }
 .stat-card:nth-child(2) strong {
-  color: #21966a;
+  color: var(--color-success);
 }
 .stat-card.accent strong {
-  color: #5477ad;
+  color: var(--color-muted);
 }
 .selection-summary {
   font-weight: 400;
-  color: #6383b9;
+  color: var(--color-muted);
   font-size: 12px;
   margin-left: 13px;
 }
@@ -105,10 +123,10 @@
   max-width: 90vw;
   max-height: 85vh;
   color: var(--text);
-  box-shadow: 0 24px 60px #17203330;
+  box-shadow: 0 24px 60px var(--color-shadow-soft);
 }
 .operation-dialog::backdrop {
-  background: #101b324d;
+  background: var(--color-overlay);
   backdrop-filter: blur(2px);
 }
 .dialog-body {
@@ -126,7 +144,7 @@
 }
 .choice-group legend {
   font-size: 12px;
-  color: #576a86;
+  color: var(--color-muted);
 }
 .choice-group label {
   font-size: 12px;
@@ -155,7 +173,7 @@
   align-items: center;
   border-bottom: 1px solid var(--line);
   padding: 0 20px;
-  background: #fafbfd;
+  background: var(--color-surface-soft);
   overflow-x: auto;
 }
 .workbench-tabs > button {
@@ -164,13 +182,13 @@
   white-space: nowrap;
   padding: 14px 17px;
   border-bottom: 2px solid transparent;
-  color: #66768b;
+  color: var(--color-muted);
   font-size: 13px;
 }
 .workbench-tabs > button.active {
   border-bottom-color: var(--blue);
   color: var(--blue);
-  background: #fff;
+  background: var(--color-surface);
   font-weight: 600;
 }
 .workbench-tabs > .text-button {
@@ -197,7 +215,7 @@
   display: flex;
   gap: 18px;
   padding: 12px;
-  background: #f5f8fd;
+  background: var(--color-surface-soft);
   flex-wrap: wrap;
 }
 .release-summary + .muted {
@@ -217,7 +235,7 @@
 }
 .diff-header strong {
   padding: 10px 15px;
-  background: #f5f7fa;
+  background: var(--color-surface-soft);
 }
 .diff-line pre {
   margin: 0;
@@ -227,7 +245,7 @@
     monospace;
   border: 0;
   border-radius: 0;
-  background: white;
+  background: var(--color-surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   min-height: 22px;
@@ -238,14 +256,14 @@
 .diff-line pre span {
   display: inline-block;
   width: 35px;
-  color: #a2adbc;
+  color: var(--color-muted);
   user-select: none;
 }
 .diff-line.changed pre:first-child {
-  background: #fff1f0;
+  background: var(--color-danger-soft);
 }
 .diff-line.changed pre:last-child {
-  background: #f0fff4;
+  background: var(--code-diff-add);
 }
 .log-controls {
   margin: 16px 0 !important;
@@ -254,8 +272,8 @@
   max-width: 350px;
 }
 .log-output {
-  background: #142033;
-  color: #d3e0ed;
+  background: var(--color-surface-soft);
+  color: var(--color-muted);
   max-height: 450px;
   overflow: auto;
   font:
@@ -316,8 +334,8 @@
 .release-empty {
   padding: 28px 16px;
   text-align: center;
-  background: #f8fafc;
-  border: 1px dashed #dce2eb;
+  background: var(--color-surface-soft);
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
 }
 .release-empty p {
@@ -326,7 +344,7 @@
 }
 .yaml-snapshot-dialog {
   width: min(1000px, 92vw);
-  border: 1px solid #dce2eb;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 16px;
 }
@@ -334,7 +352,7 @@
   height: min(65vh, 700px);
   min-height: 180px;
   overflow: hidden;
-  border: 1px solid var(--color-border, #dce2eb);
+  border: 1px solid var(--color-border, var(--color-border));
   border-radius: 6px;
 }
 .yaml-snapshot-content .code-editor,
@@ -360,21 +378,21 @@
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   padding: 0;
-  border: 1px solid var(--color-border, #dce2eb);
+  border: 1px solid var(--color-border, var(--color-border));
   border-radius: 12px;
-  color: var(--color-text, #253858);
+  color: var(--color-text, var(--color-text));
   overflow: auto;
-  box-shadow: 0 24px 80px #14203333;
+  box-shadow: 0 24px 80px var(--color-shadow-soft);
 }
 .copy-job-dialog::backdrop {
-  background: #14203366;
+  background: var(--color-overlay);
 }
 .copy-job-header {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 24px;
-  border-bottom: 1px solid var(--color-border, #e5eaf1);
+  border-bottom: 1px solid var(--color-border, var(--color-border));
 }
 .copy-job-header h3 {
   margin: 0 0 4px;
@@ -391,8 +409,8 @@
   width: 44px;
   height: 44px;
   border-radius: 10px;
-  color: var(--color-primary, #1677ff);
-  background: #edf4ff;
+  color: var(--color-primary, var(--color-primary));
+  background: var(--color-primary-soft);
   flex: none;
 }
 .copy-job-header > button {
@@ -409,7 +427,7 @@
   gap: 8px;
   padding: 12px 14px;
   margin-bottom: 22px;
-  background: #f6f8fb;
+  background: var(--color-surface-soft);
   border-radius: 6px;
   font-size: 13px;
 }
@@ -428,7 +446,7 @@
   font-weight: 600;
 }
 .required-mark {
-  color: var(--color-danger, #cf4446);
+  color: var(--color-danger, var(--color-danger));
 }
 .copy-name-help {
   margin: 8px 0 20px;
@@ -471,8 +489,8 @@
   gap: 14px;
   flex-wrap: wrap;
   padding: 18px 24px;
-  border-top: 1px solid var(--color-border, #e5eaf1);
-  background: #fafbfd;
+  border-top: 1px solid var(--color-border, var(--color-border));
+  background: var(--color-surface-soft);
 }
 .copy-job-footer > span {
   font-size: 12px;
@@ -508,7 +526,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   overflow-wrap: anywhere;
-  color: var(--danger, #c03943);
+  color: var(--danger, var(--color-danger));
 }
 
 .ongoing-jobs {
@@ -527,7 +545,7 @@
 
 .copy-editor-choice {
   margin: 20px 0 0;
-  border: 1px solid var(--color-border, #dce2eb);
+  border: 1px solid var(--color-border, var(--color-border));
   border-radius: 6px;
   padding: 12px;
 }
@@ -547,8 +565,8 @@
   width: auto;
 }
 .copy-convert-warning {
-  background: #fff8e8;
-  color: #875b16;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
   padding: 10px;
   margin: 12px 0 0;
   font-size: 12px;
@@ -561,6 +579,6 @@
   vertical-align: middle;
 }
 .job-type.sql-type {
-  color: #2563eb;
-  background: #eff6ff;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
 }

@@ -39,10 +39,10 @@ onMounted(() => dialog.value?.showModal())
   flex-direction: column;
   gap: 12px;
   overflow: hidden;
-  box-shadow: 0 12px 48px #15223833;
+  box-shadow: 0 12px 48px var(--color-shadow-soft);
 }
 .ai-content-dialog::backdrop {
-  background: #15223880;
+  background: var(--color-overlay);
 }
 header {
   display: flex;

@@ -5,6 +5,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView, basicSetup } from 'codemirror'
 import { yaml } from '@codemirror/lang-yaml'
 import { flinkSqlSupport } from '../../utils/sqlEditing'
+import { createEditorAppearance } from '../../utils/editorTheme'
 
 const props = withDefaults(
   defineProps<{
@@ -23,9 +24,14 @@ const props = withDefaults(
 )
 const host = ref<HTMLElement>()
 let merge: MergeView | undefined
+let stopAppearances: (() => void)[] = []
 function render() {
+  stopAppearances.forEach((stop) => stop())
+  stopAppearances = []
   merge?.destroy()
   if (!host.value) return
+  const a = createEditorAppearance(),
+    b = createEditorAppearance()
   const extensions = (label: string) => [
     basicSetup,
     EditorState.readOnly.of(true),
@@ -39,15 +45,19 @@ function render() {
   ]
   merge = new MergeView({
     parent: host.value,
-    a: { doc: props.before, extensions: extensions(props.beforeLabel) },
-    b: { doc: props.after, extensions: extensions(props.afterLabel) },
+    a: { doc: props.before, extensions: [...extensions(props.beforeLabel), a.extension] },
+    b: { doc: props.after, extensions: [...extensions(props.afterLabel), b.extension] },
     highlightChanges: true,
     gutter: true,
   })
+  stopAppearances = [a.attach(merge.a), b.attach(merge.b)]
 }
 onMounted(render)
 watch(() => [props.before, props.after, props.language], render)
-onBeforeUnmount(() => merge?.destroy())
+onBeforeUnmount(() => {
+  stopAppearances.forEach((stop) => stop())
+  merge?.destroy()
+})
 </script>
 <template>
   <div class="code-diff" :class="{ stacked }">
@@ -92,26 +102,26 @@ onBeforeUnmount(() => merge?.destroy())
   min-width: 0;
 }
 .diff-host :deep(.cm-changedLine) {
-  background: #fff3d6;
+  background: var(--color-warning-soft);
 }
 .diff-host :deep(.cm-deletedText) {
-  background: #ffcfcf;
+  background: var(--code-diff-remove-text);
   text-decoration: line-through;
 }
 .diff-host :deep(.cm-insertedText) {
-  background: #b9efcb;
+  background: var(--code-diff-add-text);
 }
 .diff-host :deep(.cm-merge-a .cm-changedLine) {
-  background: #fff0ef;
+  background: var(--code-diff-remove);
 }
 .diff-host :deep(.cm-merge-b .cm-changedLine) {
-  background: #eaf8ef;
+  background: var(--code-diff-add);
 }
 .diff-host :deep(.cm-merge-a .cm-changedText) {
-  background: #ffcfcf;
+  background: var(--code-diff-remove-text);
 }
 .diff-host :deep(.cm-merge-b .cm-changedText) {
-  background: #b9efcb;
+  background: var(--code-diff-add-text);
 }
 .stacked .diff-host :deep(.cm-mergeViewEditors) {
   flex-direction: column;

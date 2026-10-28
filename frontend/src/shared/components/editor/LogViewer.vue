@@ -5,6 +5,7 @@ import { EditorView, basicSetup } from 'codemirror'
 import { Decoration, MatchDecorator, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import { Copy } from '@lucide/vue'
 import { copyText } from '../../utils/clipboard'
+import { createEditorAppearance } from '../../utils/editorTheme'
 
 const props = defineProps<{ text: string; fill?: boolean }>()
 const host = ref<HTMLElement>()
@@ -12,6 +13,8 @@ const horizontal = ref<HTMLElement>(),
   horizontalOverflow = ref(0)
 const copied = ref('')
 let view: EditorView | undefined
+const appearance = createEditorAppearance()
+let stopAppearance: (() => void) | undefined
 let observer: ResizeObserver | undefined,
   measureFrame = 0
 function measureScroll() {
@@ -67,6 +70,7 @@ onMounted(() => {
       doc: props.text,
       extensions: [
         basicSetup,
+        appearance.extension,
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
         EditorView.contentAttributes.of({
@@ -86,16 +90,17 @@ onMounted(() => {
             fontFamily: 'Consolas, monospace',
             lineHeight: '1.8',
           },
-          '.cm-gutters': { background: '#f8fafc', color: '#94a3b8', border: 'none' },
+          '.cm-gutters': { border: 'none' },
           '&.cm-focused': { outline: 'none' },
-          '.log-token-error': { color: '#c74646', fontWeight: '700' },
-          '.log-token-warn': { color: '#b7781f', fontWeight: '700' },
-          '.log-token-info': { color: '#2468ee', fontWeight: '600' },
-          '.log-token-muted': { color: '#64748b' },
+          '.log-token-error': { color: 'var(--color-danger)', fontWeight: '700' },
+          '.log-token-warn': { color: 'var(--color-warning)', fontWeight: '700' },
+          '.log-token-info': { color: 'var(--color-info)', fontWeight: '600' },
+          '.log-token-muted': { color: 'var(--color-muted)' },
         }),
       ],
     }),
   })
+  stopAppearance = appearance.attach(view)
   view.scrollDOM.addEventListener('scroll', syncScroll, { passive: true })
   observer = new ResizeObserver(measureScroll)
   if (host.value) observer.observe(host.value)
@@ -109,6 +114,7 @@ watch(
   },
 )
 onBeforeUnmount(() => {
+  stopAppearance?.()
   observer?.disconnect()
   cancelAnimationFrame(measureFrame)
   view?.scrollDOM.removeEventListener('scroll', syncScroll)
@@ -201,7 +207,7 @@ async function copy() {
   overflow-x: scroll;
   overflow-y: hidden;
   scrollbar-width: auto;
-  scrollbar-color: #8d9cb0 #edf1f6;
+  scrollbar-color: var(--color-scrollbar) var(--color-border);
   border-top: 1px solid var(--line);
 }
 .log-horizontal-scroll > div {
@@ -211,12 +217,12 @@ async function copy() {
   height: 12px;
 }
 .log-horizontal-scroll::-webkit-scrollbar-track {
-  background: #edf1f6;
+  background: var(--color-surface-soft);
 }
 .log-horizontal-scroll::-webkit-scrollbar-thumb {
   border-radius: 6px;
-  background: #8d9cb0;
-  border: 2px solid #edf1f6;
+  background: var(--color-scrollbar);
+  border: 2px solid var(--color-border);
 }
 .log-legend-error {
   color: var(--color-danger);

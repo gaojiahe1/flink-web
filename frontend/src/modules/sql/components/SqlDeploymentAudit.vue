@@ -143,7 +143,7 @@ onBeforeUnmount(() => {
   border-radius: 9px;
   padding: 18px;
   color: var(--text);
-  background: #fff;
+  background: var(--color-surface);
 }
 .sql-audit-dialog[open] {
   display: flex;
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 .sql-audit-dialog::backdrop {
-  background: #14243e66;
+  background: var(--color-overlay);
 }
 .audit-heading,
 .audit-status {
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
 .audit-entries button {
   text-align: left;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 6px;
   padding: 10px;
   display: flex;
@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
 }
 .audit-entries button.active {
   border-color: var(--blue);
-  background: #f4f8ff;
+  background: var(--color-surface-soft);
 }
 .audit-entries small {
   font-size: 11px;

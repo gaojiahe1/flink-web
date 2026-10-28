@@ -254,10 +254,10 @@ export function flinkSqlSupport() {
     sql({ dialect: flinkDialect, upperCaseKeywords: true }),
     syntaxHighlighting(
       HighlightStyle.define([
-        { tag: tags.keyword, color: '#7952b3', fontWeight: '600' },
-        { tag: tags.typeName, color: '#1768a4' },
-        { tag: tags.string, color: '#25805b' },
-        { tag: tags.comment, color: '#8592a7', fontStyle: 'italic' },
+        { tag: tags.keyword, color: 'var(--code-keyword)', fontWeight: '600' },
+        { tag: tags.typeName, color: 'var(--code-type)' },
+        { tag: tags.string, color: 'var(--code-string)' },
+        { tag: tags.comment, color: 'var(--code-comment)', fontStyle: 'italic' },
       ]),
     ),
     flinkDialect.language.data.of({ autocomplete: connectorCompletion }),

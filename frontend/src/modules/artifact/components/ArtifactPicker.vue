@@ -497,7 +497,7 @@ async function upload(event: Event) {
 .picker-source .active {
   border-color: var(--blue);
   color: var(--blue);
-  background: var(--color-primary-soft, #eef5ff);
+  background: var(--color-primary-soft, var(--color-primary-soft));
 }
 .external-file .button {
   justify-self: start;
@@ -640,7 +640,7 @@ async function upload(event: Event) {
 .folder-entry:hover,
 .file-entry:hover,
 .file-entry.chosen {
-  background: #eef5ff;
+  background: var(--color-primary-soft);
 }
 .browser-empty {
   display: grid;

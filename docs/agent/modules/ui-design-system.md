@@ -1,15 +1,21 @@
 # 全站 UI 设计系统
 
-更新：2026-10-27。关联 [REQ-006](../requirements/REQ-006-ui-system.md)。
+更新：2026-10-28。关联 [REQ-006](../requirements/REQ-006-ui-system.md)。
 
-采用原生语义HTML、Vue3、已有Lucide图标和CodeMirror；不新增组件库或更改业务API。主导航维持深色、功能面白色、蓝色主操作，删除重复装饰性英文页眉，收紧辅助说明。
+采用原生语义HTML、Vue3、已有Lucide图标和CodeMirror；不新增组件库或更改业务API。默认「雾灰 / 青绿」，另有「暖白 / 墨蓝」「深色开发工作台」；布局一致，通过语义色板覆盖主导航、工作面、表单、状态和代码区。作业统计改为紧凑横排，收紧辅助说明。
+
+## 主题入口
+
+- [启动脚本](../../../frontend/public/theme-init.js)在样式加载前读取`flink-ui-theme`，限定`mist/pearl/dark`，无效值/读取失败回退mist。由[状态](../../../frontend/src/shared/composables/useTheme.ts)统一设置根节点data-theme、color-scheme与浏览器主题色，监听storage同步其他标签页；保存失败不阻断使用。
+- [选择器](../../../frontend/src/shared/components/layout/ThemePicker.vue)复用于顶栏与登录页，原生select保留键盘交互；窄屏收紧为图标入口。主题偏好属于本浏览器，不含业务或用户凭据。
+- [编辑器外观](../../../frontend/src/shared/utils/editorTheme.ts)共用于SQL/YAML、Flink配置、日志与MergeView；语义CSS变量实时更新，Compartment只重配明暗模式，不重建编辑器。组件销毁或对比重建时停止主题监听。
 
 ## 设计变量与入口
 
 | 范围 | 当前规则 | 代码 |
 | --- | --- | --- |
 | 字体 | 标题18、节标题/正文13、辅助12、注释11px；代码自有等宽字号 | [tokens](../../../frontend/src/shared/styles/tokens.css)、[base](../../../frontend/src/shared/styles/base.css) |
-| 外框 | 桌面导航204、顶栏48、内容横向20px；中等/窄屏沿用响应式导航、折叠68px | [MainLayout](../../../frontend/src/app/layouts/MainLayout.vue)、[layout](../../../frontend/src/app/styles/layout.css) |
+| 外框 | 桌面导航184、顶栏48、内容横向20px；中等/窄屏沿用响应式导航、折叠68px | [MainLayout](../../../frontend/src/app/layouts/MainLayout.vue)、[layout](../../../frontend/src/app/styles/layout.css) |
 | 页面与卡片 | 主宽度跟随外框；页头标题/说明同基线，窄屏自然换行；卡片16、工具栏10×14、常规间距16px | [PageHeader](../../../frontend/src/shared/components/layout/PageHeader.vue)、[components](../../../frontend/src/shared/styles/components.css) |
 | 表单与列表 | 控件30px、双行记录基准56px、表头34px；字段gap10×16，长内容与多行编辑不强裁 | 同上 |
 | 工作台 | SQL/JAR共享工作区高度变量，窄草稿树、可调辅助栏；Catalog布局随屏幕重排 | [studio](../../../frontend/src/modules/sql/styles/studio.css)、[JAR](../../../frontend/src/modules/job-creation/pages/JarDevelopmentView.vue)、[Catalog](../../../frontend/src/modules/flink-catalog/pages/FlinkCatalogsView.vue) |
@@ -31,3 +37,5 @@
 ## 回归入口
 
 [全站尺寸](../../../frontend/tests/ui-design.spec.ts)、[一致性](../../../frontend/tests/platform-consistency.spec.ts)共用[隔离数据](../../../frontend/tests/fixtures/platform.ts)。覆盖1440×900、1280×720、900×650、390×844，以及资源编辑和Session保存入口。现有AI、SQL/JAR、Catalog、文件、Pod与权限回归继续保留；与现场/协议替身的区别见 [验收记录](../validation.md)。
+
+[主题回归](../../../frontend/tests/themes.spec.ts)覆盖三主题全站桌面/窄屏、登录、深色工作面、跨标签页和刷新持久化、受限存储、未保存SQL/撤销及嵌套弹窗/代码差异。`E2E_THEME=dark`可让既有AI/日志等用例在深色初始状态运行；仅用于隔离测试。

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ThemePicker from '../../../shared/components/layout/ThemePicker.vue'
 import { showValidationError } from '../../../shared/utils/fieldValidation'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -26,6 +27,7 @@ async function submit() {
 </script>
 <template>
   <div class="login-page">
+    <div class="login-theme"><ThemePicker /></div>
     <div class="login-story">
       <div class="brand"><span class="brand-mark">F</span>Flink Web</div>
       <div>

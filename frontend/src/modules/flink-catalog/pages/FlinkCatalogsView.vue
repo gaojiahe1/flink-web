@@ -525,7 +525,7 @@ async function remove(row: FlinkCatalog) {
   grid-template-columns: 220px minmax(0, 1fr);
   min-height: 420px;
   height: var(--workbench-height);
-  background: white;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -538,7 +538,7 @@ async function remove(row: FlinkCatalog) {
   border-right: 1px solid var(--line);
   min-width: 0;
   min-height: 0;
-  background: #fafbfd;
+  background: var(--color-surface-soft);
 }
 .catalog-profile-items {
   flex: 1;
@@ -580,7 +580,7 @@ async function remove(row: FlinkCatalog) {
   text-overflow: ellipsis;
 }
 .catalog-profile-items button.active {
-  background: #eaf2ff;
+  background: var(--color-primary-soft);
   color: var(--blue);
 }
 .catalog-profile-items strong,
@@ -657,7 +657,7 @@ async function remove(row: FlinkCatalog) {
   color: var(--color-text);
 }
 .catalog-editor::backdrop {
-  background: #15223870;
+  background: var(--color-overlay);
 }
 .catalog-editor .form-panel {
   padding: 0;

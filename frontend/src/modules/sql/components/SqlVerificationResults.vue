@@ -246,7 +246,7 @@ const labels: Record<string, string> = {
 }
 .verification-warning {
   color: var(--color-warning);
-  background: #fff8e9;
+  background: var(--color-warning-soft);
 }
 .verification-status {
   padding: 16px;

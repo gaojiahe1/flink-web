@@ -18,9 +18,19 @@ body {
   min-width: 360px;
   line-height: 1.5;
 }
+html {
+  scrollbar-color: var(--color-scrollbar) var(--color-background);
+}
+dialog {
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+::backdrop {
+  background: var(--color-overlay);
+}
 
 ::selection {
-  background: #dbeafe;
+  background: var(--color-primary-soft);
 }
 @media (prefers-reduced-motion: reduce) {
   *,

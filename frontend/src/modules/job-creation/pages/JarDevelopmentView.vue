@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 210px minmax(0, 1fr);
   height: var(--workbench-height);
   min-height: 420px;
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: var(--panel-radius);
   overflow: hidden;
@@ -207,7 +207,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  background: #fafbfd;
+  background: var(--color-surface-soft);
   border-right: 1px solid var(--line);
 }
 .jar-explorer-heading {
@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
   margin-bottom: 4px;
 }
 .jar-draft-row.selected {
-  background: #eaf1ff;
+  background: var(--color-primary-soft);
 }
 .jar-draft-open {
   height: var(--table-row-height);
@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
 }
 .jar-edit-pane :deep(.editor-actionbar) {
   bottom: 0;
-  box-shadow: 0 -3px 12px #14243e08;
+  box-shadow: 0 -3px 12px var(--color-shadow-soft);
 }
 @container jar-editor (max-width:900px) {
   .jar-edit-pane :deep(.jar-resizer) {

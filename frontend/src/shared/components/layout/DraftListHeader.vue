@@ -41,7 +41,7 @@ strong {
   min-width: 20px;
   padding: 0 5px;
   border-radius: 4px;
-  background: #f0f4fa;
+  background: var(--color-surface-soft);
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;

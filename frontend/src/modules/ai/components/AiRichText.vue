@@ -126,7 +126,7 @@ export default defineComponent({
 }
 .ai-rich-text code {
   font-family: monospace;
-  background: #e8eef780;
+  background: var(--color-overlay);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.95em;

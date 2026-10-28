@@ -940,14 +940,14 @@ async function continueApplication() {
   background: var(--color-surface);
   color: var(--color-text);
   padding: 16px 20px 12px;
-  box-shadow: -5px 0 24px #1522381a;
+  box-shadow: -5px 0 24px var(--color-shadow-soft);
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow: hidden;
 }
 .ai-analysis-drawer::backdrop {
-  background: #15223866;
+  background: var(--color-overlay);
 }
 .ai-drawer-resizer {
   position: absolute;
@@ -967,7 +967,7 @@ async function continueApplication() {
 }
 .ai-drawer-resizer:hover,
 .ai-drawer-resizer:focus-visible {
-  background: #edf3ff;
+  background: var(--color-primary-soft);
 }
 .ai-drawer-resizer:hover span {
   background: var(--blue);
@@ -1097,7 +1097,7 @@ async function continueApplication() {
 }
 .ai-job-resizer:hover,
 .ai-job-resizer:focus-visible {
-  background: #edf3ff;
+  background: var(--color-primary-soft);
 }
 .ai-job-resizer:hover span {
   background: var(--blue);
@@ -1199,7 +1199,7 @@ async function continueApplication() {
   font-size: 13px;
 }
 .ai-job-user {
-  background: #eef4ff;
+  background: var(--color-primary-soft);
   margin-left: 24px;
   margin-right: 0;
 }
@@ -1228,7 +1228,7 @@ async function continueApplication() {
   margin: 0 0 8px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: #eef4ff;
+  background: var(--color-primary-soft);
   font-size: 12px;
   color: var(--color-primary);
 }

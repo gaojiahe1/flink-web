@@ -40,7 +40,7 @@
   align-items: end;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: #fafcff;
+  background: var(--color-surface-soft);
   flex-wrap: wrap;
 }
 .catalog-context label {

@@ -337,7 +337,7 @@ async function copy() {
   font-size: 12px;
 }
 .catalog-object-items button.active {
-  background: #edf4ff;
+  background: var(--color-primary-soft);
   color: var(--blue);
 }
 .catalog-object-items span {

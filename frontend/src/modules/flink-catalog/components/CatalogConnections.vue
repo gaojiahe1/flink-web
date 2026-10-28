@@ -221,10 +221,10 @@ async function remove(row: Record<string, any>) {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   color: var(--text);
-  background: white;
+  background: var(--color-surface);
 }
 .catalog-connections::backdrop {
-  background: #14243e66;
+  background: var(--color-overlay);
 }
 .field-heading {
   margin-bottom: 16px;
@@ -232,7 +232,7 @@ async function remove(row: Record<string, any>) {
 .connection-form {
   margin-block: 16px;
   padding: 16px;
-  background: #fafbfd;
+  background: var(--color-surface-soft);
   border: 1px solid var(--line);
   border-radius: 6px;
 }

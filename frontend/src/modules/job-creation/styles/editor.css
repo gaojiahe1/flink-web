@@ -22,8 +22,8 @@
 .section-number {
   font-size: 12px;
   font-weight: 500;
-  background: #f0f4fb;
-  color: #7791b5;
+  background: var(--color-surface-soft);
+  color: var(--color-muted);
   border-radius: 5px;
   padding: 2px 5px;
 }
@@ -50,7 +50,7 @@
   margin-top: 14px;
 }
 .editor-actionbar {
-  background: #fff;
+  background: var(--color-surface);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px 14px;
@@ -101,7 +101,7 @@
     overflow: auto;
     padding-right: 4px;
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: var(--color-border) transparent;
   }
 }
 @media (min-width: 1001px) {
@@ -146,12 +146,12 @@
   cursor: col-resize;
   touch-action: none;
   border-radius: 4px;
-  background: #f4f7fc;
+  background: var(--color-surface-soft);
   border-inline: 1px solid var(--line);
 }
 .jar-resizer:hover,
 .jar-resizer:focus-visible {
-  background: #c7dbff;
+  background: var(--color-primary-border);
   outline: none;
 }
 @media (max-width: 1000px) {
