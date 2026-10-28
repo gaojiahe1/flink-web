@@ -38,7 +38,7 @@ import { currentTheme, themes, setTheme, type Theme } from '../../composables/us
   width: 162px;
   padding-left: 29px;
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-caption);
   background: var(--color-surface-soft);
   color: var(--color-text);
 }

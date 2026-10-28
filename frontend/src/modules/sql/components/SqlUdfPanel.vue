@@ -203,7 +203,7 @@ function remove(reference: string, name: string) {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .udf-card {
   padding: 10px;
@@ -216,7 +216,7 @@ function remove(reference: string, name: string) {
 }
 pre {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-caption);
   white-space: pre-wrap;
 }
 small {

@@ -87,7 +87,7 @@ onMounted(() => {
           '.cm-scroller': {
             overflow: 'auto',
             overflowX: 'hidden',
-            fontFamily: 'Consolas, monospace',
+            fontFamily: 'var(--font-family-code)',
             lineHeight: '1.8',
           },
           '.cm-gutters': { border: 'none' },
@@ -173,7 +173,7 @@ async function copy() {
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .log-viewer-toolbar button {
   margin-left: auto;

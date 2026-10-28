@@ -4,7 +4,7 @@
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |
 | --- | --- | --- | --- |
-| 全站UI、主题切换、深色、浅色、雾灰青绿、暖白墨蓝、页面重设计、宽度、字体、留白、表单密度、控件、列表行高、导航、弹窗布局 | [REQ-006](requirements/REQ-006-ui-system.md) | [UI设计系统](modules/ui-design-system.md) | 原组件与业务边界沿用 |
+| 全站UI、MiSans、字号层级、历史对齐、主题切换、深色、浅色、雾灰青绿、暖白墨蓝、页面重设计、宽度、字体、留白、表单密度、控件、列表行高、导航、弹窗布局 | [REQ-006](requirements/REQ-006-ui-system.md) | [UI设计系统](modules/ui-design-system.md) | 原组件与业务边界沿用 |
 | savepoint、停止、启动、快照、UID、纳管、删除草稿、日志、Flink UI、前端启动、Nginx、代理 | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [身份与安全停止](decisions/ADR-002-safe-stop.md) |
 | 刷新、轮询、Operator、状态、ACCEPTED | [REQ-001](requirements/REQ-001-lifecycle.md) | [作业生命周期](modules/job-lifecycle.md) | [按需观测](decisions/ADR-001-on-demand.md) |
 | logConfiguration、日志配置、Log4j2、JAR、命名弹窗、拖动分栏、历史5次、左侧草稿列表、YAML、表单、ServiceAccount、PodTemplate、模板、JM/TM | [REQ-002](requirements/REQ-002-authoring.md) | [作业配置](modules/job-authoring.md) | [模板分层](decisions/ADR-004-templates.md) |

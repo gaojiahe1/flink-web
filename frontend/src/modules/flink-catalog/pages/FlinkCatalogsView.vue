@@ -606,7 +606,7 @@ async function remove(row: FlinkCatalog) {
 .catalog-heading p,
 .catalog-level,
 .catalog-profiles p {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .catalog-level {
   margin: 0 18px 10px;
@@ -627,7 +627,7 @@ async function remove(row: FlinkCatalog) {
   border-bottom: 2px solid transparent;
   padding: 7px 0;
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .catalog-detail-tabs button.active {
   border-color: var(--blue);
@@ -670,7 +670,7 @@ async function remove(row: FlinkCatalog) {
 .catalog-editor .muted,
 small {
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 @media (max-width: 1100px) {
   .catalog-workspace {

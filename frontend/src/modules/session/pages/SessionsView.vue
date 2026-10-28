@@ -666,7 +666,7 @@ onMounted(async () => {
 .session-purpose .muted,
 .session-hint {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.7;
 }
 .session-dependencies {

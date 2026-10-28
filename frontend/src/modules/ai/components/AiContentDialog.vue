@@ -53,7 +53,7 @@ header {
 }
 h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-section);
 }
 .ai-content-body {
   flex: 1;

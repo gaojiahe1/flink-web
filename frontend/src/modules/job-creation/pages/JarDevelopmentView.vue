@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-small);
   min-height: 24px;
 }
 .jar-explorer-heading strong {
@@ -228,7 +228,7 @@ onBeforeUnmount(() => {
   padding: 1px 5px;
 }
 .jar-create {
-  font-size: 12px;
+  font-size: var(--font-small);
   justify-content: center;
   flex-shrink: 0;
 }
@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   width: 0;
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 7px 8px;
 }
 .jar-draft-list {
@@ -251,7 +251,7 @@ onBeforeUnmount(() => {
   scrollbar-width: thin;
 }
 .jar-list-note {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.6;
   color: var(--muted);
   margin: 0;
@@ -291,14 +291,14 @@ onBeforeUnmount(() => {
   gap: 5px;
 }
 .jar-draft-open strong {
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jar-draft-open small {
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
 }
 .jar-draft-delete {
@@ -324,7 +324,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .jar-editor-empty h3,
 .jar-editor-empty p {
@@ -336,10 +336,10 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 .jar-edit-pane :deep(.embedded-editor-title h1) {
-  font-size: 15px;
+  font-size: var(--font-subtitle);
 }
 .jar-edit-pane :deep(.embedded-editor-title .muted) {
-  font-size: 12px;
+  font-size: var(--font-small);
   margin-top: 4px;
 }
 .jar-edit-pane :deep(.editor-actionbar) {

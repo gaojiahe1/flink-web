@@ -23,9 +23,12 @@ const props = withDefaults(
   },
 )
 const host = ref<HTMLElement>()
+const scrollbarWidth = ref(0)
 let merge: MergeView | undefined
+let observer: ResizeObserver | undefined
 let stopAppearances: (() => void)[] = []
 function render() {
+  observer?.disconnect()
   stopAppearances.forEach((stop) => stop())
   stopAppearances = []
   merge?.destroy()
@@ -40,7 +43,11 @@ function render() {
     EditorView.contentAttributes.of({ role: 'textbox', 'aria-label': label, tabindex: '0' }),
     EditorView.theme({
       '&': { height: '100%', fontSize: '12px' },
-      '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, monospace', lineHeight: '1.8' },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: 'var(--font-family-code)',
+        lineHeight: '1.8',
+      },
     }),
   ]
   merge = new MergeView({
@@ -51,16 +58,28 @@ function render() {
     gutter: true,
   })
   stopAppearances = [a.attach(merge.a), b.attach(merge.b)]
+  const container = merge.dom
+  const measure = () => {
+    scrollbarWidth.value = container.offsetWidth - container.clientWidth
+  }
+  observer = new ResizeObserver(measure)
+  observer.observe(container)
+  measure()
 }
 onMounted(render)
 watch(() => [props.before, props.after, props.language], render)
 onBeforeUnmount(() => {
+  observer?.disconnect()
   stopAppearances.forEach((stop) => stop())
   merge?.destroy()
 })
 </script>
 <template>
-  <div class="code-diff" :class="{ stacked }">
+  <div
+    class="code-diff"
+    :class="{ stacked }"
+    :style="{ '--diff-scrollbar-width': scrollbarWidth + 'px' }"
+  >
     <div class="diff-labels">
       <span>{{ beforeLabel }} · <em>删除 / 修改</em></span
       ><span>{{ afterLabel }} · <em>新增 / 修改</em></span>
@@ -71,35 +90,60 @@ onBeforeUnmount(() => {
 <style scoped>
 .code-diff {
   min-width: 0;
+  min-height: 0;
   height: 420px;
   display: flex;
   flex-direction: column;
 }
 .diff-labels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding: 8px 0;
-  font-size: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 8px var(--diff-scrollbar-width, 0px) 8px 0;
+  font-size: var(--font-small);
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  border-inline: 1px solid transparent;
+}
+.diff-labels > span {
+  min-width: 0;
+  padding-inline: 10px;
+}
+.diff-labels > span + span {
+  border-left: 1px solid var(--line);
 }
 .diff-labels em {
   font-style: normal;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .diff-host {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
 }
 .diff-host :deep(.cm-mergeView) {
   height: 100%;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 .diff-host :deep(.cm-mergeViewEditors) {
   min-height: 100%;
 }
 .diff-host :deep(.cm-mergeViewEditor) {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.diff-host :deep(.cm-editor) {
+  flex: 1;
+}
+.diff-host :deep(.cm-scroller) {
+  flex: 1;
+}
+.diff-host :deep(.cm-mergeViewEditor + .cm-mergeViewEditor) {
+  border-left: 1px solid var(--line);
 }
 .diff-host :deep(.cm-changedLine) {
   background: var(--color-warning-soft);

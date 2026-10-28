@@ -20,11 +20,11 @@
   font-weight: 600;
 }
 .login-story p {
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 2;
 }
 .login-story small {
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--color-sidebar-muted);
 }
 .login-panel {
@@ -44,7 +44,7 @@
 }
 .login-form > .muted {
   margin: 8px 0 20px;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .login-form > label {
   display: block;
@@ -54,7 +54,7 @@
   height: var(--control-height);
   min-height: var(--control-height);
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .login-form > .button {
   height: var(--control-height);
@@ -67,7 +67,7 @@
 .login-form .form-help {
   text-align: center;
   margin-top: 20px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .password-field {
   position: relative;

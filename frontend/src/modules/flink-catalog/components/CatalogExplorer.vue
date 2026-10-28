@@ -334,7 +334,7 @@ async function copy() {
   border-radius: 5px;
   background: none;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .catalog-object-items button.active {
   background: var(--color-primary-soft);
@@ -345,7 +345,7 @@ async function copy() {
 }
 small,
 .catalog-time {
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--color-muted);
 }
 .catalog-object-detail {
@@ -356,11 +356,11 @@ small,
 .catalog-qualified {
   margin: 6px 0 16px;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .catalog-schema {
   margin-bottom: 16px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .catalog-schema th,
 .catalog-schema td {

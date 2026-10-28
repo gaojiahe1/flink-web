@@ -483,11 +483,11 @@ footer {
 }
 h2 {
   margin: 6px 0;
-  font-size: 15px;
+  font-size: var(--font-subtitle);
   overflow-wrap: anywhere;
 }
 h3 {
-  font-size: 14px;
+  font-size: var(--font-section);
   margin: 0 0 12px;
 }
 .drawer-summary {
@@ -498,7 +498,7 @@ h3 {
   padding: 12px 24px;
   background: var(--color-surface);
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .drawer-summary span,
 .drawer-summary button {
@@ -556,7 +556,7 @@ h3 {
 .pod-choice small,
 .container-list small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .pod-detail-heading {
   display: flex;
@@ -569,7 +569,7 @@ h3 {
   margin-bottom: 6px;
 }
 .pod-detail-heading p {
-  font-size: 12px;
+  font-size: var(--font-small);
   margin-top: 0;
   overflow-wrap: anywhere;
 }
@@ -606,7 +606,7 @@ h3 {
   overflow-wrap: anywhere;
   max-height: 180px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .condition-row {
   display: flex;
@@ -615,7 +615,7 @@ h3 {
   gap: 8px;
   padding: 8px 0;
   border-top: 1px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .condition-row p {
   width: 100%;
@@ -633,11 +633,11 @@ h3 {
 .pod-events small {
   margin-left: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .pod-events p {
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .pod-log-controls {
   display: flex;
@@ -656,13 +656,13 @@ h3 {
   padding-bottom: 7px;
 }
 .log-hint {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 footer {
   padding: 12px 24px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
   background: var(--color-surface);
 }
 @container pod-drawer (max-width: 760px) {

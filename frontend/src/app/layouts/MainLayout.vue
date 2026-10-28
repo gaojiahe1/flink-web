@@ -125,7 +125,12 @@ async function signOut() {
         <RouterView />
       </main>
       <footer class="app-footer">
-        Flink Platform<span>按需查询 · 配置驱动 · 独立工作空间</span>
+        <div>
+          Flink Platform · 字体：<a href="/fonts/misans/LICENSE.pdf" target="_blank" rel="noopener"
+            >MiSans</a
+          >
+        </div>
+        <span>按需查询 · 配置驱动 · 独立工作空间</span>
       </footer>
     </section>
   </div>

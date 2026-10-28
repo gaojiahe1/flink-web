@@ -100,7 +100,7 @@ export default defineComponent({
 </script>
 <style>
 .ai-rich-text {
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.75;
   overflow-wrap: anywhere;
   min-width: 0;
@@ -113,7 +113,8 @@ export default defineComponent({
 .ai-rich-text h4,
 .ai-rich-text h5,
 .ai-rich-text h6 {
-  font-size: 1.05em;
+  font-size: var(--font-section);
+  font-weight: 600;
   margin: 0.8em 0 0.3em;
 }
 .ai-rich-text ul,
@@ -125,7 +126,7 @@ export default defineComponent({
   margin: 0.2em 0;
 }
 .ai-rich-text code {
-  font-family: monospace;
+  font-family: var(--font-family-code);
   background: var(--color-overlay);
   padding: 1px 4px;
   border-radius: 3px;
@@ -141,6 +142,10 @@ export default defineComponent({
 .ai-rich-text pre code {
   padding: 0;
   background: none;
+}
+.ai-rich-text h5,
+.ai-rich-text h6 {
+  font-size: var(--font-body);
 }
 .ai-rich-text blockquote {
   border-left: 3px solid var(--line);

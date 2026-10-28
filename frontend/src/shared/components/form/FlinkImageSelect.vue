@@ -94,7 +94,7 @@ select option {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
 }
 </style>
@@ -103,13 +103,13 @@ select option {
 .operator-hint {
   display: block;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--font-caption);
   font-weight: 400;
   color: var(--color-muted);
   overflow-wrap: anywhere;
 }
 .operator-refresh {
-  font-size: 11px;
+  font-size: var(--font-caption);
   padding: 2px 0;
 }
 .image-version-field {

@@ -160,7 +160,7 @@ onBeforeUnmount(() => {
   margin: 0 0 12px;
 }
 .sql-create-dialog p {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.65;
 }
 .sql-create-dialog label {
@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .sql-name-confirm input {
   width: auto;

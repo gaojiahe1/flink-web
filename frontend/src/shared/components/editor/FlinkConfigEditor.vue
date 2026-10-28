@@ -83,7 +83,7 @@ onMounted(() => {
         EditorView.theme({
           '&': { fontSize: '12px' },
           '.cm-scroller': {
-            fontFamily: 'Consolas, monospace',
+            fontFamily: 'var(--font-family-code)',
             minHeight: '160px',
             maxHeight: '300px',
             overflow: 'auto',

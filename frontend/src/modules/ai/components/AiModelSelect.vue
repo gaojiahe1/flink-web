@@ -63,12 +63,12 @@ watch(
 label {
   flex: 1;
   min-width: 150px;
-  font-size: 12px;
+  font-size: var(--font-small);
   margin: 0;
 }
 p {
   width: 100%;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 </style>

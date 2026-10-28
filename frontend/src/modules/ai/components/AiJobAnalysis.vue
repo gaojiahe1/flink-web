@@ -977,7 +977,7 @@ async function continueApplication() {
 }
 .ai-job-baseline {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
   flex: none;
 }
 .ai-job-proposal-state {
@@ -990,7 +990,7 @@ async function continueApplication() {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 16px;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.7;
 }
 .ai-job-heading h3 {
@@ -1001,7 +1001,7 @@ async function continueApplication() {
 }
 .ai-job-heading p {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-job-diff {
   height: clamp(280px, 50dvh, 650px);
@@ -1038,7 +1038,7 @@ async function continueApplication() {
   align-items: center;
 }
 .ai-job-settings :deep(.ai-model-field label) {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-job-settings > .ai-job-baseline {
   flex: 1 1 200px;
@@ -1052,7 +1052,7 @@ async function continueApplication() {
 .ai-job-context > .notice {
   margin: 0;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-external {
   flex: none;
@@ -1061,7 +1061,7 @@ async function continueApplication() {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
 }
 .ai-check input {
@@ -1120,7 +1120,7 @@ async function continueApplication() {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 16px;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.7;
 }
 .ai-job-conversation {
@@ -1135,7 +1135,7 @@ async function continueApplication() {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
   overflow: auto;
   max-height: 120px;
   flex: none;
@@ -1155,13 +1155,13 @@ async function continueApplication() {
 }
 .ai-job-consent-hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-job-consent {
   display: block;
   margin: 8px 0 0;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.5;
 }
 .ai-job-consent p {
@@ -1192,11 +1192,11 @@ async function continueApplication() {
 }
 .ai-job-message small {
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .ai-job-message p {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .ai-job-user {
   background: var(--color-primary-soft);
@@ -1229,13 +1229,13 @@ async function continueApplication() {
   padding: 8px 10px;
   border-radius: 6px;
   background: var(--color-primary-soft);
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--color-primary);
 }
 .ai-job-elapsed {
   margin-left: auto;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--color-muted);
 }
 .ai-job-input {
@@ -1248,7 +1248,7 @@ async function continueApplication() {
   scrollbar-width: thin;
 }
 .ai-job-input label {
-  font-size: 12px;
+  font-size: var(--font-small);
   margin: 0 0 4px;
   line-height: 1.5;
 }
@@ -1277,7 +1277,7 @@ async function continueApplication() {
 }
 .ai-job-plan .muted,
 .ai-job-footer .muted {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-job-comparison {
   display: grid;
@@ -1287,7 +1287,7 @@ async function continueApplication() {
 }
 .ai-job-comparison h5 {
   margin: 3px 0 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 500;
 }
 .ai-job-comparison section {
@@ -1295,20 +1295,20 @@ async function continueApplication() {
 }
 .ai-job-comparison :deep(.cm-editor) {
   height: clamp(300px, 45vh, 620px);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .ai-job-comparison :deep(.editor-shell) {
   min-width: 0;
 }
 .ai-job-change-list {
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--font-small);
   overflow-wrap: anywhere;
 }
 .ai-job-evidence pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: var(--font-caption);
   max-height: 250px;
   overflow: auto;
 }
@@ -1324,7 +1324,7 @@ async function continueApplication() {
   min-width: 0;
 }
 .ai-job-apply-mode legend {
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 0 4px;
 }
 .ai-job-apply-mode input:not([type='radio']):not([type='checkbox']),
@@ -1349,12 +1349,12 @@ async function continueApplication() {
   padding: 6px 0 0;
   max-height: 90px;
   overflow: auto;
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .ai-job-footer .notice {
   margin: 0;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-job-footer p {
   margin: 4px 0;

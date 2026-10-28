@@ -1,0 +1,7 @@
+This software uses MiSans VF fonts by Xiaomi.
+Copyright and license remain with Xiaomi Inc. and the original font owners.
+Official website: https://hyperos.mi.com/font/
+License: LICENSE.pdf
+Font files are the original, unchanged WOFF2 language resources served by Xiaomi.
+No conversion, further subsetting or modification was performed.
+Resources are packaged only as part of Flink Web.

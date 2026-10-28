@@ -238,7 +238,7 @@ async function remove(row: Record<string, any>) {
 }
 .connection-form > p {
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .table-wrap {
   margin-top: 16px;

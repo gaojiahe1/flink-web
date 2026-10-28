@@ -172,7 +172,7 @@ const collected = computed(
 </template>
 <style scoped>
 .ai-evidence-view {
-  font-size: 14px;
+  font-size: var(--font-section);
   line-height: 1.6;
 }
 pre {
@@ -182,7 +182,7 @@ pre {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.7;
 }
 h4 {

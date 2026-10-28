@@ -36,11 +36,20 @@ h1 {
   color: var(--color-text);
 }
 h2 {
-  font-size: 15px;
+  font-size: var(--font-subtitle);
+  font-weight: 600;
 }
 h3 {
   font-size: var(--font-section);
-  font-weight: 650;
+  font-weight: 600;
+}
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-size: var(--font-body);
+  font-weight: 600;
+  line-height: 1.5;
 }
 input,
 textarea,
@@ -52,7 +61,7 @@ select {
   width: 100%;
   outline: none;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--font-body);
   min-height: var(--control-height);
   line-height: 1.5;
 }
@@ -80,7 +89,7 @@ label select {
 label small,
 .form-help {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-small);
   color: var(--color-muted);
   font-weight: 400;
   margin-top: 4px;
@@ -89,7 +98,7 @@ label small,
   color: var(--color-muted);
 }
 .eyebrow {
-  font-size: 11px;
+  font-size: var(--font-caption);
   font-weight: 600;
   letter-spacing: 1.5px;
   color: var(--color-muted);
@@ -103,7 +112,7 @@ label small,
   margin-top: 5px;
 }
 .version-tag {
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-muted);
   border: 0;
   padding: 3px 8px;
@@ -194,7 +203,8 @@ label small,
   height: 15px;
   display: grid;
   place-items: center;
-  font: 11px Georgia;
+  font: inherit;
+  font-size: var(--font-caption);
 }
 .panel {
   background: var(--color-surface);
@@ -214,13 +224,13 @@ label small,
   border-color: var(--line);
 }
 .panel-heading {
-  font-size: 13px;
+  font-size: var(--font-section);
   font-weight: 650;
   display: flex;
   align-items: center;
 }
 .count {
-  font-size: 13px;
+  font-size: var(--font-body);
   margin-left: 8px;
   background: var(--color-surface-soft);
   border-radius: 5px;
@@ -234,7 +244,7 @@ label small,
 }
 .search {
   width: 240px;
-  font-size: 13px;
+  font-size: var(--font-body);
   padding: 8px 12px;
 }
 .empty-state {
@@ -256,7 +266,7 @@ label small,
   border-color: var(--color-border);
 }
 .empty-state p {
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-muted);
   margin: 9px 0 22px;
 }
@@ -267,7 +277,7 @@ label small,
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 13px;
+  font-size: var(--font-body);
   text-align: left;
 }
 th {
@@ -298,7 +308,7 @@ tbody tr:last-child td {
   color: var(--color-muted);
 }
 .mono {
-  font-family: monospace;
+  font-family: var(--font-family-code);
 }
 .badge {
   line-height: 18px;
@@ -311,7 +321,7 @@ tbody tr:last-child td {
   align-items: center;
   gap: 6px;
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--font-caption);
   border-radius: 4px;
 }
 .badge.amber {
@@ -322,7 +332,7 @@ tbody tr:last-child td {
   display: inline-block;
   margin-bottom: 12px;
   color: var(--color-muted);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .editor-grid {
   display: grid;
@@ -349,8 +359,8 @@ tbody tr:last-child td {
   color: var(--color-text);
   border: 0;
   border-radius: 0;
-  font-family: Consolas, monospace;
-  font-size: 13px;
+  font-family: var(--font-family-code);
+  font-size: var(--font-body);
   line-height: 1.9;
   padding: 24px;
   tab-size: 2;
@@ -374,7 +384,7 @@ tbody tr:last-child td {
   font-size: 20px;
 }
 .module-placeholder > .muted {
-  font-size: 13px;
+  font-size: var(--font-body);
   margin: 10px 0 30px;
 }
 .feature-list {
@@ -385,10 +395,10 @@ tbody tr:last-child td {
 .feature-list > div {
   padding: 15px;
   border-top: 1px solid var(--color-border);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .feature-list span {
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-muted);
   margin-right: 20px;
 }
@@ -467,14 +477,14 @@ select {
 }
 .code-input,
 pre {
-  font-family: Consolas, monospace;
+  font-family: var(--font-family-code);
 }
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--color-surface-soft);
   padding: 16px;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .inline-label {
   display: flex !important;
@@ -506,7 +516,7 @@ input[type='checkbox'] {
   padding: 10px;
   margin-top: 8px;
   background: var(--color-surface-soft);
-  font-size: 13px;
+  font-size: var(--font-body);
   overflow-wrap: anywhere;
 }
 .explorer-title {
@@ -516,14 +526,14 @@ input[type='checkbox'] {
 }
 .empty-tree {
   padding: 22px 5px;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 2;
 }
 .explorer-help {
   border-top: 1px solid var(--color-border);
   padding: 18px 4px;
   margin-top: 30px;
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-muted);
   line-height: 2;
 }
@@ -554,9 +564,8 @@ input[type='checkbox'] {
   color: var(--blue);
 }
 .namespace-tag {
-  font:
-    11px Consolas,
-    monospace;
+  font-size: var(--font-caption);
+  font-family: var(--font-family-code);
   padding: 4px 9px;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -618,7 +627,7 @@ input[type='radio'] {
   font-size: var(--font-small);
 }
 td {
-  font-size: 13px;
+  font-size: var(--font-body);
   height: var(--table-row-height);
   line-height: 20px;
 }
@@ -641,9 +650,8 @@ tbody tr:hover {
   white-space: nowrap;
 }
 .version-pill {
-  font:
-    11px Consolas,
-    monospace;
+  font-size: var(--font-caption);
+  font-family: var(--font-family-code);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   padding: 3px 7px;
@@ -784,15 +792,15 @@ tbody tr:hover {
   margin-bottom: 8px;
 }
 .field-heading strong {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-section);
+  font-weight: 600;
 }
 .field-heading h3 {
   margin: 0;
 }
 .artifact-search {
   margin-bottom: 7px;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .file-chips {
   display: flex;
@@ -808,9 +816,8 @@ tbody tr:hover {
   background: var(--color-surface-soft);
   padding: 4px 7px;
   border-radius: 5px;
-  font:
-    11px Consolas,
-    monospace;
+  font-size: var(--font-caption);
+  font-family: var(--font-family-code);
   color: var(--color-muted);
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -843,7 +850,7 @@ tbody tr:hover {
   outline-offset: 2px;
 }
 .field-error {
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-danger);
 }
 .config-rows {
@@ -860,7 +867,7 @@ tbody tr:hover {
 .config-row small {
   grid-column: 1/-1;
   color: var(--color-muted);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .config-rows > .button {
   align-self: flex-start;
@@ -885,9 +892,9 @@ tbody tr:hover {
   background: var(--color-danger-soft);
   color: var(--color-danger);
   padding: 8px 14px;
-  font:
-    11px/1.6 Consolas,
-    monospace;
+  font-size: var(--font-caption);
+  font-family: var(--font-family-code);
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 @media (max-width: 1250px) {
@@ -943,7 +950,7 @@ tbody tr:hover {
   border-color: var(--blue);
 }
 .flink-config-editor > small {
-  font-size: 13px;
+  font-size: var(--font-small);
   color: var(--color-muted);
   line-height: 1.7;
 }
@@ -952,12 +959,11 @@ tbody tr:hover {
   max-width: min(650px, 85vw);
 }
 .cm-completionLabel {
-  font:
-    12px Consolas,
-    monospace;
+  font-size: var(--font-small);
+  font-family: var(--font-family-code);
 }
 .cm-completionDetail {
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--color-muted);
 }
 .inline-check {
@@ -1004,7 +1010,7 @@ summary:focus-visible {
 input,
 textarea,
 select {
-  font-size: 13px;
+  font-size: var(--font-body);
   border-radius: var(--radius-sm);
   border-color: var(--color-border);
   min-height: var(--control-height);
@@ -1072,7 +1078,7 @@ label {
   color: var(--blue);
 }
 .data-pane > .page-title h1 {
-  font-size: 15px;
+  font-size: var(--font-subtitle);
 }
 .data-pane > .page-title {
   margin-bottom: 12px;
@@ -1144,7 +1150,7 @@ textarea.field-invalid,
 .inline-validation {
   display: block;
   margin-top: 5px;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .app-confirm-dialog {
   width: min(460px, calc(100vw - 40px));
@@ -1204,7 +1210,7 @@ label small {
 }
 .empty-state h3 {
   margin: 10px 0 6px;
-  font-size: 15px;
+  font-size: var(--font-subtitle);
 }
 .empty-state p {
   max-width: 420px;

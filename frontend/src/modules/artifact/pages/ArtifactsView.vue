@@ -497,13 +497,13 @@ function openFolderDialog() {
   color: var(--primary);
 }
 .bucket-title h2 {
-  font-size: 14px;
+  font-size: var(--font-section);
   margin: 0 0 3px;
 }
 .bucket-title small,
 .storage-count {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .storage-heading .toolbar-actions {
   margin-left: auto;
@@ -585,7 +585,7 @@ function openFolderDialog() {
 }
 .object-search > span {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .object-table {
   max-height: 55vh;
@@ -623,7 +623,7 @@ function openFolderDialog() {
 }
 .object-table td {
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .object-name {
   display: flex;
@@ -659,7 +659,7 @@ button.object-name {
   align-items: center;
   padding-top: 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .object-body aside {
   padding: 24px 20px;
@@ -685,7 +685,7 @@ aside h3 {
   margin-bottom: 24px;
 }
 dl {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 dt {
   color: var(--muted);
@@ -696,7 +696,7 @@ dd {
   overflow-wrap: anywhere;
 }
 .object-key {
-  font-family: Consolas, monospace;
+  font-family: var(--font-family-code);
 }
 .object-actions {
   display: grid;
@@ -706,7 +706,7 @@ dd {
 .inspector-placeholder {
   line-height: 1.8;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 aside > small {
   line-height: 1.7;

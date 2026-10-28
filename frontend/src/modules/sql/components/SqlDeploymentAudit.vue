@@ -163,11 +163,11 @@ onBeforeUnmount(() => {
 }
 .audit-heading h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-subtitle);
 }
 .audit-explanation,
 .audit-caution {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.7;
   margin: 0;
   flex-shrink: 0;
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 .audit-status {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .audit-entries {
   display: grid;
@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
   overflow-wrap: anywhere;
 }
 .audit-entries button.active {
@@ -202,7 +202,7 @@ onBeforeUnmount(() => {
   background: var(--color-surface-soft);
 }
 .audit-entries small {
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
 }
 .sql-audit-dialog :deep(.code-editor) {
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
   }
   .audit-explanation,
   .audit-caution {
-    font-size: 11px;
+    font-size: var(--font-caption);
   }
   .audit-caution {
     max-height: 65px;

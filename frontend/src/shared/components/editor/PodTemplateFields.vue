@@ -93,19 +93,19 @@ function update(key: PodTemplateKey, source: string) {
 .pod-template-field summary {
   padding: 10px 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-body);
   font-weight: 600;
 }
 .pod-template-field summary .muted {
   float: right;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
 }
 .pod-template-body {
   padding: 0 12px 12px;
 }
 .pod-template-body .muted {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.7;
   margin: 0 0 10px;
   overflow-wrap: anywhere;

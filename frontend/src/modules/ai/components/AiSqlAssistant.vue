@@ -703,16 +703,16 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .ai-panel-heading h3 {
-  font-size: 14px;
+  font-size: var(--font-section);
 }
 .ai-panel-heading > div {
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-notice {
   margin: 0;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
   white-space: pre-wrap;
 }
 .ai-chat-body {
@@ -753,7 +753,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px !important;
+  font-size: var(--font-caption) !important;
   margin: 0 !important;
   flex-wrap: wrap;
   min-height: 34px;
@@ -764,7 +764,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   margin: 0;
   font-weight: 400;
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .ai-external :deep(.help-tip) {
   display: inline-flex;
@@ -779,7 +779,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 8px;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
   flex-shrink: 0;
 }
@@ -807,7 +807,7 @@ onBeforeUnmount(() => {
   background: var(--surface-soft, var(--color-surface-soft));
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
 }
 .assistant .ai-avatar {
@@ -817,13 +817,13 @@ onBeforeUnmount(() => {
 .ai-message-meta {
   display: flex;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
   margin: 0 0 5px;
 }
 .ai-chat-message p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -842,7 +842,7 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 24px 12px;
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--muted);
 }
 .ai-empty h4,
@@ -865,7 +865,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--font-small);
   margin-bottom: 3px;
 }
 .ai-summary-heading > .ai-summary-toggle {
@@ -903,7 +903,7 @@ onBeforeUnmount(() => {
 .ai-summary-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.65;
   max-height: none;
   overflow: visible;
@@ -923,17 +923,17 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
   margin-right: auto;
   flex: 1 1 200px;
 }
 .ai-summary-footer .button {
   min-height: 30px;
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 6px 10px;
 }
 .ai-unknowns {
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--color-warning);
   margin: 7px 0 0;
   padding-left: 18px;
@@ -950,7 +950,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 5px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-compose-modes .active {
   color: var(--blue);
@@ -963,7 +963,7 @@ onBeforeUnmount(() => {
   min-height: 58px;
   max-height: 58px;
   resize: none;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.6;
 }
 .ai-compose-footer {
@@ -973,13 +973,13 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .ai-compose-footer > span {
-  font-size: 11px;
+  font-size: var(--font-caption);
   color: var(--muted);
 }
 .ai-compose-footer .button {
   padding: 6px 10px;
   min-height: 30px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-task-status {
   display: flex;
@@ -987,7 +987,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   background: var(--surface-soft, var(--color-surface-soft));
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
   flex-shrink: 0;
 }
 .ai-spinner {
@@ -1024,7 +1024,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 0;
   color: var(--blue);
-  font-size: 12px;
+  font-size: var(--font-small);
   flex-shrink: 0;
 }
 .ai-task-status > span {
@@ -1034,7 +1034,7 @@ onBeforeUnmount(() => {
 .ai-check-body {
   min-height: 0;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--font-small);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1059,7 +1059,7 @@ onBeforeUnmount(() => {
 .ai-check-row p {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-full-review {
   width: min(1250px, 94vw);
@@ -1088,7 +1088,7 @@ onBeforeUnmount(() => {
 }
 .ai-comparison h4 {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .ai-comparison :deep(.code-editor) {
   flex: 1;
@@ -1127,7 +1127,7 @@ onBeforeUnmount(() => {
     flex: none;
   }
   .ai-compose-footer > span {
-    font-size: 11px;
+    font-size: var(--font-caption);
   }
   .ai-chat-settings {
     align-items: flex-start;
@@ -1144,7 +1144,7 @@ onBeforeUnmount(() => {
     width: 0;
   }
   .ai-summary-toggle {
-    font-size: 11px;
+    font-size: var(--font-caption);
   }
 }
 </style>

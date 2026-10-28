@@ -112,15 +112,15 @@ onBeforeUnmount(() => clearTimeout(timer))
   padding: 16px;
   box-shadow: 0 12px 36px var(--color-shadow-soft);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.65;
 }
 .session-state-popup pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font:
-    12px/1.65 Consolas,
-    monospace;
+  font-size: var(--font-small);
+  font-family: var(--font-family-code);
+  line-height: 1.65;
   margin: 10px 0;
 }
 .session-state-popup small {

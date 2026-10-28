@@ -35,7 +35,14 @@ async function submit() {
         <h1>让每一次作业变更<br />都有迹可循。</h1>
         <p>集中管理 Flink 作业、配置与运行环境。<br />从一份清晰的部署配置开始。</p>
       </div>
-      <small>Flink Kubernetes Operator · 作业管理平台</small>
+      <small
+        >Flink Kubernetes Operator · 作业管理平台 · 字体：<a
+          href="/fonts/misans/LICENSE.pdf"
+          target="_blank"
+          rel="noopener"
+          >MiSans</a
+        ></small
+      >
     </div>
     <div class="login-panel">
       <form class="login-form" :aria-busy="busy" @submit.prevent="submit">

@@ -57,7 +57,7 @@ async function restore() {
 }
 </script>
 <template>
-  <div>
+  <section class="sql-history" aria-label="SQL 历史对比">
     <div class="field-heading">
       <h3>SQL 历史</h3>
       <ManualRefreshButton :action="load" :disabled="busy" label="刷新记录" />
@@ -89,9 +89,22 @@ async function restore() {
         after-label="当前 SQL"
         language="sql"
     /></template>
-  </div>
+  </section>
 </template>
 <style scoped>
+.sql-history {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.sql-history > .field-heading {
+  flex: none;
+}
+.sql-history > p.muted {
+  font-size: var(--font-small);
+  line-height: 1.6;
+}
 .history-version-actions {
   display: flex;
   align-items: center;
@@ -107,5 +120,6 @@ async function restore() {
 }
 .sql-history-diff {
   height: max(280px, calc(100dvh - 360px));
+  flex: none;
 }
 </style>

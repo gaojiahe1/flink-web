@@ -20,7 +20,7 @@
   min-width: 0;
 }
 .section-number {
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 500;
   background: var(--color-surface-soft);
   color: var(--color-muted);
@@ -62,7 +62,7 @@
 }
 .editor-actionbar > .muted {
   margin-right: auto;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 @media (min-width: 1700px) {
   .job-editor-form.jar-split {

@@ -492,7 +492,7 @@ async function upload(event: Event) {
 .picker-source .button {
   min-height: 28px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .picker-source .active {
   border-color: var(--blue);
@@ -550,7 +550,7 @@ async function upload(event: Event) {
 .browser-count {
   margin-left: auto;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
   white-space: nowrap;
 }
 .picker-breadcrumbs {
@@ -603,7 +603,7 @@ async function upload(event: Event) {
   text-align: left;
   cursor: pointer;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-body);
   color: var(--text);
   box-sizing: border-box;
 }
@@ -648,11 +648,11 @@ async function upload(event: Event) {
   gap: 4px;
   padding: 10px 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--font-body);
   text-align: center;
 }
 .browser-empty small {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .browser-footer {
   border-top: 1px solid var(--line);
@@ -663,7 +663,7 @@ async function upload(event: Event) {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .picker-selection {
   justify-content: space-between;

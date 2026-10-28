@@ -25,7 +25,7 @@ defineEmits<{ toggle: [] }>()
   gap: 4px;
   min-height: 24px;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 strong {
   display: flex;
@@ -43,7 +43,7 @@ strong {
   border-radius: 4px;
   background: var(--color-surface-soft);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
   font-weight: 500;
 }
 button {

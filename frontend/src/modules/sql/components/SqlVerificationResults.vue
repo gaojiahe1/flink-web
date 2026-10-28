@@ -151,7 +151,7 @@ const labels: Record<string, string> = {
   color: var(--color-primary);
 }
 .verification-controls {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .verification-navigation {
   display: flex;
@@ -178,7 +178,7 @@ const labels: Record<string, string> = {
 }
 .verification-navigation > span,
 .verification-navigation label {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .verification-navigation label {
   display: flex;
@@ -207,7 +207,7 @@ const labels: Record<string, string> = {
   top: 0;
   z-index: 1;
   background: var(--color-background);
-  font-size: 12px;
+  font-size: var(--font-small);
   text-align: left;
   font-weight: 600;
 }
@@ -218,7 +218,7 @@ const labels: Record<string, string> = {
   vertical-align: top;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .verification-final-table tr:last-child td {
   border-bottom: 0;
@@ -234,13 +234,13 @@ const labels: Record<string, string> = {
   padding: 32px 16px;
   text-align: center;
   color: var(--color-muted);
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .verification-footnote,
 .verification-warning {
   margin: 0;
   padding: 10px 16px;
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--color-muted);
   border-top: 1px solid var(--line);
 }

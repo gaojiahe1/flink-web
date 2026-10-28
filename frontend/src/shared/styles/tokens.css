@@ -75,10 +75,13 @@
   --panel-padding: 16px;
   --topbar-height: 48px;
   --font-title: 18px;
-  --font-section: 13px;
+  --font-subtitle: 16px;
+  --font-section: 14px;
   --font-body: 13px;
   --font-small: 12px;
   --font-caption: 11px;
+  --font-family-ui: 'MiSans VF', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-family-code: Consolas, 'SFMono-Regular', 'Liberation Mono', 'MiSans VF', monospace;
   --workbench-height: calc(100vh - 154px);
   --surface: var(--color-surface);
   --surface-soft: var(--color-surface-soft);

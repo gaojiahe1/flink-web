@@ -26,7 +26,7 @@ const sections = [
 </template>
 <style scoped>
 .ai-report {
-  font-size: 12px;
+  font-size: var(--font-small);
   overflow-wrap: anywhere;
 }
 .ai-summary {
@@ -39,7 +39,7 @@ section {
   margin-top: 12px;
 }
 h4 {
-  font-size: 12px;
+  font-size: var(--font-body);
   margin: 0 0 6px;
   font-weight: 600;
 }

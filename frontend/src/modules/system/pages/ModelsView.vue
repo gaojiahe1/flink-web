@@ -333,13 +333,13 @@ onMounted(load)
   border-radius: 8px;
 }
 .model-overview h2 {
-  font-size: 15px;
+  font-size: var(--font-subtitle);
   margin: 2px 0;
 }
 .model-overview p {
   color: var(--color-muted);
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-body);
 }
 .model-metrics {
   display: flex;
@@ -352,7 +352,7 @@ onMounted(load)
 }
 .model-metrics small {
   display: block;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
   color: var(--color-muted);
 }
@@ -363,7 +363,7 @@ onMounted(load)
   margin-bottom: 12px;
 }
 .model-form-heading h3 {
-  font-size: 14px;
+  font-size: var(--font-section);
   margin: 0;
 }
 .provider-preset {
@@ -383,9 +383,9 @@ onMounted(load)
   margin-top: 4px;
 }
 .model-endpoint {
-  font:
-    12px/1.7 Consolas,
-    monospace;
+  font-size: var(--font-small);
+  font-family: var(--font-family-code);
+  line-height: 1.7;
   color: var(--color-muted);
   overflow-wrap: anywhere;
 }
@@ -401,7 +401,7 @@ onMounted(load)
 .model-test-result {
   padding: 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--font-small);
   white-space: pre-wrap;
 }
 .model-test-result.success {
@@ -471,7 +471,7 @@ fieldset {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
 }
 .check-field input {
@@ -480,7 +480,7 @@ fieldset {
 }
 .muted,
 small {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 @media (max-width: 850px) {
   .models-layout {

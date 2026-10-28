@@ -123,7 +123,7 @@ onMounted(() => {
           '&': { height: '100%', fontSize: '13px' },
           '.cm-scroller': {
             overflow: 'auto',
-            fontFamily: 'Consolas, monospace',
+            fontFamily: 'var(--font-family-code)',
             lineHeight: '1.8',
           },
           '.cm-content': { padding: '16px 0' },
@@ -191,7 +191,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 36px 10px 12px;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.5;
   font-family: inherit;
   position: relative;
@@ -253,7 +253,7 @@ onBeforeUnmount(() => {
   padding: 0;
   color: var(--muted);
   border-radius: var(--radius-sm);
-  font-size: 18px;
+  font-size: var(--font-title);
 }
 :deep(.cm-search.cm-panel [name='close']:hover) {
   color: var(--blue);

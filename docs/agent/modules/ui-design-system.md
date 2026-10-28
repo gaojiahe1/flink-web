@@ -10,11 +10,17 @@
 - [选择器](../../../frontend/src/shared/components/layout/ThemePicker.vue)复用于顶栏与登录页，原生select保留键盘交互；窄屏收紧为图标入口。主题偏好属于本浏览器，不含业务或用户凭据。
 - [编辑器外观](../../../frontend/src/shared/utils/editorTheme.ts)共用于SQL/YAML、Flink配置、日志与MergeView；语义CSS变量实时更新，Compartment只重配明暗模式，不重建编辑器。组件销毁或对比重建时停止主题监听。
 
+## 字体与历史比较
+
+- 2026-10-28用户确认MiSans。`--font-family-ui`使用本地MiSans VF，`--font-family-code`独立保留Consolas等宽栈。由[入口](../../../frontend/index.html)加载[本地字体声明](../../../frontend/public/fonts/misans/font-face.css)，只引用本站WOFF2；使用官方已经提供的56份原版语言资源，总计4,523,768字节，未转换或再次裁剪。源地址/逐文件SHA-256见[sources](../../../frontend/public/fonts/misans/sources.json)，许可与版权见[NOTICE](../../../frontend/public/fonts/misans/NOTICE.txt)和[官方协议副本](../../../frontend/public/fonts/misans/LICENSE.pdf)。平台/登录注明MiSans；资源失败时保留系统回退。
+- 统一页标题18、区域16、分组14、正文13、说明12、注释11；辅助说明小于所属标题。StateStorageForm策略标题13/说明12，卡片标题14；AI格式化内容、代码、日志和各页共享变量，代码字体与界面字体分开。
+- [CodeDiff](../../../frontend/src/shared/components/editor/CodeDiff.vue)消除标题网格列间隙，按实际合并视图滚动条宽度预留标题占位；ResizeObserver随窗口/内容更新并销毁。代码包装列通过flex伸展，短内容滚动条底边齐平，长内容保持MergeView共同垂直滚动，不使用会裁断长文档的固定行高。
+
 ## 设计变量与入口
 
 | 范围 | 当前规则 | 代码 |
 | --- | --- | --- |
-| 字体 | 标题18、节标题/正文13、辅助12、注释11px；代码自有等宽字号 | [tokens](../../../frontend/src/shared/styles/tokens.css)、[base](../../../frontend/src/shared/styles/base.css) |
+| 字体 | MiSans；页标题18、区域16、分组14、正文13、辅助12、注释11px；代码自有等宽字号 | [tokens](../../../frontend/src/shared/styles/tokens.css)、[base](../../../frontend/src/shared/styles/base.css) |
 | 外框 | 桌面导航184、顶栏48、内容横向20px；中等/窄屏沿用响应式导航、折叠68px | [MainLayout](../../../frontend/src/app/layouts/MainLayout.vue)、[layout](../../../frontend/src/app/styles/layout.css) |
 | 页面与卡片 | 主宽度跟随外框；页头标题/说明同基线，窄屏自然换行；卡片16、工具栏10×14、常规间距16px | [PageHeader](../../../frontend/src/shared/components/layout/PageHeader.vue)、[components](../../../frontend/src/shared/styles/components.css) |
 | 表单与列表 | 控件30px、双行记录基准56px、表头34px；字段gap10×16，长内容与多行编辑不强裁 | 同上 |
@@ -39,3 +45,5 @@
 [全站尺寸](../../../frontend/tests/ui-design.spec.ts)、[一致性](../../../frontend/tests/platform-consistency.spec.ts)共用[隔离数据](../../../frontend/tests/fixtures/platform.ts)。覆盖1440×900、1280×720、900×650、390×844，以及资源编辑和Session保存入口。现有AI、SQL/JAR、Catalog、文件、Pod与权限回归继续保留；与现场/协议替身的区别见 [验收记录](../validation.md)。
 
 [主题回归](../../../frontend/tests/themes.spec.ts)覆盖三主题全站桌面/窄屏、登录、深色工作面、跨标签页和刷新持久化、受限存储、未保存SQL/撤销及嵌套弹窗/代码差异。`E2E_THEME=dark`可让既有AI/日志等用例在深色初始状态运行；仅用于隔离测试。
+
+[排版/历史回归](../../../frontend/tests/typography-history.spec.ts)覆盖三主题原生滚动条及1440/1280/900/390宽度、长文档末尾、短文档等高与列边界，CDP验证实际MiSans字形、说明层级与等宽代码分离，字体加载失败仍可操作。

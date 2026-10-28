@@ -77,10 +77,10 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .sql-search {
-  font-size: 12px;
+  font-size: var(--font-small);
   margin: 8px 0;
   padding: 7px;
 }
@@ -94,7 +94,7 @@
   background: transparent;
   text-align: left;
   padding: 4px 4px;
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--color-muted);
   border-radius: 4px;
 }
@@ -129,7 +129,7 @@
 .sql-file small {
   display: block;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
   margin-top: 0;
 }
 .sql-file:hover,
@@ -138,9 +138,8 @@
   color: var(--color-primary);
 }
 .sql-file-icon {
-  font:
-    9px Consolas,
-    monospace;
+  font-size: var(--font-body);
+  font-family: var(--font-family-code);
   background: var(--color-primary-soft);
   border: 1px solid var(--color-border);
   color: var(--color-primary);
@@ -162,7 +161,7 @@
   align-items: center;
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-small);
   gap: 8px;
   min-height: 36px;
 }
@@ -183,7 +182,7 @@
   padding: 6px 10px;
   background: var(--color-surface-soft);
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-small);
   flex-wrap: wrap;
 }
 .sql-toolbar .toolbar-actions {
@@ -203,7 +202,7 @@
   flex: none;
   border-top: 1px solid var(--line);
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.7;
   background: var(--color-surface-soft);
   max-height: 155px;
@@ -218,7 +217,7 @@
   max-height: 220px;
   overflow: auto;
   border-top: 1px solid var(--line);
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 10px 14px;
 }
 .sql-preview .code-editor {
@@ -241,7 +240,7 @@
   margin-bottom: 8px;
 }
 .runtime-intro {
-  font-size: 12px;
+  font-size: var(--font-small);
   margin-bottom: 16px;
   line-height: 1.8;
 }
@@ -253,7 +252,7 @@
   display: block;
 }
 .sql-runtime label {
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 400;
   margin-bottom: 8px;
 }
@@ -268,14 +267,14 @@
   margin: 0;
 }
 .sql-runtime label small {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.6;
   margin-bottom: 0;
   color: var(--color-muted);
 }
 .sql-runtime input,
 .sql-runtime select {
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 7px 8px;
 }
 .runtime-grid {
@@ -290,7 +289,7 @@
   border-top: 1px solid var(--line);
   padding-top: 12px;
   margin-bottom: 20px;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .runtime-advanced summary {
   cursor: pointer;
@@ -305,7 +304,7 @@
   margin: 0;
 }
 .sql-runtime h4 {
-  font-size: 12px;
+  font-size: var(--font-body);
   margin: 20px 0 12px;
 }
 .studio-rail {
@@ -325,7 +324,7 @@
   color: var(--color-muted);
   padding: 13px 9px;
   align-self: stretch;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .studio-rail button.active {
   border-left-color: var(--color-primary);
@@ -347,14 +346,14 @@
 .source-item small {
   display: block;
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: var(--font-small);
   margin-top: 0;
 }
 .source-item strong {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .datasource-browser > .muted {
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.8;
 }
 .datasource-browser .filter-bar {
@@ -364,7 +363,7 @@
   min-width: 420px;
 }
 .sql-history-diff pre {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .sql-runtime > .flink-config-editor {
   margin-bottom: 20px;
@@ -538,7 +537,7 @@
   background: none;
   color: var(--color-muted);
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .sql-wizard-steps button span {
   display: grid;
@@ -604,7 +603,7 @@
 .sql-review-notice {
   margin: 0;
   border-radius: 0;
-  font-size: 12px;
+  font-size: var(--font-small);
   padding: 8px 12px;
 }
 @media (max-width: 1000px) {
@@ -633,7 +632,7 @@
   }
   .sql-wizard-steps button {
     gap: 5px;
-    font-size: 11px;
+    font-size: var(--font-caption);
   }
 }
 
@@ -709,7 +708,7 @@
 .development-explorer .explorer-content > .button {
   margin-bottom: 10px;
   min-height: var(--control-height);
-  font-size: 12px;
+  font-size: var(--font-small);
   justify-content: center;
 }
 .development-list-tools {
@@ -727,7 +726,7 @@
 }
 .development-list-note {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--muted);
 }
 .development-explorer .sql-file-row {
@@ -752,7 +751,7 @@
 .development-explorer .sql-file small {
   margin-top: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-caption);
 }
 .development-explorer .sql-file-delete {
   color: var(--muted);

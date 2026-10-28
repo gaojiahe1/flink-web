@@ -367,14 +367,26 @@ fieldset {
   background: var(--surface-soft, var(--color-surface-soft));
   border-radius: 6px;
   line-height: 1.7;
+  font-size: var(--font-small);
+}
+.state-storage-form > h3 {
+  font-size: var(--font-section);
+  font-weight: 600;
+}
+.state-storage-form p.muted {
+  font-size: var(--font-small);
+  line-height: 1.6;
 }
 .strategy-help {
   margin-top: 12px;
   color: var(--muted, var(--color-muted));
   line-height: 1.7;
+  font-size: var(--font-small);
 }
 .strategy-help dt {
   font-weight: 600;
+  font-size: var(--font-body);
+  color: var(--color-text);
   margin-top: 10px;
 }
 .strategy-help dd {

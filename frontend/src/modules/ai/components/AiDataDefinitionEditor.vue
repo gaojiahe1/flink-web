@@ -191,7 +191,7 @@ function parameters(
   margin: 12px 0;
 }
 summary {
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 600;
   margin-bottom: 12px;
   overflow-wrap: anywhere;
@@ -221,9 +221,9 @@ summary {
   margin-top: 14px;
 }
 label {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 button {
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 </style>

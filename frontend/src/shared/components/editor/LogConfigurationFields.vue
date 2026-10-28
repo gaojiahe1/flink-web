@@ -88,7 +88,7 @@ textarea {
   width: 100%;
   min-height: 280px;
   resize: vertical;
-  font-family: monospace;
+  font-family: var(--font-family-code);
   white-space: pre;
   overflow: auto;
 }
