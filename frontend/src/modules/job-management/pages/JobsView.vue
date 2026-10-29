@@ -546,6 +546,7 @@ const router = useRouter()
 const copyDialog = ref<HTMLDialogElement>()
 const copySource = ref<JobDraft>()
 const copyEditor = ref('yaml')
+const copySqlSource = ref<{ id: string; revision: number }>()
 const copyName = ref(''),
   copyError = ref(''),
   copying = ref(false)
@@ -553,9 +554,19 @@ watch(copyName, () => {
   copyError.value = ''
 })
 async function openCopy(job: JobDraft) {
-  if (developmentLinks.value[job.id]?.type === 'sql') {
-    error.value = 'SQL 作业请在 SQL 开发中新建草稿。'
-    return
+  copySqlSource.value = undefined
+  const link = developmentLinks.value[job.id]
+  if (link?.type === 'sql') {
+    if (!link.sqlId) {
+      error.value = '找不到对应 SQL 草稿，请刷新列表后重试。'
+      return
+    }
+    try {
+      copySqlSource.value = await request('/api/sql/jobs/' + encodeURIComponent(link.sqlId))
+    } catch (e) {
+      error.value = (e as Error).message
+      return
+    }
   }
   copySource.value = job
   copyEditor.value = 'yaml'
@@ -582,6 +593,18 @@ async function copyJob() {
   copying.value = true
   copyError.value = ''
   try {
+    if (copySqlSource.value) {
+      const draft = await request<{ id: string }>(
+        '/api/sql/jobs/' + encodeURIComponent(copySqlSource.value.id) + '/copy',
+        {
+          method: 'POST',
+          ...jsonBody({ name: copyName.value, revision: copySqlSource.value.revision }),
+        },
+      )
+      copyDialog.value?.close()
+      await router.push({ path: '/sql', query: { draft: draft.id } })
+      return
+    }
     const job = await request<JobDraft>('/api/jobs/' + copySource.value.id + '/copy', {
       method: 'POST',
       ...jsonBody({
@@ -825,8 +848,12 @@ function resetFilters() {
               ><button
                 v-if="mayEdit(job)"
                 class="text-button"
-                :disabled="copying || developmentLinks[job.id]?.type === 'sql'"
-                :title="developmentLinks[job.id]?.type === 'sql' ? '请在 SQL 开发中新建草稿' : ''"
+                :disabled="copying"
+                :title="
+                  developmentLinks[job.id]?.type === 'sql'
+                    ? '复制最新已保存 SQL 与配置为独立草稿'
+                    : ''
+                "
                 @click="openCopy(job)"
               >
                 复制</button
@@ -880,7 +907,13 @@ function resetFilters() {
         <span class="copy-job-icon"><Files :size="22" /></span>
         <div>
           <h3 id="copy-job-title">复制作业</h3>
-          <p>以现有配置创建一个独立的新作业</p>
+          <p>
+            {{
+              copySqlSource
+                ? '复制最新已保存的 SQL 与部署配置，进入 SQL 开发继续编辑'
+                : '以现有配置创建一个独立的新作业'
+            }}
+          </p>
         </div>
         <button
           type="button"
@@ -915,7 +948,7 @@ function resetFilters() {
         <p v-else id="copy-name-help" class="copy-name-help">
           使用小写字母、数字或连字符，名称不能重复。
         </p>
-        <fieldset class="copy-editor-choice">
+        <fieldset v-if="!copySqlSource" class="copy-editor-choice">
           <legend>复制后编辑方式</legend>
           <label
             ><input v-model="copyEditor" type="radio" value="yaml" :disabled="copying" />YAML
@@ -935,14 +968,22 @@ function resetFilters() {
             <FolderClosed :size="18" />
             <p>
               <strong>配置与专属文件一并复制</strong
-              ><span>自动分配新编号和独立目录，共享文件继续引用。</span>
+              ><span>{{
+                copySqlSource
+                  ? '保留 UDF、Catalog 与依赖选择，使用独立目录；不继承原作业关联。'
+                  : '自动分配新编号和独立目录，共享文件继续引用。'
+              }}</span>
             </p>
           </div>
           <div>
             <ArrowRight :size="18" />
             <p>
               <strong>复制后进入编辑页</strong
-              ><span>新作业保持草稿，运行状态与历史快照不会复制。</span>
+              ><span>{{
+                copySqlSource
+                  ? '创建独立 SQL 草稿；检查并发布后才会加入作业列表，不会自动启动。'
+                  : '新作业保持草稿，运行状态与历史快照不会复制。'
+              }}</span>
             </p>
           </div>
         </div>

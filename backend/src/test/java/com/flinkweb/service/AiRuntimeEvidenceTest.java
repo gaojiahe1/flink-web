@@ -31,7 +31,7 @@ class AiRuntimeEvidenceTest {
     when(client.call(eq("GET"),contains("/pods?"),isNull())).thenReturn(foreign);
     String secret="secret-value-with-quote-\"-and-backslash-\\";
     when(client.call("GET","/api/v1/namespaces/team/secrets/business",null)).thenReturn(mapper.createObjectNode().set("data",mapper.createObjectNode().put("key",Base64.getEncoder().encodeToString(secret.getBytes(StandardCharsets.UTF_8)))));
-    var service=new DiagnosticServiceImpl(client,jobs,mock(JobOwnershipService.class),mock(AccessService.class),mapper,mock(RecordRepository.class),mock(SecretCipher.class),mock(SessionClusterService.class));
+    var service=new DiagnosticServiceImpl(client,jobs,mock(JobOwnershipService.class),mock(AccessService.class),mapper,mock(RecordRepository.class),mock(SecretCipher.class),mock(SessionClusterService.class),mock(com.flinkweb.service.audit.AuditService.class));
     var input=mapper.createObjectNode().put("error","Failed: "+secret);input.putArray("stack").add(secret);
     var safe=service.redactEvidence("job",input);
     assertThat(safe.path("error").asText()).isEqualTo("Failed: [REDACTED]");assertThat(safe.path("stack").get(0).asText()).isEqualTo("[REDACTED]");assertThat(input.path("error").asText()).contains(secret);

@@ -7,4 +7,7 @@ public interface AuditService {
 
   /** 保存当前操作人、动作、目标及执行结果，不记录凭据内容。 */
   void record(String action, String target, String outcome);
+
+  /** 只接收调用方明确选择的诊断定位信息，不保存日志正文或配置。 */
+  void record(String action, String target, String outcome, com.fasterxml.jackson.databind.node.ObjectNode context);
 }

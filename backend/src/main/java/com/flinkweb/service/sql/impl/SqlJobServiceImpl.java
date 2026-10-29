@@ -40,6 +40,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   private final com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts;
   private final com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml;
   private final org.springframework.transaction.support.TransactionTemplate transactions;
+  private final com.flinkweb.service.sql.support.SqlDraftCopySupport copies;
 
   /** 注入草稿持久化、SQL 基础校验及部署渲染依赖。 */
   public SqlJobServiceImpl(
@@ -56,7 +57,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       com.flinkweb.service.sql.catalog.FlinkCatalogService catalogs,
       com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts,
       com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml,
-      org.springframework.transaction.PlatformTransactionManager transactionManager) {
+      org.springframework.transaction.PlatformTransactionManager transactionManager,
+      com.flinkweb.service.sql.support.SqlDraftCopySupport copies) {
+    this.copies = copies;
     this.transactions =
         new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     this.runtimeYaml = runtimeYaml;
@@ -110,6 +113,35 @@ public class SqlJobServiceImpl implements SqlJobService {
     if (!runtime.path("deploymentYaml").asText().isBlank()) configuration(input);
     catalogs.prepare(runtime.deepCopy());
     return transactions.execute(status -> persist(id, input, runtime));
+  }
+
+  /** 外部依赖复制在事务外，源修订、独立草稿及审计在短事务内核验提交。 */
+  public ObjectNode copy(String id, com.flinkweb.dto.job.creation.CopyJobRequest input) {
+    access.require("sql:" + id, "edit");
+    var source = get(id);
+    if (source.path("revision").asLong() != input.revision())
+      throw new BusinessException(HttpStatus.CONFLICT, "REVISION_CONFLICT", "源 SQL 草稿已修改，请重新打开复制窗口");
+    if (!jobs.nameAvailable(input.name(), ""))
+      throw new BusinessException(HttpStatus.CONFLICT, "JOB_NAME_EXISTS", "作业名称已存在，请使用其他名称");
+    var runtime = copies.prepare(source, input.name());
+    try {
+      var request = new SqlDraftRequest(input.name(), source.path("description").asText(), source.path("sql").asText(), runtime, 0);
+      runtime = runtimeYaml.prepare(runtime, input.name(), false);
+      runtimeArtifacts.validateUdfs(runtime);
+      catalogs.prepare(runtime.deepCopy());
+      var prepared = runtime;
+      return transactions.execute(status -> {
+        access.require("sql:" + id, "edit");
+        if (get(id).path("revision").asLong() != input.revision())
+          throw new BusinessException(HttpStatus.CONFLICT, "REVISION_CONFLICT", "源 SQL 草稿已修改，请重新打开复制窗口");
+        var result = persist(input.name(), request, prepared);
+        audit.record("SQL_COPY", result.path("id").asText(), "SUCCESS");
+        return result;
+      });
+    } catch (RuntimeException failure) {
+      copies.cleanup(runtime, failure);
+      throw failure;
+    }
   }
 
   /** 外部文件识别完成后，草稿、权限初始化、历史和审计在同一短事务提交。 */
@@ -288,6 +320,7 @@ public class SqlJobServiceImpl implements SqlJobService {
     if (jobRepository.findById(record.path("jobId").asText()).isPresent())
       throw new BusinessException(
           HttpStatus.CONFLICT, "SQL_DEPLOYMENT_EXISTS", "请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿");
+    audit.record("SQL_DELETE", id, "SUCCESS");
     records.delete("sql_jobs", id, revision);
     for (String collection : List.of("ai_summaries", "ai_conversations", "ai_tasks"))
       for (var associated : records.list(collection))
@@ -295,6 +328,5 @@ public class SqlJobServiceImpl implements SqlJobService {
           records.delete(
               collection, associated.path("id").asText(), associated.path("revision").asLong());
     jobs.releaseName(record.path("name").asText(), "sql:" + id);
-    audit.record("SQL_DELETE", id, "SUCCESS");
   }
 }

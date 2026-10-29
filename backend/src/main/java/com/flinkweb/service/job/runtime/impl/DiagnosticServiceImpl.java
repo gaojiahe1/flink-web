@@ -28,6 +28,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
   private final RecordRepository records;
   private final SecretCipher cipher;
   private final com.flinkweb.service.session.SessionClusterService sessions;
+  private final com.flinkweb.service.audit.AuditService audit;
 
   /** 注入集群、作业身份和脱敏依赖。 */
   public DiagnosticServiceImpl(
@@ -38,7 +39,8 @@ public class DiagnosticServiceImpl implements DiagnosticService {
       ObjectMapper mapper,
       RecordRepository records,
       SecretCipher cipher,
-      com.flinkweb.service.session.SessionClusterService sessions) {
+      com.flinkweb.service.session.SessionClusterService sessions,
+      com.flinkweb.service.audit.AuditService audit) {
     this.client = client;
     this.jobs = jobs;
     this.ownership = ownership;
@@ -47,6 +49,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     this.records = records;
     this.cipher = cipher;
     this.sessions = sessions;
+    this.audit = audit;
   }
 
   /** 手动查询当前作业事件与 Pod 概览，不返回容器环境变量。 */
@@ -279,16 +282,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                 + "&timestamps=true&previous="
                 + previous,
             4 * 1024 * 1024);
-    records.save(
-        "audit",
-        UUID.randomUUID().toString(),
-        mapper
-            .createObjectNode()
-            .put("action", action)
-            .put("target", id)
-            .put("actor", access.actor())
-            .put("outcome", "SUCCESS"),
-        0);
+    audit.record(action, id, "SUCCESS", mapper.createObjectNode().put("pod", podName).put("container", container).put("lines", limit).put("previous", previous));
     return mapper
         .createObjectNode()
         .put("text", redactPodSecrets(redact(text), pod))

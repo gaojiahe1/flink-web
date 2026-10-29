@@ -8,7 +8,12 @@ import { computed, reactive, ref, watch } from 'vue'
 import { request, jsonBody } from '../../../shared/api/http'
 import { currentUser } from '../../permission/stores/auth'
 import { definitions, titles, type CatalogModule } from '../model/catalogDefinitions'
-import { auditActionLabel, auditOutcomeLabel } from '../../audit/utils/auditLabels'
+import {
+  auditActionLabel,
+  auditOutcomeLabel,
+  auditTime,
+  auditTimeLabel,
+} from '../../audit/utils/auditLabels'
 type Row = Record<string, any>
 const props = defineProps<{ module: CatalogModule }>()
 const type = computed(() => props.module)
@@ -52,7 +57,9 @@ const filtered = computed(() =>
 )
 const sorted = computed(() =>
   type.value === 'audit'
-    ? [...filtered.value].sort((a, b) => String(b.time).localeCompare(String(a.time)))
+    ? [...filtered.value].sort(
+        (a, b) => (auditTime(b)?.getTime() || 0) - (auditTime(a)?.getTime() || 0),
+      )
     : filtered.value,
 )
 const pages = computed(() => Math.max(1, Math.ceil(sorted.value.length / pageSize)))
@@ -277,15 +284,55 @@ function resetFilters() {
             <th>动作</th>
             <th>目标</th>
             <th>结果</th>
+            <th>详情</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="row in visible" :key="row.id">
-            <td>{{ row.time }}</td>
+            <td class="audit-time">
+              {{ auditTimeLabel(row)
+              }}<small
+                v-if="row.timeSource === 'createdAt' || (!row.time && row.createdAt)"
+                class="muted table-description"
+                >按记录创建时间</small
+              >
+            </td>
             <td>{{ row.actor }}</td>
             <td :title="row.action">{{ auditActionLabel(row.action) }}</td>
-            <td :title="row.target">{{ row.target }}</td>
+            <td :title="row.target">
+              <strong>{{ row.targetName || row.target || '未记录目标' }}</strong
+              ><small
+                v-if="row.targetType || row.targetReference"
+                class="muted table-description"
+                >{{ [row.targetType, row.targetReference].filter(Boolean).join(' · ') }}</small
+              >
+            </td>
             <td :title="row.outcome">{{ auditOutcomeLabel(row.outcome) }}</td>
+            <td>
+              <details class="audit-details">
+                <summary>查看详情</summary>
+                <dl>
+                  <dt>目标标识</dt>
+                  <dd>{{ row.target || '未记录' }}</dd>
+                  <dt>动作码</dt>
+                  <dd>{{ row.action }}</dd>
+                  <dt>原始时间</dt>
+                  <dd>{{ row.time || row.createdAt || '未记录' }}</dd>
+                  <template v-if="row.context?.pod"
+                    ><dt>Pod / 容器</dt>
+                    <dd>{{ row.context.pod }} / {{ row.context.container }}</dd>
+                    <dt>日志范围</dt>
+                    <dd>
+                      {{ row.context.previous ? '上次容器' : '当前容器' }} · 最近
+                      {{ row.context.lines }} 行
+                    </dd></template
+                  ><template v-if="row.outcome === 'ACCEPTED'"
+                    ><dt>结果说明</dt>
+                    <dd>请求已受理，实际运行结果请在作业或任务中查看。</dd></template
+                  >
+                </dl>
+              </details>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -339,3 +386,32 @@ function resetFilters() {
     </div>
   </section>
 </template>
+
+<style scoped>
+.audit-time {
+  white-space: nowrap;
+}
+.audit-details {
+  min-width: 88px;
+  max-width: 320px;
+}
+.audit-details summary {
+  cursor: pointer;
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+.audit-details dl {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0;
+  font-size: var(--font-small);
+  overflow-wrap: anywhere;
+}
+.audit-details dt {
+  color: var(--color-muted);
+}
+.audit-details dd {
+  margin: 0 0 6px;
+  white-space: normal;
+}
+</style>

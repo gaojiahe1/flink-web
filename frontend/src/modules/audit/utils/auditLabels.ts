@@ -27,6 +27,8 @@ const actions: Record<string, string> = {
   JOB_SAVEPOINT: '创建保存点',
   JOB_CHECKPOINT: '触发检查点',
   JOB_DEPLOY: '部署作业',
+  JOB_LOG_READ: '查看作业容器日志',
+  SESSION_LOG_READ: '查看 Session 容器日志',
   AI_TASK_CREATE: '创建 AI 分析任务',
   AI_TASK_CANCEL: '取消 AI 分析任务',
   AI_MODEL_SAVE: '保存 AI 模型',
@@ -36,6 +38,7 @@ const actions: Record<string, string> = {
   SQL_SAVE: '保存 SQL 草稿',
   SQL_PUBLISH: '发布 SQL 作业',
   SQL_DELETE: '删除 SQL 草稿',
+  SQL_COPY: '复制 SQL 草稿',
 }
 const outcomes: Record<string, string> = {
   SUCCESS: '成功',
@@ -49,3 +52,25 @@ const outcomes: Record<string, string> = {
 }
 export const auditActionLabel = (value: unknown) => actions[String(value)] || String(value || '—')
 export const auditOutcomeLabel = (value: unknown) => outcomes[String(value)] || String(value || '—')
+
+export const auditTime = (row: Record<string, any>) => {
+  for (const value of [row.time, row.createdAt]) {
+    const date = new Date(value || '')
+    if (Number.isFinite(date.getTime())) return date
+  }
+  return undefined
+}
+export const auditTimeLabel = (row: Record<string, any>) => {
+  const date = auditTime(row)
+  return date
+    ? new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(date)
+    : '时间未记录'
+}

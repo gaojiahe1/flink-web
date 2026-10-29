@@ -16,6 +16,9 @@ public interface SqlJobService {
   /** 保存尚在编写的 SQL，使用修订号保护并发修改；不要求未完成脚本通过执行检查。 */
   ObjectNode save(String id, SqlDraftRequest input);
 
+  /** 将最新已保存 SQL 与配置复制为独立草稿，不发布或启动。 */
+  ObjectNode copy(String id, com.flinkweb.dto.job.creation.CopyJobRequest input);
+
   /** 读取本作业不可变的 SQL 保存版本，仅查询元数据。 */
   List<ObjectNode> versions(String id);
 

@@ -459,34 +459,14 @@ const time = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN'
       <p class="muted">
         负责人：{{ acl.owner || '旧作业尚未分配' }} · 业务标签：{{ acl.project || '未设置' }}
       </p>
+      <p class="muted">全部账号共享此作业，操作由平台角色限制；负责人和业务标签用于协作归属。</p>
       <form v-if="acl.canManage && developer" @submit.prevent="saveAccess">
         <div class="field-grid">
           <label>负责人账号<input data-field="owner" v-model="acl.owner" required /></label
           ><label
-            >业务标签<input data-field="project" v-model="acl.project" maxlength="100" /></label
-          ><label
-            >只读用户组<input
-              data-field="readGroups"
-              v-model="readGroups"
-              placeholder="多个组标识用逗号分隔" /></label
-          ><label
-            >运行维护用户组<input
-              data-field="operateGroups"
-              v-model="operateGroups"
-              placeholder="允许启停、快照和诊断" /></label
-          ><label
-            >编辑用户组<input
-              data-field="editGroups"
-              v-model="editGroups"
-              placeholder="允许编辑和发布，仍受平台角色限制"
+            >业务标签<input data-field="project" v-model="acl.project" maxlength="100"
           /></label>
         </div>
-        <p class="muted">
-          可见用户组：{{
-            groups.map((g) => g.id + '（' + g.name + '）').join('、') ||
-            '暂无，请在用户与权限中添加'
-          }}
-        </p>
         <label
           >外部监控 / 日志链接<textarea
             data-field="links"

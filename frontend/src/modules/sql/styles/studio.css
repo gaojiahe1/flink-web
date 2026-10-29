@@ -314,15 +314,24 @@
   flex-direction: column;
   gap: 6px;
   padding-top: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .studio-rail button {
   writing-mode: vertical-rl;
+  text-orientation: upright;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
   letter-spacing: 2px;
   background: transparent;
   border: 0;
   border-left: 2px solid transparent;
   color: var(--color-muted);
-  padding: 13px 9px;
+  padding: 10px 5px;
   align-self: stretch;
   font-size: var(--font-small);
 }
@@ -454,6 +463,8 @@
   }
   .studio-rail button {
     writing-mode: horizontal-tb;
+    text-orientation: mixed;
+    width: auto;
     letter-spacing: 0;
     border-left: 0;
     padding: 8px;

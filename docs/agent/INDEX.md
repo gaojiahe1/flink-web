@@ -1,6 +1,6 @@
 # 项目知识索引
 
-更新：2026-10-28。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
+更新：2026-10-29。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |
 | --- | --- | --- | --- |
@@ -12,6 +12,7 @@
 | S3、目录标记、UUID清理、文件、目录、制品、复制、下载器、插件、Kylin、镜像、Dockerfile、BES、Tomcat、OBS、checksum | [REQ-004](requirements/REQ-004-storage-security.md) | [制品与运行文件](modules/storage-runtime.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
 | AI、队列锁顺序、完成事务、日志current/previous、作业助手、统一总结、重启受理清轮、最新SQL/配置、分类取证、Pod资源、Flink异常/JVM/GC、Secret引用、可拖动分栏、大视图、Markdown、持续对话、SQL/YAML修复、确认应用、同号恢复、删除清理、ModelScope | [REQ-003](requirements/REQ-003-sql-session.md) | [AI 助手与模型服务](modules/ai-assistant.md) | [作业AI与受控修复](decisions/ADR-006-job-ai-repair.md) |
 | 权限、登录、密钥、模型服务配置、SQLite、MySQL、迁移、数据源、JDBC、Kafka | [REQ-004](requirements/REQ-004-storage-security.md)；AI 新需求见 [REQ-003](requirements/REQ-003-sql-session.md) | [元数据与权限](modules/metadata-security.md) | [存储与安全边界](decisions/ADR-003-storage-security.md) |
+| 跨账号作业共享、角色限制、审计名称/时间/详情、SQL复制、右侧标签裁切 | [REQ-004](requirements/REQ-004-storage-security.md)、[REQ-003](requirements/REQ-003-sql-session.md) | [元数据与权限](modules/metadata-security.md)、[SQL与Session](modules/sql-session.md)、[UI](modules/ui-design-system.md) | [共享规则替代关系](decisions/ADR-003-storage-security.md) |
 | 治理、清理、记忆、新会话、增量、索引 | [REQ-005](requirements/REQ-005-governance.md) | [工作说明](workflow.md) | [轻量记忆](decisions/ADR-005-memory.md) |
 
 - 项目不熟悉时：[概览](project-overview.md)、[架构](architecture.md)。

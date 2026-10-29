@@ -72,6 +72,13 @@ public class SqlJobController {
   }
 
   /** 检查脚本的基础结构，明确返回 BASIC 校验级别。 */
+  @PostMapping("/jobs/{id}/copy")
+  @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
+  public ApiResponse<ObjectNode> copy(@PathVariable String id, @Valid @RequestBody com.flinkweb.dto.job.creation.CopyJobRequest input) {
+    return ApiResponse.ok(jobs.copy(id, input));
+  }
+
+  /** 检查脚本的基础结构，明确返回 BASIC 校验级别。 */
   @PostMapping("/validate")
   @PreAuthorize("hasAnyRole('ADMIN','DEVELOPER')")
   public ApiResponse<SqlCheckResult> validate(@RequestBody ObjectNode input) {

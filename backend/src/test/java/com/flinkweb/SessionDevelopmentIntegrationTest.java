@@ -199,6 +199,39 @@ class SessionDevelopmentIntegrationTest {
         .put("slots", 2);
   }
 
+  /** 跨账号复制最新草稿，保留未完成 SQL 与配置，不产生集群请求或源作业关联。 */
+  @Test
+  void sqlCopyCreatesIndependentSharedDraftAndChecksRevisionAndRole() throws Exception {
+    String name = "copy-source-" + UUID.randomUUID().toString().substring(0, 8);
+    var options = runtime().put("workspaceId", UUID.randomUUID().toString()).put("upgradeMode", "savepoint");
+    options.putObject("flinkConfiguration").put("pipeline.name", name).put("execution.savepoint.path", "s3://old/state");
+    var source = sql.save(name, new SqlDraftRequest(name, "说明", "SET 'x'='y'; -- 未完成脚本", options, 0));
+    String target = name + "-copy";
+    var body = mapper.createObjectNode().put("name", target).put("revision", source.path("revision").asLong());
+    org.mockito.Mockito.clearInvocations(kubernetes);
+    mvc.perform(post("/api/sql/jobs/" + name + "/copy")
+        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("other-developer").roles("DEVELOPER"))
+        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
+        .contentType("application/json").content(body.toString()))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(target))
+        .andExpect(jsonPath("$.data.jobId").doesNotExist());
+    org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("other-developer", "", org.springframework.security.core.authority.AuthorityUtils.createAuthorityList("ROLE_DEVELOPER")));
+    var copied = sql.get(target);
+    assertThat(copied.path("sql")).isEqualTo(source.path("sql"));
+    assertThat(copied.path("description").asText()).isEqualTo("说明");
+    assertThat(copied.at("/runtime/workspaceId")).isNotEqualTo(source.at("/runtime/workspaceId"));
+    assertThat(copied.at("/runtime/upgradeMode").asText()).isEqualTo("stateless");
+    assertThat(copied.at("/runtime/flinkConfiguration/pipeline.name").asText()).isEqualTo(target);
+    assertThat(copied.at("/runtime/flinkConfiguration/execution.savepoint.path").isMissingNode()).isTrue();
+    assertThat(sql.get(name)).isEqualTo(source);
+    mvc.perform(post("/api/sql/jobs/" + name + "/copy").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()).contentType("application/json").content(body.toString())).andExpect(status().isConflict());
+    body.put("name", target + "-stale").put("revision", 999);
+    mvc.perform(post("/api/sql/jobs/" + name + "/copy").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()).contentType("application/json").content(body.toString())).andExpect(status().isConflict());
+    mvc.perform(post("/api/sql/jobs/" + name + "/copy").with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("viewer").roles("VIEWER")).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()).contentType("application/json").content(body.toString())).andExpect(status().isForbidden());
+    mvc.perform(get("/api/sql/jobs/" + target).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("viewer").roles("VIEWER"))).andExpect(status().isOk());
+    verifyNoInteractions(kubernetes);
+  }
+
   /** 配置转换保留未知字段，固定数量经过保存、启动和 dry-run 后仍有效。 */
   @Test
   void sessionYamlRoundTripPreservesConfigurationAndFixedReplicas() {

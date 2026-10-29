@@ -50,16 +50,18 @@ async function saveGroup() {
     })
     groups.value = await request('/api/platform/groups')
     editGroup()
-    message.value = '用户组已保存，权限变更立即生效。'
+    message.value = '用户组已保存。'
   })
 }
 </script>
 <template>
   <section class="panel form-panel detail-panel">
-    <h3>用户组与作业授权</h3>
+    <h3>用户组</h3>
     <div v-if="error" class="notice error" role="alert">{{ error }}</div>
     <div v-if="message" class="notice" role="status">{{ message }}</div>
-    <p class="muted">平台角色决定功能权限，用户组决定作业范围；在作业详情“归属与链接”中授权。</p>
+    <p class="muted">
+      全部账号共享作业，按管理员、开发、运维、只读角色限制操作。用户组保留为组织信息，不再隔离作业。
+    </p>
     <div class="table-wrap">
       <table>
         <thead>

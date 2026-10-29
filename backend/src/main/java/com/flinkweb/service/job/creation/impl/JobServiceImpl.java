@@ -188,6 +188,7 @@ public class JobServiceImpl implements JobService {
   private void deleteLocked(String id,long revision) {
     access.require(id, "edit");
     var existing = get(id);
+    audit.record("DRAFT_DELETE", id, "SUCCESS");
     if (!repository.delete(id, revision)) throw conflict();
     releaseName(existing.name(), "job:" + id);
     for (var sql : records.list("sql_jobs")) {
@@ -212,7 +213,6 @@ public class JobServiceImpl implements JobService {
     bindings.delete(id);
     var jar = records.find("jar_development", id);
     if (jar != null) records.delete("jar_development", id, jar.path("revision").asLong());
-    audit.record("DRAFT_DELETE", id, "SUCCESS");
     aiJobState.delete(id);
   }
 

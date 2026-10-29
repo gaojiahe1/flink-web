@@ -42,34 +42,25 @@ public class AccessServiceImpl implements AccessService {
         && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
   }
 
-  /** 兼容尚未分配归属的旧数据；新作业默认为创建者私有。 */
+  /** 单工作空间内作业共享可见，操作范围只取决于当前平台角色。 */
   public boolean allowed(String resource, String action) {
     return evaluator().test(resource, action);
   }
 
-  /** 每个请求一次读取权限与组成员，用于批量列表过滤，不跨请求缓存。 */
+  /** 每次请求固定角色快照；历史负责人/用户组保留为元数据，不再隔离作业。 */
   public java.util.function.BiPredicate<String, String> evaluator() {
-    if (admin()) return (resource, action) -> true;
-    String user = actor();
-    Map<String, ObjectNode> rules = new HashMap<>();
-    for (var acl : records.list("access")) rules.put(acl.path("id").asText(), acl);
-    Set<String> memberGroups = new HashSet<>();
-    for (var group : records.list("groups"))
-      for (var member : group.path("members"))
-        if (user.equals(member.asText())) memberGroups.add(group.path("id").asText());
-    return (resource, action) -> {
-      var acl = rules.get(resource);
-      if (acl == null || user.equals(acl.path("owner").asText())) return true;
-      List<String> grants =
-          action.equals("read")
-              ? List.of("readGroups", "operateGroups", "editGroups")
-              : action.equals("operate")
-                  ? List.of("operateGroups", "editGroups")
-                  : List.of("editGroups");
-      for (String grant : grants)
-        for (JsonNode group : acl.path(grant))
-          if (memberGroups.contains(group.asText())) return true;
-      return false;
+    var auth = SecurityContextHolder.getContext().getAuthentication();
+    Set<String> roles = new HashSet<>();
+    if (auth != null && auth.isAuthenticated())
+      auth.getAuthorities().forEach(a -> roles.add(a.getAuthority()));
+    boolean read = roles.stream().anyMatch(Set.of("ROLE_ADMIN", "ROLE_DEVELOPER", "ROLE_OPERATOR", "ROLE_VIEWER")::contains);
+    boolean edit = roles.contains("ROLE_ADMIN") || roles.contains("ROLE_DEVELOPER");
+    boolean operate = edit || roles.contains("ROLE_OPERATOR");
+    return (resource, action) -> switch (action) {
+      case "read" -> read;
+      case "edit" -> edit;
+      case "operate" -> operate;
+      default -> false;
     };
   }
 

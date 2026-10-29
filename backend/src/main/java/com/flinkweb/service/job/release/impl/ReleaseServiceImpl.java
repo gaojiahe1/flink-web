@@ -32,7 +32,7 @@ public class ReleaseServiceImpl implements ReleaseService {
 
   /** 固定本次提交内容，不保存生成 Secret 的明文或密文数据。 */
   public ObjectNode capture(JobDraft job, ObjectNode rendered) {
-    access.require(job.id(), "edit");
+    access.require(job.id(), "operate");
     ObjectNode entry =
         mapper
             .createObjectNode()

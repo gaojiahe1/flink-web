@@ -130,7 +130,7 @@ async function signOut() {
             >MiSans</a
           >
         </div>
-        <span>按需查询 · 配置驱动 · 独立工作空间</span>
+        <span>按需查询 · 配置驱动 · 共享工作空间</span>
       </footer>
     </section>
   </div>

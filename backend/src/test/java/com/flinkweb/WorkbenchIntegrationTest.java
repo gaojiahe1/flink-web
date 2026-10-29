@@ -232,16 +232,14 @@ class WorkbenchIntegrationTest {
     assertThat(jobs.list()).hasSize((int) before);
   }
 
-  /** 列表、直接草稿接口和 Flink UI 都拒绝越权；只读组无法更新草稿。 */
+  /** 不同账号共享作业；旧只读组不降低开发角色，真正只读账号仍不能修改。 */
   @Test
   void aclProtectsDirectEndpointsAndHonorsReadOnlyGroups() throws Exception {
     var job = draft();
     mvc.perform(get("/api/jobs/" + job.id()).with(user("outsider").roles("DEVELOPER")))
-        .andExpect(status().isForbidden());
-    mvc.perform(get("/flink-ui/" + job.id() + "/").with(user("outsider").roles("DEVELOPER")))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isOk());
     actor("outsider", "DEVELOPER");
-    assertThat(jobs.list()).noneMatch(j -> j.id().equals(job.id()));
+    assertThat(jobs.list()).anyMatch(j -> j.id().equals(job.id()));
     records.save(
         "groups",
         "team-" + job.id(),
@@ -251,7 +249,11 @@ class WorkbenchIntegrationTest {
     acl.putArray("readGroups").add("team-" + job.id());
     records.save("access", job.id(), acl, acl.path("revision").asLong());
     assertThat(jobs.get(job.id()).id()).isEqualTo(job.id());
-    assertThat(access.get(job.id()).path("canOperate").asBoolean()).isFalse();
+    assertThat(access.get(job.id()).path("canOperate").asBoolean()).isTrue();
+    mvc.perform(get("/api/platform/job-access").with(user("outsider").roles("DEVELOPER")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data['" + job.id() + "'].canEdit").value(true));
+    actor("outsider", "VIEWER");
     assertThatThrownBy(
             () ->
                 jobs.update(
@@ -260,7 +262,7 @@ class WorkbenchIntegrationTest {
                         job.name(), "forbidden", "1.20.3", job.yaml(), job.revision())))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("权限");
-    mvc.perform(get("/api/platform/job-access").with(user("outsider").roles("DEVELOPER")))
+    mvc.perform(get("/api/platform/job-access").with(user("outsider").roles("VIEWER")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data['" + job.id() + "'].canEdit").value(false));
   }

@@ -1,12 +1,14 @@
 # 元数据、权限与数据管理
 
+2026-10-29：用户确认全部作业共享、按平台角色限制操作，取代创建者/用户组范围隔离；历史access/groups保留，负责人/业务标签/链接仍可维护，界面不再暗示组可隔离作业。AI私有消息/任务归属仍独立。运维启动原资源时ReleaseService.capture要求运行权限，不能编辑/部署草稿；已有运行账号保护通过回归。AuditService统一日志读取审计时间、名称快照与白名单Pod/容器/行数/previous上下文，旧记录读取时用createdAt回退且标明来源，已删除无快照目标不猜名字；管理员审计界面中文动作、可读名称/资源编号、完整时间及原始ID详情。删除作业/SQL的名称在同事务删除前捕获，不保存日志正文。见[本轮验收](../validation.md#共享作业sql复制与审计2026-10-29)。
+
 2026-10-25界面变更：独立数据源页面和SQL插入入口移除；/datasources兼容跳转/catalogs，Catalog内管理员维护MySQL/PostgreSQL连接和密钥引用。沿用datasources存储/API及修订/引用删除保护，不删除既有记录；其他连接器旧数据/API仅兼容保留。网络端口验证移至系统设置，管理员/后端权限及手动触发规则不变。审计动作/结果中文展示并支持中文搜索，原码保留在title，未知码原样显示。平台API与前端包版本均0.0.8，与当前镜像标签一致，回归断言三者约定。
 
 2026-10-20后续：ai_summaries按SQL草稿或JAR生命周期保存唯一总结及待核对项，两入口按授权共享总结、私有消息仍隔离；正文会话不重复保存总结，sharedSummaryRevision绑定读写，模型上下文持总结修订。ai_job_runtime按jobId只留当前一次稳定运行身份；运行成功清旧诊断与删除清理规则见[ADR-006](../decisions/ADR-006-job-ai-repair.md)。两集合复用主体索引，无表迁移；MySQL未新增现场认证。
 
-更新：2026-10-20。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
+更新：2026-10-29。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
-职责：数据库配置/迁移、JSON记录修订控制、登录/角色/用户组/作业ACL、普通配置/密钥、数据源与Catalog元数据。用户登录→一次性挑战→EncryptedLoginFilter/Session→CSRF+角色/ACL；数据修改带revision，用户相关修订使旧会话失效。
+职责：数据库配置/迁移、JSON记录修订控制、登录/角色/协作归属、普通配置/密钥、数据源与Catalog元数据。用户登录→一次性挑战→EncryptedLoginFilter/Session→CSRF+角色；数据修改带revision，用户相关修订使旧会话失效。
 
 2026-10-14：模型服务已在系统设置子页实现，由管理员维护；按任务用途选择，密钥复用一次性传输信封和现有主密钥加密保存，响应不返还正文。目标地址、内网许可与外部发送确认由后端约束；当前作业字段/Connector 草稿不自动登记共享数据源。接口、代码及验证边界见 [AI 模块](ai-assistant.md)，真实厂商接入仍需配置后验收。
 
@@ -14,7 +16,7 @@ SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接�
 
 浏览器敏感字段 RSA-OAEP-SHA256+AES-GCM，挑战绑定会话/用途/目标，120秒且一次消费；后端拒绝这些字段的明文提交。普通SQL/YAML手写内容不自动保护，字段加密不替代HTTPS。普通容器密钥引用实际提交为env.value或保留显式Secret引用；2026-10-12起Flink S3 AK/SK例外，直接在flinkConfiguration展开，既有Secret配置引用按请求读取。均不新建Secret，预览/发布历史各按规则脱敏。
 
-角色与作业范围同时生效：ADMIN管理；DEVELOPER授权范围开发/部署；OPERATOR运行操作但不删平台草稿；VIEWER只读。新作业归创建者，旧无ACL沿用旧角色边界，不能擅自删除兼容路径。
+全部新旧作业共享：ADMIN管理；DEVELOPER开发/部署；OPERATOR运行操作但不编辑配置或删平台草稿；VIEWER只读。负责人和旧组记录保留为元数据，不再影响作业可见性或绕过平台角色。
 
 数据源：MySQL/PostgreSQL JDBC、Kafka/UpsertKafka元数据探测及filesystem/DataGen/Print配置；Catalog内存/JDBC/Hive/Paimon/Iceberg按各自边界初始化。探测不读业务行，不提供远端建删表；JDBC一次最多200库/表、100字段。TCP探测仅管理员3秒超时，不能证明Flink网络连通。Kafka当前PLAINTEXT，SASL/SSL不是已实现能力。
 
@@ -30,6 +32,7 @@ SQLite 默认按文件是否存在建库或迁移，单后端实例锁、连接�
 - [SchemaInitializer.java](../../../backend/src/main/java/com/flinkweb/datasource/metadata/SchemaInitializer.java)
 - [RecordRepository.java](../../../backend/src/main/java/com/flinkweb/repository/metadata/RecordRepository.java)
 - [AccessServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/permission/impl/AccessServiceImpl.java)
+- [AuditServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/audit/impl/AuditServiceImpl.java)、[AuditServiceTest.java](../../../backend/src/test/java/com/flinkweb/service/AuditServiceTest.java)、[SharedWorkspaceAccessTest.java](../../../backend/src/test/java/com/flinkweb/service/permission/impl/SharedWorkspaceAccessTest.java)
 - [SecretTransportServiceImpl.java](../../../backend/src/main/java/com/flinkweb/service/permission/impl/SecretTransportServiceImpl.java)
 - [EncryptedLoginFilter.java](../../../backend/src/main/java/com/flinkweb/security/permission/EncryptedLoginFilter.java)
 - [VariableRenderer.java](../../../backend/src/main/java/com/flinkweb/service/job/creation/support/VariableRenderer.java)

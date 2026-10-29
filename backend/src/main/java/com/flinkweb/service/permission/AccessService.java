@@ -11,10 +11,10 @@ public interface AccessService {
   /** 判断当前账号是否拥有管理员角色。 */
   boolean admin();
 
-  /** 兼容尚未分配归属的旧数据；新作业默认为创建者私有。 */
+  /** 单工作空间全部作业共享，按平台角色核验读取/编辑/运行操作。 */
   boolean allowed(String resource, String action);
 
-  /** 每个请求一次读取权限与组成员，用于批量列表过滤，不跨请求缓存。 */
+  /** 每个请求取得角色快照，用于批量列表过滤，不跨请求缓存。 */
   java.util.function.BiPredicate<String, String> evaluator();
 
   /** 对直接 API 调用执行与列表一致的范围校验。 */
