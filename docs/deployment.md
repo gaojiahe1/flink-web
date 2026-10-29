@@ -2,6 +2,8 @@
 
 ## Flink AI Harness（2026-10-29）
 
+功能提交 `093583f` 经验证发布后快进合并本地master，无冲突/新增代码差异，源码Git未推送。独占验证容器/网络、推送别名、三个临时镜像、六条新增私有缓存及两个测试服务已清理；正式镜像/共享缓存/原registry保留，独占工作目录在最终核对后清理。
+
 app/web沿用0.0.8，从正式Dockerfile和干净Kylin基础构建，Parser/Runner/Nginx沿用已核对的原版制品；不更新latest/downloader，不操作实际Kubernetes工作负载。新菜单“AI工作台”支持独立私有会话、原生工具/SSE、确认后保存/重启及删除清理，首期能力和边界见 [模块](agent/modules/agent-harness.md)。
 
 无需数据库迁移或新增必填环境变量，仍限单后端实例。模型使用已有管理入口，选择支持原生tool_calls及stream的Chat Completions模型；不支持流式的厂商可返回完整JSON，但仍须符合完整终止/工具协议。外部模型按轮明确授权，日志单独授权；既有旧助手保留。
