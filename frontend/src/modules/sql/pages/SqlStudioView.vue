@@ -190,9 +190,10 @@ function clampInspector(width = inspectorWidth.value) {
     sideTab.value === 'ai'
       ? 0
       : parseFloat(getComputedStyle(element).getPropertyValue('--explorer-width'))
+  const rail = parseFloat(getComputedStyle(element).getPropertyValue('--studio-rail-width'))
   inspectorMax.value = Math.max(
     220,
-    Math.min(sideTab.value === 'ai' ? 1400 : 860, element.clientWidth - explorer - 42 - 8 - 320),
+    Math.min(sideTab.value === 'ai' ? 1400 : 860, element.clientWidth - explorer - rail - 8 - 320),
   )
   inspectorWidth.value = Math.round(
     Math.min(inspectorMax.value, Math.max(Math.min(300, inspectorMax.value), width)),
@@ -1438,37 +1439,43 @@ watch(
     <nav class="studio-rail" aria-label="SQL 辅助面板">
       <button
         v-if="editable"
+        aria-label="AI 助手"
         :class="{ active: sideTab === 'ai' }"
         :aria-expanded="sideTab === 'ai'"
         @click="sideTab = sideTab === 'ai' ? '' : 'ai'"
       >
-        AI 助手
+        <span class="studio-tab-word">AI</span><span class="studio-tab-vertical">助手</span>
       </button>
       <button
+        aria-label="部署配置"
         :class="{ active: sideTab === 'runtime' }"
         :aria-expanded="sideTab === 'runtime'"
         @click="sideTab = sideTab === 'runtime' ? '' : 'runtime'"
       >
-        部署配置</button
+        <span class="studio-tab-vertical">部署配置</span></button
       ><button
         v-if="editable"
+        aria-label="UDF 函数"
         :class="{ active: sideTab === 'udf' }"
         :aria-expanded="sideTab === 'udf'"
         @click="sideTab = sideTab === 'udf' ? '' : 'udf'"
       >
-        UDF 函数</button
+        <span class="studio-tab-word">UDF</span
+        ><span class="studio-tab-vertical">函数</span></button
       ><button
+        aria-label="版本历史"
         :class="{ active: sideTab === 'history' }"
         :aria-expanded="sideTab === 'history'"
         @click="sideTab = sideTab === 'history' ? '' : 'history'"
       >
-        版本历史</button
+        <span class="studio-tab-vertical">版本历史</span></button
       ><button
+        aria-label="Catalog"
         :class="{ active: sideTab === 'catalogs' }"
         :aria-expanded="sideTab === 'catalogs'"
         @click="sideTab = sideTab === 'catalogs' ? '' : 'catalogs'"
       >
-        Catalog
+        <span class="studio-tab-word studio-tab-catalog">Catalog</span>
       </button>
     </nav>
   </section>

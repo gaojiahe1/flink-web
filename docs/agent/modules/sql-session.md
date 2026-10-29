@@ -1,6 +1,6 @@
 # SQL 与 Session
 
-2026-10-29：SQL作业行复制通过`POST /api/sql/jobs/{id}/copy`（name、源SQL revision）生成独立草稿，成功返回完整新SQL记录并定位开发页；普通JAR复制端点仍拒绝SQL，避免丢关联。SqlJobService.copy与[SqlDraftCopySupport](../../../backend/src/main/java/com/flinkweb/service/sql/support/SqlDraftCopySupport.java)保留最新已保存SQL/UDF/Catalog配置、复制UUID专属依赖、清旧身份/触发器/恢复点并重建独立状态路径。外部文件复制/验证不入数据库事务，短事务重复核源修订、占名/保存/审计；失败仅清新UUID。复制不继承jobId、历史或总结，不要求未完成SQL通过Parser，也不自动发布/运行。右侧标签upright且不缩小，短屏轨道独立滚动。回归：[SQL复制目录](../../../backend/src/test/java/com/flinkweb/service/SqlDraftCopySupportTest.java)、[页面专项](../../../frontend/tests/sql-sharing-audit.spec.ts)及SessionDevelopmentIntegrationTest。
+2026-10-29：SQL作业行复制通过`POST /api/sql/jobs/{id}/copy`（name、源SQL revision）生成独立草稿，成功返回完整新SQL记录并定位开发页；普通JAR复制端点仍拒绝SQL，避免丢关联。SqlJobService.copy与[SqlDraftCopySupport](../../../backend/src/main/java/com/flinkweb/service/sql/support/SqlDraftCopySupport.java)保留最新已保存SQL/UDF/Catalog配置、复制UUID专属依赖、清旧身份/触发器/恢复点并重建独立状态路径。外部文件复制/验证不入数据库事务，短事务重复核源修订、占名/保存/审计；失败仅清新UUID。复制不继承jobId、历史或总结，不要求未完成SQL通过Parser，也不自动发布/运行。右侧使用圆角竖签，AI/UDF整词横排、Catalog整词侧排，短屏轨道独立滚动；轨道宽度由CSS变量同时参与网格与辅助栏拖动上限计算，保留SQL正文空间。回归：[SQL复制目录](../../../backend/src/test/java/com/flinkweb/service/SqlDraftCopySupportTest.java)、[页面专项](../../../frontend/tests/sql-sharing-audit.spec.ts)及SessionDevelopmentIntegrationTest。
 
 2026-10-27全站UI：工作台与表单密度见 [UI设计系统](ui-design-system.md)。SQL辅助栏调整时优先给正文保留320px，中等屏幕缩窄草稿栏，必要时同步降低辅助栏最小宽度；删除当前草稿成功后重置空编辑状态与地址，不再遗留旧内容或强行打开新建窗口。取消/失败保留原文，删除其他草稿保留当前未保存内容。
 

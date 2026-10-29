@@ -65,53 +65,77 @@ test('SQL 作业可复制最新草稿，取消和失败保留原作业，成功�
   expect(f.errors).toEqual([])
 })
 
-test('SQL 右侧标签完整显示，短屏可独立滚动，普通及全屏均可切换', async ({ page }) => {
-  await platformFixture(page)
-  for (const size of [
-    { width: 1440, height: 900 },
-    { width: 1280, height: 560 },
-    { width: 900, height: 650 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(size)
-    await page.goto('/#/sql?draft=s')
-    const rail = page.getByRole('navigation', { name: 'SQL 辅助面板' })
-    await expect(rail.getByRole('button', { name: 'Catalog', exact: true })).toBeVisible()
-    for (const label of ['AI 助手', '部署配置', 'UDF 函数', '版本历史', 'Catalog']) {
-      const button = rail.getByRole('button', { name: label, exact: true })
-      await button.scrollIntoViewIfNeeded()
-      const dimensions = await button.evaluate((el) => {
-        const range = document.createRange()
-        range.selectNodeContents(el)
-        const text = range.getBoundingClientRect(),
-          box = el.getBoundingClientRect()
-        return {
-          overflow: Math.max(el.scrollWidth - el.clientWidth, el.scrollHeight - el.clientHeight),
-          left: text.left - box.left,
-          right: box.right - text.right,
+for (const theme of ['mist', 'pearl', 'dark'])
+  test(`SQL 圆角竖向标签、英文整词及全屏切换 ${theme}`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('flink-ui-theme', value), theme)
+    await platformFixture(page)
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1280, height: 560 },
+      { width: 900, height: 650 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(size)
+      await page.goto('/#/sql?draft=s')
+      const rail = page.getByRole('navigation', { name: 'SQL 辅助面板' })
+      await expect(rail.getByRole('button', { name: 'Catalog', exact: true })).toBeVisible()
+      for (const label of ['AI 助手', '部署配置', 'UDF 函数', '版本历史', 'Catalog']) {
+        const button = rail.getByRole('button', { name: label, exact: true })
+        await button.scrollIntoViewIfNeeded()
+        const dimensions = await button.evaluate((el) => {
+          const range = document.createRange()
+          range.selectNodeContents(el)
+          const text = range.getBoundingClientRect(),
+            box = el.getBoundingClientRect()
+          return {
+            overflow: Math.max(el.scrollWidth - el.clientWidth, el.scrollHeight - el.clientHeight),
+            left: text.left - box.left,
+            right: box.right - text.right,
+          }
+        })
+        expect(dimensions.overflow).toBeLessThanOrEqual(1)
+        expect(dimensions.left, JSON.stringify({ size, label, dimensions })).toBeGreaterThanOrEqual(
+          0,
+        )
+        expect(
+          dimensions.right,
+          JSON.stringify({ size, label, dimensions }),
+        ).toBeGreaterThanOrEqual(0)
+        const appearance = await button.evaluate((el) => {
+          const style = getComputedStyle(el)
+          return {
+            radius: parseFloat(style.borderRadius),
+            gap: parseFloat(getComputedStyle(el.parentElement!).gap),
+            word: el.querySelector('.studio-tab-word')?.textContent,
+            wordHeight: el.querySelector('.studio-tab-word')?.getBoundingClientRect().height,
+            writing: el.querySelector('.studio-tab-word')
+              ? getComputedStyle(el.querySelector('.studio-tab-word')!).writingMode
+              : undefined,
+          }
+        })
+        expect(appearance.radius).toBeGreaterThanOrEqual(8)
+        expect(appearance.gap).toBeGreaterThanOrEqual(6)
+        if (appearance.word) {
+          const sideways = appearance.word === 'Catalog' && size.width > 640
+          expect(appearance.wordHeight).toBeLessThanOrEqual(sideways ? 65 : 17)
+          expect(appearance.writing).toBe(sideways ? 'vertical-rl' : 'horizontal-tb')
         }
-      })
-      expect(dimensions.overflow).toBeLessThanOrEqual(1)
-      expect(dimensions.left, JSON.stringify({ size, label, dimensions })).toBeGreaterThanOrEqual(0)
-      expect(dimensions.right, JSON.stringify({ size, label, dimensions })).toBeGreaterThanOrEqual(
-        0,
+      }
+      await rail.getByRole('button', { name: 'Catalog', exact: true }).click()
+      await expect(rail.getByRole('button', { name: 'Catalog', exact: true })).toHaveAttribute(
+        'aria-expanded',
+        'true',
       )
+      await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
+      await rail.getByRole('button', { name: '版本历史', exact: true }).scrollIntoViewIfNeeded()
+      await rail.getByRole('button', { name: '版本历史', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'SQL 历史对比' })).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        size.width,
+      )
+      await page.getByRole('button', { name: '退出全屏', exact: true }).click()
     }
-    await rail.getByRole('button', { name: 'Catalog', exact: true }).click()
-    await expect(rail.getByRole('button', { name: 'Catalog', exact: true })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    await page.getByRole('button', { name: '全屏编辑', exact: true }).click()
-    await rail.getByRole('button', { name: '版本历史', exact: true }).scrollIntoViewIfNeeded()
-    await rail.getByRole('button', { name: '版本历史', exact: true }).click()
-    await expect(page.getByRole('region', { name: 'SQL 历史对比' })).toBeVisible()
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
-      size.width,
-    )
-    await page.getByRole('button', { name: '退出全屏', exact: true }).click()
-  }
-})
+  })
 
 test('审计显示名称、编号、中文动作和完整时间，旧记录回退明确，日志上下文可查看', async ({
   page,
