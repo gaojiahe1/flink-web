@@ -1,5 +1,7 @@
 # 项目知识索引
 
+Harness、原生工具、SSE流式对话、执行计划、六层能力、会话删除与批准实施：先读 [Flink AI Harness](modules/agent-harness.md) 及 [ADR-008](decisions/ADR-008-agent-harness.md)，关联 REQ-003。
+
 更新：2026-10-29。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |

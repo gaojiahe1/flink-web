@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { clearSession, ensureAuth } from '../../modules/permission/stores/auth'
+import { clearSession, currentUser, ensureAuth } from '../../modules/permission/stores/auth'
 import MainLayout from '../layouts/MainLayout.vue'
 
 const router = createRouter({
@@ -24,6 +24,7 @@ const router = createRouter({
           component: () => import('../../modules/flink-catalog/pages/FlinkCatalogsView.vue'),
         },
         { path: 'sql', component: () => import('../../modules/sql/pages/SqlStudioView.vue') },
+        { path: 'ai', component: () => import('../../modules/ai/pages/AiHarnessView.vue') },
         {
           path: 'jar',
           component: () => import('../../modules/job-creation/pages/JarDevelopmentView.vue'),
@@ -83,7 +84,18 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach(async (to) => (to.path !== '/login' && !(await ensureAuth()) ? '/login' : true))
+router.beforeEach(async (to) => {
+  if (to.path === '/login') return true
+  if (!(await ensureAuth())) return '/login'
+  if (
+    to.path === '/ai' &&
+    !currentUser.value?.roles.some((role) =>
+      ['ROLE_ADMIN', 'ROLE_DEVELOPER', 'ROLE_OPERATOR'].includes(role),
+    )
+  )
+    return '/jobs'
+  return true
+})
 window.addEventListener('session-expired', () => {
   clearSession()
   void router.replace('/login')

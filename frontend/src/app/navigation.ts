@@ -8,6 +8,7 @@ import {
   Users,
   ScrollText,
   Database,
+  Bot,
 } from '@lucide/vue'
 import type { Component } from 'vue'
 
@@ -16,6 +17,7 @@ export interface NavigationItem {
   title: string
   icon: Component
   adminOnly?: boolean
+  roles?: string[]
 }
 export interface NavigationGroup {
   title: string
@@ -26,6 +28,12 @@ export const navigationGroups: NavigationGroup[] = [
   {
     title: '开发与运维',
     items: [
+      {
+        path: '/ai',
+        icon: Bot,
+        title: 'AI 工作台',
+        roles: ['ROLE_ADMIN', 'ROLE_DEVELOPER', 'ROLE_OPERATOR'],
+      },
       { path: '/sql', icon: Code, title: 'SQL 开发' },
       { path: '/jar', icon: Box, title: 'JAR 开发' },
       { path: '/jobs', icon: Activity, title: '作业管理' },

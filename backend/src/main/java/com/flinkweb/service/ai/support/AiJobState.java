@@ -30,10 +30,20 @@ public class AiJobState {
         if (jobId.equals(record.path("jobId").asText()))
           records.delete(collection, record.path("id").asText(), record.path("revision").asLong());
     events.publishEvent(new Deleted(jobId));
+    events.publishEvent(new Purged(jobId));
   }
 
   /** 通知模型任务中断；已删除记录不得由迟到回调重新创建。 */
   public record Deleted(String jobId) {}
+
+  /** 只有作业实际删除才清理独立会话；旧助手轮次重置不属于领域删除。 */
+  public record Purged(String jobId) {}
+
+  /** SQL 草稿删除时通知独立 Harness 清理，调用方已持生命周期锁与短事务。 */
+  public void sqlDeleted(String sqlId) { events.publishEvent(new SqlDeleted(sqlId)); }
+
+  /** 同名新草稿不能复用已删除草稿的 Harness 数据。 */
+  public record SqlDeleted(String sqlId) {}
 
   /** 重启受理或实际保存内容改变即结束旧轮次；未知应用保留原号恢复入口。 */
   public com.fasterxml.jackson.databind.node.ObjectNode synchronize(String jobId,com.fasterxml.jackson.databind.node.ObjectNode baseline) {

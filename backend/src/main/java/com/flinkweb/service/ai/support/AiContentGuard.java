@@ -34,6 +34,19 @@ public class AiContentGuard {
     return redact(text, secretSnapshot());
   }
 
+  /** 每轮固定局部密钥快照；保留足够尾部，避免分片尚未组齐时泄漏登记密钥前缀。 */
+  public java.util.function.BiFunction<String,Boolean,String> streamingRedactor() {
+    var keys=secretSnapshot();
+    int hold=Math.max(256,keys.stream().mapToInt(String::length).max().orElse(0)+256);
+    return (text,complete)->{
+      String safe=redact(text,keys).replaceAll("(?s)-----BEGIN [^-]*PRIVATE KEY-----.*$","[REDACTED PRIVATE KEY]");
+      if(complete)return safe;
+      int end=safe.length()-hold;if(end<=0)return "";
+      while(end>0&&!Character.isWhitespace(safe.charAt(end-1)))end--;
+      return safe.substring(0,end);
+    };
+  }
+
   /** 每次公开脱敏调用仅建立一次局部快照，不保留长期明文缓存。 */
   private List<String> secretSnapshot() {
     var keys = new ArrayList<String>();

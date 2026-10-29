@@ -32,7 +32,9 @@ const visibleGroups = computed(() =>
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => !item.adminOnly || currentUser.value?.roles.includes('ROLE_ADMIN'),
+        (item) =>
+          (!item.adminOnly || currentUser.value?.roles.includes('ROLE_ADMIN')) &&
+          (!item.roles || item.roles.some((role) => currentUser.value?.roles.includes(role))),
       ),
     }))
     .filter((group) => group.items.length),

@@ -118,9 +118,9 @@ public class RecordRepository {
       }
       throw ex;
     }
-    if (java.util.Set.of("releases", "snapshots", "operations", "sql_versions", "ai_tasks", "ai_job_conversations", "ai_job_evidence", "ai_job_plans", "ai_job_applications", "ai_summaries", "ai_job_runtime")
+    if (java.util.Set.of("releases", "snapshots", "operations", "sql_versions", "ai_tasks", "ai_job_conversations", "ai_job_evidence", "ai_job_plans", "ai_job_applications", "ai_summaries", "ai_job_runtime", "ai_harness_sessions", "ai_harness_turns", "ai_harness_plans", "ai_harness_applications")
         .contains(collection)) {
-      String subject = node.path(collection.equals("sql_versions") ? "sqlId" : "jobId").asText();
+      String subject = node.path(collection.equals("sql_versions") ? "sqlId" : collection.startsWith("ai_harness_")&&!collection.equals("ai_harness_sessions")?"sessionId":"jobId").asText();
       jdbc.update(
           "DELETE FROM platform_record_subjects WHERE collection=? AND record_id=?",
           collection,

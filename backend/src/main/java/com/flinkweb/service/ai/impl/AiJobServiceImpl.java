@@ -274,6 +274,10 @@ public class AiJobServiceImpl implements AiJobService {
 
   /** 原应用未确认时先核对原号，防止后续方案覆盖并裁剪恢复入口。 */
   private void requireSettledApplication(String jobId) {
+    for(var pending:records.list("ai_harness_applications"))if(jobId.equals(pending.path("jobId").asText())){
+      String status=pending.path("state").asText();var operation=records.find("operations",pending.path("operationId").asText());if(operation!=null)status=operation.path("state").asText();
+      if(Set.of("SAVING","SUBMITTING","UNKNOWN").contains(status)||(status.equals("SAVED")&&pending.path("mode").asText().equals("restart")))conflict("AI 工作台存在待核对的运行提交，请先核对原申请");
+    }
     for(var pending:records.listForSubject("ai_job_applications",jobId)) {
       if(!access.actor().equals(pending.path("owner").asText())) continue;
       String status=pending.path("state").asText();

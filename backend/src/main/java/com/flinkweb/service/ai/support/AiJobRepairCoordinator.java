@@ -163,15 +163,28 @@ public class AiJobRepairCoordinator {
 
   /** 同号应用先记录意图，数据库保存原子完成，集群提交按独立阶段记录并核对原操作。 */
   public ObjectNode apply(String jobId,ObjectNode plan,ObjectNode input,Principal actor) {
+    return applyScope(jobId,plan,input,actor,"ai_job_plans","ai_job_applications");
+  }
+
+  /** Harness 使用独立的方案与应用集合，复用完全相同的身份、幂等和运行边界。 */
+  public ObjectNode applyHarness(String jobId,ObjectNode plan,ObjectNode input,Principal actor) {
+    return applyScope(jobId,plan,input,actor,"ai_harness_plans","ai_harness_applications");
+  }
+
+  /** 新会话的 SQL 候选沿用原 AI 语句白名单和基础检查。 */
+  public void validateHarnessSql(String script) { validateSql(script); }
+
+  /** 集合名称由受信入口固定，不能由模型或浏览器提供。 */
+  private ObjectNode applyScope(String jobId,ObjectNode plan,ObjectNode input,Principal actor,String plansCollection,String applicationsCollection) {
     access.require(jobId,"edit");
     String id=input.path("requestId").asText(), mode=input.path("mode").asText();
     if(!id.matches("[a-f0-9-]{36}") || !Set.of("save","restart").contains(mode)) fail("AI_INVALID_APPLICATION","应用请求标识或方式无效");
     String fingerprint=SqlDeploymentSource.hash(plan.path("id").asText()+input.toString());
-    var old=records.find("ai_job_applications",id);
+    var old=records.find(applicationsCollection,id);
     if(old!=null) {
       requireOwner(old,jobId);
       if(!fingerprint.equals(old.path("fingerprint").asText())) conflict("应用请求号已用于其他内容");
-      if(mode.equals("restart") && Set.of("SAVED","SUBMITTING","UNKNOWN").contains(old.path("state").asText())) return submit(old,actor);
+      if(mode.equals("restart") && Set.of("SAVED","SUBMITTING","UNKNOWN").contains(old.path("state").asText())) return submit(old,actor,applicationsCollection);
       if(!old.path("state").asText().equals("SAVING")) return visible(old);
     }
     if(plan.hasNonNull("applicationId") && !id.equals(plan.path("applicationId").asText())) conflict("本方案已提交应用，请核对原应用记录；再次修改需要重新生成方案");
@@ -207,13 +220,14 @@ public class AiJobRepairCoordinator {
     var application=mapper.createObjectNode().put("jobId",jobId).put("owner",access.actor()).put("planId",plan.path("id").asText())
         .put("mode",mode).put("fingerprint",fingerprint).put("state","SAVING").put("message","正在保存已确认的修改");
     application.set("request",input.deepCopy());
+    if(plansCollection.equals("ai_harness_plans"))application.put("sessionId",plan.path("sessionId").asText()).put("turnId",plan.path("turnId").asText());
     if(live!=null) application.put("expectedUid",live.isMissingNode()?"":live.at("/metadata/uid").asText())
         .put("expectedSpecHash",live.isMissingNode()?"":com.flinkweb.service.job.creation.support.JobResourceFingerprint.hash(live.path("spec")));
     if(old==null) {
       final var intent=application;
       application=transaction.execute(status->{
-        var savedIntent=records.save("ai_job_applications",id,intent,0);
-        records.save("ai_job_plans",plan.path("id").asText(),plan.put("applicationId",id),plan.path("revision").asLong());
+        var savedIntent=records.save(applicationsCollection,id,intent,0);
+        records.save(plansCollection,plan.path("id").asText(),plan.put("applicationId",id),plan.path("revision").asLong());
         return savedIntent;
       });
     } else application=old;
@@ -235,39 +249,49 @@ public class AiJobRepairCoordinator {
           draft=jobs.update(jobId,new DraftRequest(draft.name(),draft.description(),draft.flinkVersion(),yaml.dump(runtime),draft.revision()));
         }
         intent.put("savedJobRevision",draft.revision()).put("state","SAVED").put("message",mode.equals("save")?"草稿已保存，当前运行实例未变更":"草稿已保存并发布，尚未提交运行操作");
-        records.save("ai_job_applications",id,intent,intent.path("revision").asLong());
+        records.save(applicationsCollection,id,intent,intent.path("revision").asLong());
         return draft;
       });
-      application=records.require("ai_job_applications",id);
+      application=records.require(applicationsCollection,id);
       if(mode.equals("restart")) {
-        return submit(application,actor);
+        return submit(application,actor,applicationsCollection);
       }
     } catch(RuntimeException error) {
       application.put("state",application.has("operationId")?"UNKNOWN":"FAILED")
           .put("message",error instanceof BusinessException?error.getMessage():"应用未完成，请核对已保存草稿与原操作后重试");
     }
-    return visible(records.save("ai_job_applications",id,application,application.path("revision").asLong()));
+    return visible(records.save(applicationsCollection,id,application,application.path("revision").asLong()));
   }
 
   /** 恢复只重用同一个运行操作号与已保存修订，不重复保存或创建第二次部署。 */
-  private ObjectNode submit(ObjectNode application,Principal actor) {
+  private ObjectNode submit(ObjectNode application,Principal actor,String applicationsCollection) {
     String id=application.path("id").asText(),jobId=application.path("jobId").asText();
     access.require(jobId,"operate");
     String operationId=UUID.nameUUIDFromBytes((id+":deploy").getBytes(StandardCharsets.UTF_8)).toString();
     application.put("operationId",operationId).put("state","SUBMITTING").put("message","草稿已保存并发布，正在核对并提交原运行操作");
-    application=records.save("ai_job_applications",id,application,application.path("revision").asLong());
+    application=records.save(applicationsCollection,id,application,application.path("revision").asLong());
     try {
       var command=mapper.createObjectNode().put("revision",application.path("savedJobRevision").asLong()).put("requestId",operationId)
           .put("expectedUid",application.path("expectedUid").asText()).put("expectedSpecHash",application.path("expectedSpecHash").asText());
       var operation=operations.execute(jobId,"deploy",command,actor);
       application.put("state",operation.path("state").asText()).put("message",operation.path("message").asText());
     } catch(RuntimeException error) { application.put("state","UNKNOWN").put("message","运行提交尚未确认，请核对原操作号后继续；不会重放草稿保存"); }
-    return visible(records.save("ai_job_applications",id,application,application.path("revision").asLong()));
+    return visible(records.save(applicationsCollection,id,application,application.path("revision").asLong()));
   }
 
   /** 返回自己的应用记录；不暴露内部幂等指纹。 */
   public ObjectNode application(String jobId,String id) {
-    var record=records.require("ai_job_applications",id);requireOwner(record,jobId);
+    return applicationScope(jobId,id,"ai_job_applications");
+  }
+
+  /** Harness 原号核对只访问它自己的应用记录。 */
+  public ObjectNode harnessApplication(String jobId,String id) {
+    return applicationScope(jobId,id,"ai_harness_applications");
+  }
+
+  /** 核对本地原运行操作，不隐式重新提交。 */
+  private ObjectNode applicationScope(String jobId,String id,String collection) {
+    var record=records.require(collection,id);requireOwner(record,jobId);
     if(record.has("operationId")) {
       var operation=records.find("operations",record.path("operationId").asText());
       if(operation!=null) record.put("state",operation.path("state").asText()).put("message",operation.path("message").asText());

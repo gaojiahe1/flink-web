@@ -41,6 +41,7 @@ public class SqlJobServiceImpl implements SqlJobService {
   private final com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml;
   private final org.springframework.transaction.support.TransactionTemplate transactions;
   private final com.flinkweb.service.sql.support.SqlDraftCopySupport copies;
+  private final com.flinkweb.service.ai.support.AiJobState aiState;
 
   /** 注入草稿持久化、SQL 基础校验及部署渲染依赖。 */
   public SqlJobServiceImpl(
@@ -58,7 +59,9 @@ public class SqlJobServiceImpl implements SqlJobService {
       com.flinkweb.service.sql.support.SqlRuntimeArtifacts runtimeArtifacts,
       com.flinkweb.service.job.creation.support.RuntimeYamlMapper runtimeYaml,
       org.springframework.transaction.PlatformTransactionManager transactionManager,
-      com.flinkweb.service.sql.support.SqlDraftCopySupport copies) {
+      com.flinkweb.service.sql.support.SqlDraftCopySupport copies,
+      com.flinkweb.service.ai.support.AiJobState aiState) {
+    this.aiState=aiState;
     this.copies = copies;
     this.transactions =
         new org.springframework.transaction.support.TransactionTemplate(transactionManager);
@@ -313,8 +316,14 @@ public class SqlJobServiceImpl implements SqlJobService {
   }
 
   /** 已发布草稿需先从作业管理移除对应部署登记，防止孤立运行资源。 */
-  @Transactional
   public void delete(String id, long revision) {
+    synchronized(aiState.monitor()) {
+      transactions.executeWithoutResult(status->deleteLocked(id,revision));
+    }
+  }
+
+  /** 生命周期锁先于 SQLite 事务，关联会话与索引在同一删除事务内清理。 */
+  private void deleteLocked(String id,long revision) {
     access.require("sql:" + id, "edit");
     var record = get(id);
     if (jobRepository.findById(record.path("jobId").asText()).isPresent())
@@ -322,6 +331,7 @@ public class SqlJobServiceImpl implements SqlJobService {
           HttpStatus.CONFLICT, "SQL_DEPLOYMENT_EXISTS", "请先在作业管理删除对应集群资源和平台草稿，再删除 SQL 草稿");
     audit.record("SQL_DELETE", id, "SUCCESS");
     records.delete("sql_jobs", id, revision);
+    aiState.sqlDeleted(id);
     for (String collection : List.of("ai_summaries", "ai_conversations", "ai_tasks"))
       for (var associated : records.list(collection))
         if (id.equals(associated.path("sqlId").asText()))

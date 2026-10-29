@@ -1,8 +1,25 @@
 # Flink Web 部署指南
 
-更新：2026-10-28。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+## Flink AI Harness（2026-10-29）
 
-当前web已按SQL圆角辅助标签覆盖发布0.0.8，app保持同日共享作业/SQL复制/审计版本，downloader不变；本轮未更新实际工作负载。最新结果见 [本轮发布](#sql圆角辅助标签2026-10-29)，历史结果各自保留。
+app/web沿用0.0.8，从正式Dockerfile和干净Kylin基础构建，Parser/Runner/Nginx沿用已核对的原版制品；不更新latest/downloader，不操作实际Kubernetes工作负载。新菜单“AI工作台”支持独立私有会话、原生工具/SSE、确认后保存/重启及删除清理，首期能力和边界见 [模块](agent/modules/agent-harness.md)。
+
+无需数据库迁移或新增必填环境变量，仍限单后端实例。模型使用已有管理入口，选择支持原生tool_calls及stream的Chat Completions模型；不支持流式的厂商可返回完整JSON，但仍须符合完整终止/工具协议。外部模型按轮明确授权，日志单独授权；既有旧助手保留。
+
+非root10001/只读根/临时SQLite镜像验证通过；临时目录需允许SQLite加载原生库，不使用noexec挂载。真实BES/Nginx/浏览器通过隔离HTTP工具模型完成两轮SQL需求确认、候选检查、审阅保存、删除会话并保留SQL草稿。最终镜像9项相关回归通过，先前同制品页面回归172通过/1条件跳过；实际Flink重启及厂商模型质量不属于此次现场验证。见 [验收](agent/validation.md#flink-ai-harness2026-10-29)。
+
+经已确认的localhost:15000同一仓库映射推送，从指定192.168.68.1:5000核对manifest正文/响应摘要、config、全部压缩层大小/SHA-256与解压diff_id一致：
+
+| 组件 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.8 | `sha256:1623639268121dec1f1b17c3edc262cd785e2f1384a701f9b2f9d97273605f5f` | `sha256:ee1d4d15a53543ebb14b8a65a1fb42b47096424994f55e9f47e750217aa47a23` | 283701878 | 11 |
+| web:0.0.8 | `sha256:245fa90e8a2b23d9f0713d52765694c55678812bb460f0c9994d3e0e9721b0a5` | `sha256:3d066307dbb884bd45fcf4e93fad2e2f02a9b7e1895b79704eaa93ccf749efe1` | 116017770 | 8 |
+
+逻辑字节app586557090/web315827109。实际部署须重新拉取app/web:0.0.8并核对imageID，覆盖标签不会自行更新正在运行的平台。提交合并及独占验证资源清理见验收记录；正式镜像、原registry与共享数据保留。
+
+更新：2026-10-29。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+
+当前app/web已按Flink AI Harness覆盖发布0.0.8，downloader不变；本轮未更新实际工作负载。最新结果见 [本轮发布](#flink-ai-harness2026-10-29)，历史结果各自保留。
 
 ## SQL圆角辅助标签（2026-10-29）
 
