@@ -33,8 +33,7 @@ const error = ref(''),
   connection = ref(''),
   busy = ref(false),
   collapsed = ref(false)
-const allowExternal = ref(false),
-  includeLogs = ref(false),
+const includeLogs = ref(false),
   transcript = ref<HTMLElement>()
 const creating = ref(false),
   kind = ref<HarnessSession['kind']>('diagnosis'),
@@ -66,7 +65,6 @@ const selectedModel = computed(() =>
 )
 const turns = computed(() => session.value?.turns || [])
 const active = computed(() => turns.value.find(activeHarnessTurn))
-const requirementsId = ref('')
 let source: EventSource | undefined,
   selection = 0,
   disposed = false
@@ -139,7 +137,6 @@ async function select(id: string) {
   const token = ++selection
   stopStream()
   error.value = ''
-  requirementsId.value = ''
   pending = undefined
   busy.value = true
   try {
@@ -148,7 +145,6 @@ async function select(id: string) {
     session.value = value
     if (!availableModels.value.some((model) => model.id === modelId.value))
       modelId.value = availableModels.value[0]?.id || ''
-    allowExternal.value = false
     const running = value.turns?.find(activeHarnessTurn)
     if (running) connect(running)
     await scrollIfNear(true)
@@ -234,10 +230,6 @@ async function remove(item: HarnessSession) {
 }
 async function send(requirementTurn?: HarnessTurn) {
   if (!session.value || busy.value || active.value || !selectedModel.value) return
-  if (selectedModel.value.external && !allowExternal.value) {
-    error.value = '请先勾选本轮外部模型授权。'
-    return
-  }
   const id = session.value.id,
     token = selection
   if (
@@ -261,7 +253,7 @@ async function send(requirementTurn?: HarnessTurn) {
         revision: session.value.revision,
         content: text,
         modelId: modelId.value,
-        allowExternal: allowExternal.value,
+        allowExternal: Boolean(selectedModel.value.external),
         includeLogs: includeLogs.value,
         ...(requirementTurn ? { requirementsTurnId: requirementTurn.id, confirmed: true } : {}),
       },
@@ -273,8 +265,6 @@ async function send(requirementTurn?: HarnessTurn) {
     const turn = await harnessApi.start(id, pending.input)
     pending = undefined
     content.value = ''
-    allowExternal.value = false
-    requirementsId.value = ''
     setTurn(turn)
     connect(turn)
     await scrollIfNear(true)
@@ -325,20 +315,16 @@ async function observe(turn: HarnessTurn) {
   }
 }
 function confirmRequirements(turn: HarnessTurn) {
-  requirementsId.value = turn.id
-  content.value = '确认需求后生成 SQL 候选'
-  void nextTick(() =>
-    document.querySelector<HTMLTextAreaElement>('.harness-composer textarea')?.focus(),
-  )
-}
-function cancelRequirements() {
-  requirementsId.value = ''
-  content.value = ''
+  void send(turn)
 }
 function submit() {
-  void send(
-    requirementsId.value ? turns.value.find((turn) => turn.id === requirementsId.value) : undefined,
-  )
+  void send()
+}
+function composerKey(event: KeyboardEvent) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault()
+    submit()
+  }
 }
 onMounted(async () => {
   try {
@@ -456,25 +442,15 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <form v-if="session" class="harness-composer" @submit.prevent="submit">
-        <div v-if="requirementsId" class="harness-confirming">
-          本次发送将确认上一轮已知需求范围。<button
-            type="button"
-            class="harness-icon"
-            @click="cancelRequirements"
-          >
-            取消
-          </button>
-        </div>
         <textarea
           v-model="content"
           rows="3"
           maxlength="8000"
-          :readonly="!!requirementsId || !!pending"
+          :readonly="!!pending"
           :disabled="busy"
           aria-label="输入需求"
           placeholder="描述问题、开发需求或希望检查的执行轨迹…"
-          @keydown.ctrl.enter.prevent="submit"
-          @keydown.meta.enter.prevent="submit"
+          @keydown="composerKey"
         />
         <div class="harness-composer-tools">
           <select v-model="modelId" :disabled="busy || !!active || !!pending" aria-label="模型">
@@ -488,7 +464,7 @@ onBeforeUnmount(() => {
               type="checkbox"
               :disabled="busy || !!active || !!pending"
             />允许取脱敏日志</label
-          ><span class="harness-composer-hint">Ctrl / ⌘ + Enter</span
+          ><span class="harness-composer-hint">Enter 发送 · Shift + Enter 换行</span
           ><button
             v-if="active"
             type="button"
@@ -496,26 +472,12 @@ onBeforeUnmount(() => {
             @click="cancel"
           >
             <Square :size="13" />停止本轮</button
-          ><button
-            v-else
-            class="primary"
-            :disabled="
-              busy ||
-              !content.trim() ||
-              !selectedModel ||
-              (selectedModel.external && !allowExternal)
-            "
-          >
+          ><button v-else class="primary" :disabled="busy || !content.trim() || !selectedModel">
             <Send :size="14" />{{ pending ? '核对原发送' : '发送' }}
           </button>
         </div>
-        <label v-if="selectedModel?.external" class="harness-check harness-consent"
-          ><input
-            v-model="allowExternal"
-            type="checkbox"
-            :disabled="busy || !!active || !!pending"
-          />允许本轮最多 4
-          次模型调用，将当前对话、SQL、配置及选取的脱敏证据发送至外部模型。请先确认内容范围。</label
+        <small v-if="selectedModel?.external" class="harness-consent"
+          >当前使用外部模型；发送将使用本会话、SQL 和选取的脱敏证据，可随时停止。</small
         >
         <small v-if="!availableModels.length"
           >暂无适用模型，请由管理员在系统设置中配置支持工具调用的模型。</small

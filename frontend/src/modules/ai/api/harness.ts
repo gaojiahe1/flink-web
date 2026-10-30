@@ -8,6 +8,8 @@ export interface HarnessEvent {
   detail: Record<string, unknown>
 }
 export interface HarnessPlan {
+  execution?: { available: boolean; message: string; image?: string }
+  runYaml?: string
   newDraft?: boolean
   sqlName?: string
   id: string
@@ -33,11 +35,14 @@ export interface HarnessTurn {
   planId?: string
   contextManifest: Record<string, unknown>
   events: HarnessEvent[]
+  eventsTruncated?: boolean
   requirements?: { summary: string; unknowns: string[] }
   approvedRequirements?: unknown
   applicationId?: string
   application?: {
-    mode?: 'save' | 'restart'
+    mode?: 'save' | 'restart' | 'run'
+    sqlId?: string
+    jobId?: string
     state: string
     message: string
     operationId?: string

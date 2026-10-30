@@ -45,7 +45,7 @@ public class AiHarnessTools {
       out.set("baseline",evidence.baseline(job));out.set("sharedSummary",memory.job(jobId));
     }else if(session.path("kind").asText().equals("sql")){
       var draft=sqlDraft(session);if(!draft.path("createdAt").asText().equals(session.path("subjectCreatedAt").asText()))stale();
-      guard.requireSafe(draft.path("sql").asText());out.set("draft",draft);if(!sqlId.isBlank())out.set("sharedSummary",memory.sql(sqlId));
+      guard.requireSafe(draft.path("sql").asText());out.set("draft",draft);var images=out.putArray("runtimeImages");for(var image:records.list("images"))images.addObject().put("id",image.path("id").asText()).put("flinkVersion",image.path("flinkVersion").asText()).put("image",image.path("repository").asText()+":"+image.path("version").asText());if(!sqlId.isBlank())out.set("sharedSummary",memory.sql(sqlId));
       out.putObject("baseline").put("sqlRevision",draft.path("revision").asLong()).put("sqlHash",SqlDeploymentSource.hash(draft.path("sql").asText()));
     }else {
       var source=records.require("ai_harness_sessions",session.path("sourceSessionId").asText());
@@ -71,7 +71,8 @@ public class AiHarnessTools {
     }else if(kind.equals("sql")){
       add(list,"requirements_propose","整理完整业务需求及必要缺口，供用户确认；不生成SQL或修改草稿。",Map.of("summary","string","unknowns","array"));
       add(list,"sql_check","按当前草稿运行环境检查候选SQL；Parser不是Planner或业务认证。",Map.of("sql","string"));
-      if(turn.has("approvedRequirements"))add(list,"sql_propose","在明确确认的需求范围内生成完整SQL候选，仍需用户审阅后才保存。",Map.of("sql","string"));
+      add(list,"sql_propose","根据用户需求直接生成完整SQL候选和服务端运行配置；不要求额外需求确认，不保存或运行。imageId 可选，仅在新草稿未配置运行环境时从 runtimeImages 选择匹配用户版本的已登记镜像。",Map.of("sql","string"));
+      ((ObjectNode)list.get(list.size()-1).at("/function/parameters/properties")).putObject("imageId").put("type","string");
     }else add(list,"trace_inspect","读取指定源会话的真实轨迹并执行确定性结构评分，不回放模型或部署。",Map.of());
     return list;
   }
@@ -83,7 +84,7 @@ public class AiHarnessTools {
     if(found==null)throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_TOOL_DENIED","当前阶段或角色未开放该工具");
     var parameters=found.at("/function/parameters/properties");
     for(var names=args.fieldNames();names.hasNext();)if(!parameters.has(names.next()))bad("工具包含未允许参数");
-    for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();
+    for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();if(field.getKey().equals("imageId")&&value.isMissingNode())continue;
       if(type.equals("string")&&!value.isTextual()||type.equals("array")&&!value.isArray())bad("工具参数类型或必填项不正确");}
     guard.requireSafe(args.toString());
     if(name.equals("context_read"))return new Outcome((ObjectNode)turn.path("context").deepCopy(),null,null,null);
@@ -110,7 +111,7 @@ public class AiHarnessTools {
     if(name.equals("requirements_propose")){
       String text=args.path("summary").asText();if(text.isBlank()||text.length()>8000||args.path("unknowns").size()>20)bad("需求总结或待核对项超出预算");
       for(var item:args.path("unknowns"))if(!item.isTextual()||item.asText().length()>1000)bad("待核对项须为有界文本");
-      return new Outcome(mapper.createObjectNode().put("status","AWAITING_REQUIREMENTS_CONFIRMATION"),null,null,args.deepCopy());
+      return new Outcome(mapper.createObjectNode().put("status","REQUIREMENTS_NOTED"),null,null,args.deepCopy());
     }
     if(name.equals("sql_check")||name.equals("sql_propose")){
       var draft=sqlDraft(session);checkSqlBaseline(draft,turn);
@@ -122,9 +123,33 @@ public class AiHarnessTools {
       var plan=mapper.createObjectNode().put("kind","sql").put("sqlId",draft.path("id").asText()).put("sqlRevision",draft.path("revision").asLong())
           .put("sqlCreatedAt",draft.path("createdAt").asText()).put("beforeSql",draft.path("sql").asText()).put("sql",script).put("check",check.message());
       plan.put("newDraft",session.path("sqlId").asText().isBlank()).put("sqlName",draft.path("name").asText());
+      prepareSqlRun(draft,plan,args.path("imageId").asText());out.set("run",plan.path("execution"));
       out.put("status","PROPOSED").put("saved",false);return new Outcome(out,plan,null,null);
     }
     return new Outcome((ObjectNode)turn.at("/context/trace").deepCopy(),null,null,null);
+  }
+
+  /** 使用已登记运行环境生成可审阅配置；缺失运行条件不阻止交付 SQL。 */
+  private void prepareSqlRun(ObjectNode draft,ObjectNode plan,String imageId){
+    var runtime=(ObjectNode)draft.path("runtime").deepCopy();
+    if(!imageId.isBlank()&&!runtime.isEmpty()&&!imageId.equals(runtime.path("imageId").asText()))bad("已有运行配置不能在此静默更换镜像，请在 SQL 工作台审阅配置");
+    if(runtime.isEmpty()){
+      if(!imageId.isBlank())runtime.put("imageId",records.require("images",imageId).path("id").asText());
+      var images=records.list("images");images.sort(Comparator.comparing(i->i.path("id").asText()));
+      if(!runtime.has("imageId")&&!images.isEmpty())runtime.put("imageId",images.get(0).path("id").asText());
+      runtime.put("upgradeMode","stateless").put("parallelism",1).put("slots",1);
+    }
+    if(plan.path("newDraft").asBoolean())com.flinkweb.config.sql.DefaultJobLog.apply(runtime);
+    plan.set("runtime",runtime);var execution=plan.putObject("execution").put("available",false);
+    if(!draft.path("jobId").asText().isBlank()){execution.put("message","已有发布作业，请在 SQL 工作台发布并选择恢复方式后启动 / 重启");return;}
+    if(!runtime.path("upgradeMode").asText("stateless").equals("stateless")){execution.put("message","当前配置需要恢复状态，请在 SQL 工作台核对恢复方式后运行");return;}
+    try{
+      var rendered=sql.preview(new SqlDraftRequest(draft.path("name").asText(),draft.path("description").asText(),plan.path("sql").asText(),runtime,draft.path("revision").asLong()+1));
+      plan.put("runYaml",rendered.path("yaml").asText());plan.put("check",rendered.path("message").asText()+"；语法检查不证明 Connector/Planner 或业务结果通过");
+      var image=records.require("images",runtime.path("imageId").asText());
+      plan.put("imageFingerprint",SqlDeploymentSource.hash(image.toString()));
+      execution.put("available",true).put("image",image.path("repository").asText()+":"+image.path("version").asText()).put("message","创建或保存草稿、发布并提交首次无状态运行；并行度 "+runtime.path("parallelism").asInt(1)+"；共享 SQL Runner，运行受理后需手动核验");
+    }catch(BusinessException failure){execution.put("message",guard.redact(failure.getMessage())+"；可先保存草稿并在 SQL 工作台补齐运行配置");}
   }
 
   /** 只有当前冻结的草稿与内容仍一致时，才允许继续使用本轮证据。 */
@@ -162,7 +187,7 @@ public class AiHarnessTools {
   private ObjectNode evaluate(String sessionId){
     var source=records.require("ai_harness_sessions",sessionId);if(!access.actor().equals(source.path("owner").asText()))deny();
     var turns=records.listForSubject("ai_harness_turns",sessionId);int calls=0,failed=0;
-    for(var turn:turns)for(var event:turn.path("events")){if(event.path("type").asText().equals("tool.started"))calls++;if(event.path("type").asText().equals("tool.failed"))failed++;}
+    for(var turn:turns){calls+=turn.path("toolCalls").asInt();failed+=turn.path("failedTools").asInt();}
     var out=mapper.createObjectNode().put("turns",turns.size()).put("toolCalls",calls).put("failedTools",failed).put("replayedWrites",0);
     var cases=out.putArray("cases");for(var turn:turns)cases.addObject().put("turnId",turn.path("id").asText()).put("state",turn.path("state").asText()).put("contextPresent",turn.has("contextManifest")).put("candidateRequiresApproval",turn.has("planId"));
     out.putArray("notMeasured").add("模型结论正确率").add("生产业务结果").add("未运行的故障注入与留出集");return out;

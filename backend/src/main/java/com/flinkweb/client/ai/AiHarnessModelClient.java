@@ -109,7 +109,7 @@ public class AiHarnessModelClient {
     }
     /** 非流式兼容与 SSE 使用相同的终止、数量及完整参数边界。 */
     private void validate(ObjectNode message,String reason)throws Exception{
-      var tools=message.path("tool_calls");if(!Set.of("stop","tool_calls").contains(reason)||tools.size()>6||reason.equals("tool_calls")==tools.isEmpty())throw new IllegalStateException("模型输出未完整结束");
+      var tools=message.path("tool_calls");if(!Set.of("stop","tool_calls").contains(reason)||reason.equals("tool_calls")==tools.isEmpty())throw new IllegalStateException("模型输出未完整结束");
       if(!tools.isMissingNode()&&!tools.isNull()&&!tools.isArray())throw new IllegalStateException("工具调用格式无效");
       if(message.path("reasoning_content").asText().length()>65536)throw new IllegalStateException("模型输出超过文本预算");
       var ids=new HashSet<String>();for(var call:tools){if(!call.path("id").asText().matches("[A-Za-z0-9_-]{1,200}")||!ids.add(call.path("id").asText())||!call.at("/function/name").asText().matches("[A-Za-z0-9_]{1,80}")||!call.path("type").asText().equals("function")||call.at("/function/arguments").asText().length()>32768||!(mapper.readTree(call.at("/function/arguments").asText()) instanceof ObjectNode))throw new IllegalStateException("工具调用参数无效");}
@@ -131,7 +131,7 @@ public class AiHarnessModelClient {
       if(content.length()>32768||reasoning.length()>65536)throw new IllegalStateException("模型输出超过文本预算");
       if(!value.isEmpty())text.accept(value);
       for(var part:delta.path("tool_calls")){
-        int index=part.path("index").asInt(-1);if(index<0||index>5)throw new IllegalStateException("模型工具调用超过单步预算");
+        int index=part.path("index").asInt(-1);if(index<0)throw new IllegalStateException("模型工具索引无效");
         var call=calls.computeIfAbsent(index,k->{var n=mapper.createObjectNode().put("id","").put("type","function");n.putObject("function").put("name","").put("arguments","");return n;});
         if(part.hasNonNull("id"))call.put("id",call.path("id").asText()+part.path("id").asText());
         var fn=call.withObject("/function");for(String field:List.of("name","arguments"))if(part.path("function").hasNonNull(field))fn.put(field,fn.path(field).asText()+part.path("function").path(field).asText());

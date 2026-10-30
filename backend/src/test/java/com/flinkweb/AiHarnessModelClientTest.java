@@ -36,6 +36,17 @@ class AiHarnessModelClientTest {
     var content=new StringBuilder();var out=client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),content::append);
     assertThat(content.toString()).isEqualTo("中文");assertThat(out.at("/tool_calls/0/function/arguments").asText()).isEqualTo("{\"sql\":\"SELECT 1\"}");assertThat(mapper.readTree(request.get()).path("stream").asBoolean()).isTrue();
   }
+  /** 单步七个完整工具不再被旧次数预算拒绝，仍验证每个调用的完整参数。 */
+  @Test
+  void acceptsMoreThanSixToolsInOneStep()throws Exception{
+    var message=mapper.createObjectNode().put("role","assistant").put("content","");var calls=message.putArray("tool_calls");
+    for(int n=0;n<7;n++)calls.addObject().put("id","call_"+n).put("type","function").putObject("function").put("name","context_read").put("arguments","{}");
+    var body=mapper.createObjectNode();body.putArray("choices").addObject().put("finish_reason","tool_calls").set("message",message);response.set(body.toString());
+    assertThat(client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{}).path("tool_calls")).hasSize(7);
+    var delta=mapper.createObjectNode();var parts=delta.putArray("tool_calls");for(int n=0;n<7;n++){var call=(ObjectNode)calls.get(n).deepCopy();call.put("index",n);parts.add(call);}
+    var event=mapper.createObjectNode();event.putArray("choices").addObject().put("finish_reason","tool_calls").set("delta",delta);response.set("data: "+event+"\n\ndata: [DONE]\n\n");
+    assertThat(client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{}).path("tool_calls")).hasSize(7);
+  }
   /** 半截参数或缺少明确终止状态时不能返回可执行工具消息。 */
   @Test
   void rejectsInterruptedTools(){response.set("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"sql_check\",\"arguments\":\"{\"}}]}}]}\n\n");assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).hasCauseInstanceOf(IllegalStateException.class);}

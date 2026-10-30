@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AiRichText from './AiRichText.vue'
 import CodeDiff from '../../../shared/components/editor/CodeDiff.vue'
 import { activeHarnessTurn, type HarnessTurn } from '../api/harness'
@@ -16,7 +16,7 @@ const emit = defineEmits<{
   observe: [turn: HarnessTurn]
   requirements: [turn: HarnessTurn]
 }>()
-const mode = ref<'save' | 'restart'>('save'),
+const mode = ref<'save' | 'restart' | 'run'>('save'),
   restoreMode = ref(''),
   savepoint = ref(''),
   impact = ref(false)
@@ -41,6 +41,13 @@ const canApply = computed(
     !props.turn.applicationId,
 )
 const sqlOnly = computed(() => candidate.value?.kind === 'sql')
+watch(
+  () => candidate.value?.id,
+  () => {
+    if (!pending.value && candidate.value?.execution?.available) mode.value = 'run'
+  },
+  { immediate: true },
+)
 const stateText = computed(
   () =>
     (
@@ -68,7 +75,7 @@ function apply() {
     pending.value = {
       requestId: requestId(),
       confirmed: true,
-      mode: sqlOnly.value ? 'save' : mode.value,
+      mode: mode.value,
       restoreMode: restoreMode.value,
       savepointPath: savepoint.value.trim(),
       acceptImpact: impact.value,
@@ -96,7 +103,7 @@ function retryOriginal() {
     <details class="harness-process">
       <summary>
         {{ activeHarnessTurn(turn) ? '执行中' : '已记录' }} ·
-        {{ turn.events.length }} 项过程，点击查看
+        {{ turn.eventsTruncated ? '最近 ' : '' }}{{ turn.events.length }} 项过程，点击查看
       </summary>
       <details>
         <summary>本轮上下文与执行约束</summary>
@@ -120,8 +127,11 @@ function retryOriginal() {
       }}
     </p>
     <p v-if="turn.message" class="harness-turn-notice">{{ turn.message }}</p>
-    <section v-if="turn.requirements && !turn.approvedRequirements" class="harness-requirements">
-      <p><strong>请核对本轮需求</strong></p>
+    <section
+      v-if="turn.requirements && !turn.approvedRequirements && !candidate"
+      class="harness-requirements"
+    >
+      <p><strong>已知需求与必要缺口</strong></p>
       <AiRichText :text="turn.requirements.summary" />
       <ul v-if="turn.requirements.unknowns.length">
         <li v-for="unknown in turn.requirements.unknowns" :key="unknown">待核对：{{ unknown }}</li>
@@ -131,9 +141,9 @@ function retryOriginal() {
         :disabled="working"
         @click="emit('requirements', turn)"
       >
-        确认已知范围并生成候选
+        按已知信息直接生成 SQL
       </button>
-      <small>未知事项仍保留，不会作为已回答条件；外部模型需要勾选本轮授权。</small>
+      <small>也可直接在下方补充需求；生成候选不会保存或运行。</small>
     </section>
     <section v-if="candidate" class="harness-candidate">
       <p v-if="candidate.newDraft && !turn.applicationId">
@@ -144,6 +154,14 @@ function retryOriginal() {
         <strong>{{ turn.applicationId ? '本次审阅方案' : '已生成候选，尚未应用' }}</strong>
       </p>
       <p class="muted">{{ candidate.check }}</p>
+      <p v-if="sqlOnly && candidate.execution">
+        {{ candidate.execution.message
+        }}<span v-if="candidate.execution.image"> · 镜像 {{ candidate.execution.image }}</span>
+      </p>
+      <details v-if="candidate.runYaml">
+        <summary>审阅运行配置</summary>
+        <pre>{{ candidate.runYaml }}</pre>
+      </details>
       <details>
         <summary>审阅完整修改</summary>
         <CodeDiff
@@ -161,10 +179,13 @@ function retryOriginal() {
       </details>
       <div v-if="canApply" class="harness-approval">
         <div class="harness-approval-fields">
-          <label v-if="!sqlOnly"
+          <label
             >执行方式<select v-model="mode" :disabled="working || !!pending">
-              <option value="save">仅保存参数</option>
-              <option value="restart">保存、发布并启动 / 重启</option>
+              <option value="save">{{ sqlOnly ? '仅保存 SQL 草稿' : '仅保存参数' }}</option>
+              <option v-if="sqlOnly && candidate?.execution?.available" value="run">
+                创建、发布并运行 SQL
+              </option>
+              <option v-if="!sqlOnly" value="restart">保存、发布并启动 / 重启</option>
             </select></label
           >
           <label v-if="!sqlOnly && mode === 'restart'"
@@ -182,6 +203,13 @@ function retryOriginal() {
               placeholder="留空仅适用于当前作业正常运行时创建保存点"
           /></label>
         </div>
+        <label v-if="mode === 'run'" class="harness-check"
+          ><input
+            v-model="impact"
+            type="checkbox"
+            :disabled="working || !!pending"
+          />我确认首次无状态运行，将分配集群资源并执行 SQL 中的 INSERT 写入。</label
+        >
         <label v-if="!sqlOnly && mode === 'restart'" class="harness-check"
           ><input
             v-model="impact"
@@ -199,7 +227,10 @@ function retryOriginal() {
         <button
           class="primary"
           :disabled="
-            working || !confirmed || (!sqlOnly && mode === 'restart' && (!restoreMode || !impact))
+            working ||
+            !confirmed ||
+            (mode === 'run' && !impact) ||
+            (!sqlOnly && mode === 'restart' && (!restoreMode || !impact))
           "
           @click="apply"
         >
@@ -207,7 +238,9 @@ function retryOriginal() {
             pending
               ? '核对并继续原申请'
               : sqlOnly
-                ? '确认保存 SQL 草稿'
+                ? mode === 'run'
+                  ? '确认创建并运行'
+                  : '确认保存 SQL 草稿'
                 : mode === 'restart'
                   ? '确认修改并启动 / 重启'
                   : '确认保存参数'
@@ -232,11 +265,21 @@ function retryOriginal() {
         }}
       </p>
       <div class="harness-actions">
+        <RouterLink
+          v-if="turn.application?.sqlId"
+          :to="{ path: '/sql', query: { draft: turn.application.sqlId } }"
+          >打开 SQL 工作台</RouterLink
+        >
+        <RouterLink
+          v-if="turn.application?.jobId"
+          :to="{ path: '/jobs/' + encodeURIComponent(turn.application.jobId) + '/edit' }"
+          >查看作业</RouterLink
+        >
         <button :disabled="working" @click="emit('observe', turn)">
           {{
             needsRecovery
               ? '核对原申请'
-              : sqlOnly || turn.application?.mode === 'save'
+              : turn.application?.mode === 'save'
                 ? '核对保存结果'
                 : '手动刷新运行结果'
           }}</button

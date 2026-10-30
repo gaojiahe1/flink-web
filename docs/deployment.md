@@ -1,5 +1,17 @@
 # Flink Web 部署指南
 
+## Harness直接开发与首次运行（2026-10-30）
+
+本轮app/web覆盖发布0.0.9，downloader保持原0.0.9。使用正式Dockerfile、干净Kylin底座和已验证当前产物，Parser/Runner/Nginx版本未改；通过原registry映射推送，并从192.168.68.1:5000核验manifest、config、全部压缩层大小/SHA-256及解压diff_id与已测试镜像一致。
+
+- `app:0.0.9` manifest `sha256:affb389564820cf5e2131a09f852c54f71aafc73f17d39dc59ddcb539d2e4c2f`，config `sha256:3d20a64c61fafe87c49ce2a27e7e9364d11a47682989a1bc7e70be1e3e6ad9b6`；压缩283710369字节/11层，逻辑586565646字节。
+- `web:0.0.9` manifest `sha256:267f52233941c335c8c64ed6081973d0654dbf867c0b7401fe86fc81287aa728`，config `sha256:7372d24dda95ea74cc18b5da8e9509e16daf122d9da2b8b842e4a57a137da4c6`；压缩116018315字节/8层，逻辑315828126字节。
+- `downloader:0.0.9` manifest `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0`，config `sha256:f35eed19bbc787181949acf926499be696614adabbb9c2b3e985a0362b8fbb2c`；压缩146379002字节/5层，逻辑392503512字节。
+
+取消模型调用次数上限及逐轮外部授权勾选，保留外发范围说明、停止/超时/内容大小和日志授权。SQL首轮即可生成可应用候选，批准后可创建绑定/发布/首次无状态运行，也可仅保存；已有发布作业或需要状态恢复的配置仍转SQL工作台处理。无需新数据库迁移、部署变量或更换主密钥。
+
+实际只读根/非root镜像及浏览器已通过原生工具/SSE/精确1.20.5 Parser候选生成，隔离K8s替身首次运行只提交一次；不宣称实际Flink业务通过。未更新现场Kubernetes、用户数据库/作业、持久化下载器绑定或latest。现场更新需有对应用户授权，须重建app/web以重新拉取并核对本节摘要；覆盖标签不自动更新现有Pod。[本轮验收](agent/validation.md#harness直接开发与首次运行2026-10-30)。
+
 ## 仓库0.0.8清理（2026-10-30）
 
 用户明确授权清理192.168.68.1:5000的0.0.8版本。app/web/downloader三个0.0.8标签已删除；清理5份app及11份web的已确认旧manifest，离线GC实际移除72个blob，回收219,537,743字节（约219.5MB）。旧标签和本次已清摘要不能再用于拉取；历史发布表仅保留事实记录。
@@ -47,7 +59,7 @@ app/web沿用0.0.8，从正式Dockerfile和干净Kylin基础构建，Parser/Runn
 
 更新：2026-10-30。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前app/web/downloader已发布0.0.9；本轮未更新实际工作负载。最新结果见 [本轮发布](#sql-harness与0092026-10-30)，历史结果各自保留。
+当前app/web/downloader已发布0.0.9；本轮未更新实际工作负载。最新结果见 [本轮发布](#harness直接开发与首次运行2026-10-30)，历史结果各自保留。
 
 ## SQL圆角辅助标签（2026-10-29）
 
