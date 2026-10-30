@@ -1,5 +1,7 @@
 # 全站 UI 设计系统
 
+2026-10-30：代码字体回退栈为SFMono-Regular、Consolas、Liberation Mono、Menlo、Monaco、monospace，移除代码栈中的比例字体MiSans；UI字体保持MiSans。缺少本地代码字体时ASCII应等宽，中文由通用等宽字体系统回退。测试夹具按方法/路径显式声明API，SQL PUT纳入写入记账，未知调用返回501并在测试结束时失败，避免零写入假阳性。
+
 2026-10-29 Harness独立工作台：216px可收起会话栏、对话优先，正文13px/辅助12px/说明11px；计划先展示，过程使用原生details默认折叠，结果与审阅批准留在正文。沿用语义主题和MiSans，不采用对话表格；代码差异仍可按需展开。见 [Harness模块](agent-harness.md)。
 
 更新：2026-10-29。关联 [REQ-006](../requirements/REQ-006-ui-system.md)。

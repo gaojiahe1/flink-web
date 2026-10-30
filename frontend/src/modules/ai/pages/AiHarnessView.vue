@@ -176,7 +176,12 @@ async function openCreate() {
   }
 }
 async function create() {
-  if (!choices.value.some((item) => item.id === target.value) || busy.value) return
+  if (
+    (!(kind.value === 'sql' && !target.value) &&
+      !choices.value.some((item) => item.id === target.value)) ||
+    busy.value
+  )
+    return
   busy.value = true
   error.value = ''
   try {
@@ -535,8 +540,10 @@ onBeforeUnmount(() => {
             </select></label
           ><label
             >{{ kind === 'diagnosis' ? '目标作业' : kind === 'sql' ? 'SQL 草稿' : '来源会话'
-            }}<select v-model="target" required>
-              <option value="" disabled>请选择</option>
+            }}<select v-model="target" :required="kind !== 'sql'">
+              <option value="" :disabled="kind !== 'sql'">
+                {{ kind === 'sql' ? '从需求开始，批准后创建草稿' : '请选择' }}
+              </option>
               <option v-for="item in choices" :key="item.id" :value="item.id">
                 {{ item.name }}
               </option>
@@ -545,7 +552,9 @@ onBeforeUnmount(() => {
           <p>目标在会话内固定；创建不会调用模型。评测检查实际轨迹结构，结果不代表业务正确率。</p>
           <div class="harness-actions">
             <button type="button" @click="creating = false">取消</button
-            ><button class="primary" :disabled="busy || !target">创建会话</button>
+            ><button class="primary" :disabled="busy || (kind !== 'sql' && !target)">
+              创建会话
+            </button>
           </div>
         </form>
       </section>

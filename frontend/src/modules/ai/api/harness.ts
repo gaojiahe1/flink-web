@@ -8,6 +8,8 @@ export interface HarnessEvent {
   detail: Record<string, unknown>
 }
 export interface HarnessPlan {
+  newDraft?: boolean
+  sqlName?: string
   id: string
   kind?: string
   beforeSql?: string

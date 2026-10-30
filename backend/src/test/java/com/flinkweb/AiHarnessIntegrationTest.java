@@ -193,4 +193,37 @@ class AiHarnessIntegrationTest {
     for(int i=0;i<11;i++){var turn=harness.start(id,input(harness.get(id)));completed(id,turn.path("id").asText());if(i==0){first=turn.path("id").asText();records.save("ai_harness_plans",UUID.randomUUID().toString(),mapper.createObjectNode().put("sessionId",id).put("turnId",first).put("owner","admin"),0);}}
     assertThat(harness.get(id).path("turns")).hasSize(10);assertThat(records.find("ai_harness_turns",first)).isNull();assertThat(records.listForSubject("ai_harness_plans",id)).isEmpty();
   }
+
+  /** 空白开发会话不创建草稿，批准后原子绑定，重复批准不产生第二份草稿。 */
+  @Test
+  void unboundSqlCreatesAndBindsOnlyAfterApproval()throws Exception{
+    var create=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql");
+    int before=sql.list().size();var s=harness.create(create);String id=s.path("id").asText();
+    assertThat(s.path("sqlId").asText()).isEmpty();assertThat(sql.list()).hasSize(before);
+    var count=new AtomicInteger();doAnswer(inv->{if(count.getAndIncrement()==0){var args=mapper.createObjectNode().put("summary","返回常量2");args.putArray("unknowns");return call("requirements_propose",args);}inv.getArgument(4,Consumer.class).accept("请确认需求");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var first=harness.start(id,input(s));completed(id,first.path("id").asText());count.set(0);
+    doAnswer(inv->{if(count.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 2"));inv.getArgument(4,Consumer.class).accept("待审阅");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var next=harness.start(id,input(harness.get(id)).put("requirementsTurnId",first.path("id").asText()).put("confirmed",true));var candidate=completed(id,next.path("id").asText());
+    assertThat(candidate.at("/candidate/newDraft").asBoolean()).isTrue();assertThat(sql.list()).hasSize(before);
+    var approval=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("mode","save").put("confirmed",true);
+    harness.apply(id,next.path("id").asText(),approval,()->"admin");String sqlId=harness.get(id).path("sqlId").asText();
+    assertThat(sql.get(sqlId).path("sql").asText()).isEqualTo("SELECT 2");assertThat(sql.list()).hasSize(before+1);
+    harness.apply(id,next.path("id").asText(),approval,()->"admin");assertThat(sql.list()).hasSize(before+1);assertThat(harness.create(create).path("sqlId").asText()).isEqualTo(sqlId);
+    harness.delete(id,harness.get(id).path("revision").asLong());assertThat(sql.get(sqlId)).isNotNull();
+  }
+
+  /** 两个工作线程阻塞时取消排队任务立即释放容量，原身份仍正确结算。 */
+  @Test
+  void cancelQueuedTaskReleasesExecutorSlot()throws Exception{
+    var executor=(ThreadPoolExecutor)org.springframework.test.util.ReflectionTestUtils.getField((Object)org.springframework.test.util.AopTestUtils.getUltimateTargetObject(harness),"executor");
+    var entered=new CountDownLatch(2);var release=new CountDownLatch(1);var fillers=new ArrayList<FutureTask<Void>>();
+    Runnable blocker=()->{entered.countDown();try{release.await(10,TimeUnit.SECONDS);}catch(InterruptedException error){Thread.currentThread().interrupt();}};
+    executor.execute(blocker);executor.execute(blocker);
+    try{assertThat(entered.await(3,TimeUnit.SECONDS)).isTrue();var s=session();String id=s.path("id").asText();var queued=harness.start(id,input(s));
+      for(int n=0;n<5;n++){var filler=new FutureTask<Void>(()->null);fillers.add(filler);executor.execute(filler);}assertThat(executor.getQueue()).hasSize(6);
+      harness.cancel(id,queued.path("id").asText());assertThat(executor.getQueue()).hasSize(5);
+      var replacement=harness.start(id,input(harness.get(id)));assertThat(replacement.path("state").asText()).isEqualTo("QUEUED");harness.cancel(id,replacement.path("id").asText());
+      assertThat(records.require("ai_harness_turns",queued.path("id").asText()).path("state").asText()).isEqualTo("CANCELED");
+    }finally{for(var filler:fillers){filler.cancel(true);executor.remove(filler);}release.countDown();}
+  }
 }

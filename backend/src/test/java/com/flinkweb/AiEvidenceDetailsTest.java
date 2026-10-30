@@ -29,6 +29,18 @@ class AiEvidenceDetailsTest {
     details.collect(job, mapper.createObjectNode(), bundle, "flinkMetrics"); return bundle;
   }
 
+  /** 单个实例失败不阻断后续实例，全部失败及第三实例截断分别保留提示。 */
+  @Test void taskManagerFailuresAreIsolated(){
+    when(flink.read("job","overview")).thenReturn(mapper.createObjectNode());when(flink.read("job","jobmanager/metrics")).thenReturn(mapper.createArrayNode());
+    var managers=mapper.createObjectNode();managers.putArray("taskmanagers").addObject().put("id","tm1");managers.withArray("taskmanagers").addObject().put("id","tm2");managers.withArray("taskmanagers").addObject().put("id","tm3");
+    when(flink.read("job","taskmanagers")).thenReturn(managers);when(flink.read("job","taskmanagers/tm1/metrics")).thenThrow(new IllegalStateException());
+    when(flink.read("job","taskmanagers/tm2/metrics")).thenReturn(mapper.createArrayNode().add(mapper.createObjectNode().put("id","Status.JVM.Memory.Heap.Used")));
+    when(flink.read("job","taskmanagers/tm2/metrics?get=Status.JVM.Memory.Heap.Used")).thenReturn(mapper.createArrayNode().add(mapper.createObjectNode().put("value","0")));
+    var details=new AiJobEvidenceDetails(mock(KubernetesClient.class),mock(DiagnosticService.class),flink,mock(AiEvidenceDocuments.class),mapper,mock(AccessService.class));var bundle=mapper.createObjectNode();details.collect(job,mapper.createObjectNode(),bundle,"flinkMetrics");
+    assertThat(bundle.at("/flink/taskManagers/1/metrics/0/value").asText()).isEqualTo("0");assertThat(bundle.path("unavailable").toString()).contains("tm1","前2个");verify(flink,never()).read(eq("job"),startsWith("taskmanagers/tm3/"));
+    when(flink.read("job","taskmanagers/tm2/metrics")).thenThrow(new IllegalStateException());bundle=mapper.createObjectNode();details.collect(job,mapper.createObjectNode(),bundle,"flinkMetrics");assertThat(bundle.path("unavailable").toString()).contains("tm1","tm2");assertThat(bundle.at("/flink/taskManagers/1/metrics").isMissingNode()).isTrue();
+  }
+
   /** 没有注册任何指标时，空数组必须附带明确缺数说明。 */
   @Test void emptyRegisteredMetricsAreUnavailable() {
     when(flink.read("job", "jobmanager/metrics")).thenReturn(mapper.createArrayNode());

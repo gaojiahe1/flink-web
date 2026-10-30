@@ -1,6 +1,8 @@
 # Flink AI Harness 工作台
 
-更新：2026-10-29。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[原 AI 助手](ai-assistant.md)、[ADR-008](../decisions/ADR-008-agent-harness.md)。首期覆盖作业诊断/最小参数修复、SQL 开发、真实执行轨迹结构评测；尚不支持通用代码仓库开发、任意 Shell、分布式工作流或自动业务验收。
+2026-10-30：SQL 开发可从空白需求进入，sqlId 可空，仍可选择已有草稿继续开发。未绑定时只构造内存空白基准，需求确认/SQL检查/候选生成不创建草稿；候选显示拟创建名称，明确批准后同一事务创建 SQL 草稿、绑定会话并结算应用，同号重试不会重复创建，名称冲突拒绝覆盖。删除私有会话保留已创建草稿。取消 Future 同时 executor.remove，及时释放排队容量，保留 done 清理及运行中断语义。
+
+更新：2026-10-30。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[原 AI 助手](ai-assistant.md)、[ADR-008](../decisions/ADR-008-agent-harness.md)。首期覆盖作业诊断/最小参数修复、SQL 开发、真实执行轨迹结构评测；尚不支持通用代码仓库开发、任意 Shell、分布式工作流或自动业务验收。
 
 ## 页面与确认
 

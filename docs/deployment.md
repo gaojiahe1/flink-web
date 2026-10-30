@@ -1,5 +1,21 @@
 # Flink Web 部署指南
 
+## SQL Harness与0.0.9（2026-10-30）
+
+用户指定版本升级至0.0.9，前端包/API版本与app/web/downloader部署清单已同步。SQL开发会话默认可不选草稿，从需求开始；批准前不落SQL草稿，候选展示拟创建名称，批准后同一事务创建、绑定与记账，重复原申请不新建。可继续绑定已有草稿，不自动发布或运行。无需数据库迁移。
+
+用户修复Docker并明确要求发布后，app/web从正式Dockerfile、干净Kylin底座和已验证当前产物构建；Parser/Runner/Nginx原版运行制品保持。downloader代码无变化，复用原已验证制品标记0.0.9，镜像config与0.0.8一致。三个0.0.9标签已通过原registry的localhost:15000映射推送，从指定192.168.68.1:5000核验manifest响应/正文、config、全部压缩层大小/SHA-256及解压diff_id一致：
+
+| 组件 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.9 | `sha256:1e15c79be865fc1120011262b1d62e9c61a4611fdf3e064177ccc5520663bbf3` | `sha256:bd1d863bcf654466e4376f6f41d3923b404254b7908bd06336b58a33fd3751c1` | 283702620 | 11 |
+| web:0.0.9 | `sha256:9d643613a6023b16c4a5a9428a15b858e4f8e62d26e467d02bc39fe979233137` | `sha256:e294e6c7645bc69374a1d5a437f0c66316aef6476a9a2652f78fa2b10c5dd17e` | 116017949 | 8 |
+| downloader:0.0.9 | `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0` | `sha256:f35eed19bbc787181949acf926499be696614adabbb9c2b3e985a0362b8fbb2c` | 146379002 | 5 |
+
+逻辑字节app586557878/web315827489/downloader392503512，linux/amd64；app/web非root10001、downloader9999。只读根/临时SQLite镜像29项页面、真实BES/Nginx/HTTP原生工具/SSE/浏览器批准创建绑定与同号重试通过；两份真实Parser合法/非法输入和Linux下载器12项通过。业务结果、真实Flink重启不属于本轮验证。
+
+不更新latest，不操作实际Kubernetes或用户作业。部署时重新拉取三组件0.0.9并核对imageID；已保存的全局下载器绑定优先于环境变量，若仍为0.0.8需按对应授权明确更新后才运行作业，不静默修改原绑定。提交/合并及独占验证资源清理见 [验收](agent/validation.md#sql-harness与0092026-10-30)。
+
 ## Flink AI Harness（2026-10-29）
 
 功能提交 `093583f` 经验证发布后快进合并本地master，无冲突/新增代码差异，源码Git未推送。独占验证容器/网络、推送别名、三个临时镜像、六条新增私有缓存及两个测试服务已清理；正式镜像/共享缓存/原registry保留，独占工作目录在最终核对后清理。
@@ -19,9 +35,9 @@ app/web沿用0.0.8，从正式Dockerfile和干净Kylin基础构建，Parser/Runn
 
 逻辑字节app586557090/web315827109。实际部署须重新拉取app/web:0.0.8并核对imageID，覆盖标签不会自行更新正在运行的平台。提交合并及独占验证资源清理见验收记录；正式镜像、原registry与共享数据保留。
 
-更新：2026-10-29。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
+更新：2026-10-30。功能与权限规则见 [功能说明](features.md)。以下路径均相对项目根目录，示例凭据由部署者自行提供。
 
-当前app/web已按Flink AI Harness覆盖发布0.0.8，downloader不变；本轮未更新实际工作负载。最新结果见 [本轮发布](#flink-ai-harness2026-10-29)，历史结果各自保留。
+当前app/web/downloader已发布0.0.9；本轮未更新实际工作负载。最新结果见 [本轮发布](#sql-harness与0092026-10-30)，历史结果各自保留。
 
 ## SQL圆角辅助标签（2026-10-29）
 

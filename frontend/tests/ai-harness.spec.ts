@@ -57,6 +57,16 @@ async function create(page: Page) {
   await page.getByRole('dialog').getByRole('combobox').nth(1).selectOption('job-1')
   await page.getByRole('button', { name: '创建会话' }).click()
 }
+test('SQL 开发无需先选草稿即可创建会话', async ({ page }) => {
+  const f = await fixture(page)
+  await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+  await page.getByRole('dialog').getByRole('combobox').first().selectOption('sql')
+  await expect(page.getByRole('dialog').getByRole('combobox').nth(1)).toHaveValue('')
+  await expect(page.getByRole('button', { name: '创建会话' })).toBeEnabled()
+  await page.getByRole('button', { name: '创建会话' }).click()
+  await expect(page.getByRole('textbox', { name: '输入需求' })).toBeVisible()
+  expect(f.sessions).toHaveLength(1); expect(f.sessions[0].kind).toBe('sql'); expect(f.errors).toEqual([])
+})
 test('计划先展示，真实事件流结束后展示结论，过程默认折叠且会话可删除', async ({ page }) => {
   const f = await fixture(page); await create(page)
   await page.getByRole('textbox', { name: '输入需求' }).fill('检查内存并给出修改建议')

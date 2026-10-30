@@ -44,8 +44,8 @@ public class AiHarnessTools {
       out.put("jobName",job.name()).put("flinkVersion",job.flinkVersion());out.set("current",evidence.current(job));
       out.set("baseline",evidence.baseline(job));out.set("sharedSummary",memory.job(jobId));
     }else if(session.path("kind").asText().equals("sql")){
-      var draft=sql.get(sqlId);if(!draft.path("createdAt").asText().equals(session.path("subjectCreatedAt").asText()))stale();
-      guard.requireSafe(draft.path("sql").asText());out.set("draft",draft);out.set("sharedSummary",memory.sql(sqlId));
+      var draft=sqlDraft(session);if(!draft.path("createdAt").asText().equals(session.path("subjectCreatedAt").asText()))stale();
+      guard.requireSafe(draft.path("sql").asText());out.set("draft",draft);if(!sqlId.isBlank())out.set("sharedSummary",memory.sql(sqlId));
       out.putObject("baseline").put("sqlRevision",draft.path("revision").asLong()).put("sqlHash",SqlDeploymentSource.hash(draft.path("sql").asText()));
     }else {
       var source=records.require("ai_harness_sessions",session.path("sourceSessionId").asText());
@@ -113,7 +113,7 @@ public class AiHarnessTools {
       return new Outcome(mapper.createObjectNode().put("status","AWAITING_REQUIREMENTS_CONFIRMATION"),null,null,args.deepCopy());
     }
     if(name.equals("sql_check")||name.equals("sql_propose")){
-      var draft=sql.get(session.path("sqlId").asText());checkSqlBaseline(draft,turn);
+      var draft=sqlDraft(session);checkSqlBaseline(draft,turn);
       String script=args.path("sql").asText();if(script.isBlank()||script.length()>32768)bad("SQL 候选应为1到32768字符");
       var check=sql.check(script,(ObjectNode)draft.path("runtime"));
       var report=mapper.valueToTree(check);var out=mapper.createObjectNode();out.set("check",report);
@@ -121,6 +121,7 @@ public class AiHarnessTools {
       repairs.validateHarnessSql(script);if(!check.valid())bad(check.message());
       var plan=mapper.createObjectNode().put("kind","sql").put("sqlId",draft.path("id").asText()).put("sqlRevision",draft.path("revision").asLong())
           .put("sqlCreatedAt",draft.path("createdAt").asText()).put("beforeSql",draft.path("sql").asText()).put("sql",script).put("check",check.message());
+      plan.put("newDraft",session.path("sqlId").asText().isBlank()).put("sqlName",draft.path("name").asText());
       out.put("status","PROPOSED").put("saved",false);return new Outcome(out,plan,null,null);
     }
     return new Outcome((ObjectNode)turn.at("/context/trace").deepCopy(),null,null,null);
@@ -132,7 +133,13 @@ public class AiHarnessTools {
   /** 模型及工具步骤边界核对冻结内容，不访问集群或伪造实时观测。 */
   public void validateContext(ObjectNode session,ObjectNode turn){
     if(session.path("kind").asText().equals("diagnosis"))requireBaseline(session.path("jobId").asText(),turn);
-    if(session.path("kind").asText().equals("sql"))checkSqlBaseline(sql.get(session.path("sqlId").asText()),turn);
+    if(session.path("kind").asText().equals("sql"))checkSqlBaseline(sqlDraft(session),turn);
+  }
+
+  /** 未绑定时仅构造内存中的空白创作基准，批准前不保存任何 SQL 草稿。 */
+  private ObjectNode sqlDraft(ObjectNode session){
+    if(!session.path("sqlId").asText().isBlank())return sql.get(session.path("sqlId").asText());
+    var draft=mapper.createObjectNode().put("id","").put("name","ai-sql-"+session.path("id").asText().replace("-","").substring(0,20)).put("createdAt","").put("revision",0).put("sql","");draft.putObject("runtime");return draft;
   }
 
   /** 手动观察原操作和协调修订，RUNNING 单独不足以证明本次变更运行。 */

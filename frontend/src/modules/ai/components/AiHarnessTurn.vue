@@ -136,6 +136,10 @@ function retryOriginal() {
       <small>未知事项仍保留，不会作为已回答条件；外部模型需要勾选本轮授权。</small>
     </section>
     <section v-if="candidate" class="harness-candidate">
+      <p v-if="candidate.newDraft && !turn.applicationId">
+        批准后新建并绑定 SQL 草稿：<strong>{{ candidate.sqlName }}</strong
+        >；当前尚未创建。
+      </p>
       <p>
         <strong>{{ turn.applicationId ? '本次审阅方案' : '已生成候选，尚未应用' }}</strong>
       </p>

@@ -81,7 +81,7 @@
   --font-small: 12px;
   --font-caption: 11px;
   --font-family-ui: 'MiSans VF', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-family-code: Consolas, 'SFMono-Regular', 'Liberation Mono', 'MiSans VF', monospace;
+  --font-family-code: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Monaco, monospace;
   --workbench-height: calc(100vh - 154px);
   --surface: var(--color-surface);
   --surface-soft: var(--color-surface-soft);

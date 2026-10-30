@@ -1,5 +1,9 @@
-import type { Page } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { stringify } from 'yaml'
+const unexpectedByPage = new WeakMap<Page, string[]>()
+test.afterEach(({ page }) => {
+  expect(unexpectedByPage.get(page) || [], 'Undeclared fixture requests').toEqual([])
+})
 const runtime = {
   imageId: 'flink',
   runnerArtifactId: '',
@@ -33,7 +37,10 @@ const yaml = stringify({
 export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
   const errors: string[] = [],
     calls: string[] = [],
-    writes: any[] = []
+    writes: any[] = [],
+    sqlWrites: { method: string; path: string; body: unknown }[] = [],
+    unexpectedRequests: string[] = []
+  unexpectedByPage.set(page, unexpectedRequests)
   const job = {
     id: 'jar',
     jobNumber: 1,
@@ -78,11 +85,63 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
       path = new URL(req.url()).pathname
     if (!path.startsWith('/api/')) return route.continue()
     calls.push(req.method() + ' ' + path)
+    const methods: Record<string, string[]> = {
+      '/api/auth/me': ['GET'],
+      '/api/auth/csrf': ['GET'],
+      '/api/system': ['GET'],
+      '/api/system/operator': ['GET'],
+      '/api/system/downloader': ['GET'],
+      '/api/platform/network/test': ['POST'],
+      '/api/users': ['GET'],
+      '/api/platform/groups': ['GET'],
+      '/api/ai/models': ['GET'],
+      '/api/catalog/images': ['GET'],
+      '/api/catalog/templates': ['GET'],
+      '/api/catalog/configs': ['GET'],
+      '/api/catalog/datasources': ['GET'],
+      '/api/sql/catalogs': ['GET'],
+      '/api/sql/jobs': ['GET'],
+      '/api/sql/jobs/s': ['GET', 'PUT'],
+      '/api/sql/jobs/s/versions': ['GET'],
+      '/api/jobs': ['GET'],
+      '/api/development/jar/jobs': ['GET'],
+      '/api/development/links': ['GET'],
+      '/api/development/jar/jobs/jar/open': ['POST'],
+      '/api/jobs/jar': ['GET'],
+      '/api/jobs/jar/versions': ['GET'],
+      '/api/jobs/refresh': ['POST'],
+      '/api/jobs/render-form': ['POST'],
+      '/api/sessions': ['GET'],
+      '/api/sessions/refresh': ['POST'],
+      '/api/sessions/session/status': ['GET'],
+      '/api/platform/job-access': ['GET'],
+      '/api/jobs/jar/access': ['GET'],
+      '/api/sql/jobs/s/access': ['GET'],
+      '/api/sessions/session/access': ['GET'],
+      '/api/artifacts/defaults': ['GET'],
+      '/api/artifacts/objects': ['GET'],
+      '/api/audit': ['GET'],
+    }
+    const allowed =
+      methods[path] || (/^\/api\/catalog\/datasources\/[a-zA-Z0-9_-]+$/.test(path) ? ['PUT'] : [])
+    if (!allowed.includes(req.method())) {
+      unexpectedRequests.push(req.method() + ' ' + path)
+      return route.fulfill({
+        status: 501,
+        json: { error: { code: 'UNDECLARED_FIXTURE_REQUEST', message: req.method() + ' ' + path } },
+      })
+    }
+    if (path === '/api/sql/jobs/s' && req.method() === 'PUT') {
+      const body = req.postDataJSON()
+      writes.push(body)
+      sqlWrites.push({ method: req.method(), path, body })
+      Object.assign(draft, body, { revision: draft.revision + 1 })
+    }
     let data: any = []
     if (path === '/api/auth/me') data = { username: 'admin', roles: [role] }
     else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
     else if (path === '/api/system')
-      data = { namespace: 'team', version: '0.0.8', storageType: 'local' }
+      data = { namespace: 'team', version: '0.0.9', storageType: 'local' }
     else if (path === '/api/system/operator')
       data = {
         found: false,
@@ -92,7 +151,7 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
         compatibility: { known: false, supported: [] },
       }
     else if (path === '/api/system/downloader')
-      data = { image: 'registry/downloader:0.0.8', revision: 1 }
+      data = { image: 'registry/downloader:0.0.9', revision: 1 }
     else if (path === '/api/platform/network/test')
       data = { connected: true, message: '连接成功', elapsedMs: 1 }
     else if (path === '/api/users')
@@ -165,6 +224,7 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
           dependencyArtifactIds: [],
         },
       ]
+    else if (path === '/api/development/links') data = { jar: { type: 'jar' } }
     else if (path === '/api/sql/jobs') data = [draft]
     else if (path.endsWith('/versions'))
       data = [
@@ -177,7 +237,7 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
       ]
     else if (path === '/api/sql/jobs/s') data = draft
     else if (path === '/api/jobs' || path === '/api/development/jar/jobs') data = [job]
-    else if (path === '/api/jobs/jar') data = job
+    else if (path === '/api/jobs/jar' || path === '/api/development/jar/jobs/jar/open') data = job
     else if (path === '/api/jobs/refresh') data = { items: [], queriedAt: new Date().toISOString() }
     else if (path === '/api/jobs/render-form') data = { yaml, flinkVersion: '1.20.5' }
     else if (path === '/api/sessions' || path === '/api/sessions/refresh') data = [session]
@@ -217,5 +277,5 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
       ]
     await route.fulfill({ json: { data, error: null } })
   })
-  return { errors, calls, writes }
+  return { errors, calls, writes, sqlWrites, unexpectedRequests }
 }

@@ -47,7 +47,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: backend
-          image: 192.168.68.1:5000/flink-web/app:0.0.8
+          image: 192.168.68.1:5000/flink-web/app:0.0.9
           imagePullPolicy: Always
           ports: [{name: backend-http, containerPort: 8081}]
           env:
@@ -62,7 +62,7 @@ spec:
             - {name: FLINK_WEB_LOCAL_PATH, value: /app/data/flink-web.db}
             # 自动判断：数据库文件不存在时创建；已存在时保留数据，仅检查并执行必要的版本升级。
             - {name: FLINK_WEB_STORAGE_INITIALIZE, value: "true"}
-            - {name: FLINK_WEB_DOWNLOADER_IMAGE, value: "192.168.68.1:5000/flink-web/downloader:0.0.8"}
+            - {name: FLINK_WEB_DOWNLOADER_IMAGE, value: "192.168.68.1:5000/flink-web/downloader:0.0.9"}
             - {name: FLINK_WEB_STATE_ROOT, value: "s3://flink-web/flink-state"}
             - {name: FLINK_WEB_S3_BUCKET, value: "flink-web"}
             - {name: FLINK_WEB_S3_ENDPOINT, value: "http://minio.flink-kubernetes-operator.svc.cluster.local:9000"}
@@ -94,7 +94,7 @@ spec:
             requests: {cpu: 250m, memory: 512Mi}
             limits: {cpu: "2", memory: 1Gi}
         - name: frontend
-          image: 192.168.68.1:5000/flink-web/web:0.0.8
+          image: 192.168.68.1:5000/flink-web/web:0.0.9
           imagePullPolicy: Always
           ports: [{name: frontend-http, containerPort: 8080}]
           env:

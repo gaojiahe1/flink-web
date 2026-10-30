@@ -86,17 +86,17 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     String id=uuid(input.path("requestId").asText()),kind=input.path("kind").asText();
     if(!Set.of("diagnosis","sql","evaluation").contains(kind))bad("请选择诊断、SQL 开发或轨迹评测");
     String jobId=input.path("jobId").asText(),sqlId=input.path("sqlId").asText(),sourceId=input.path("sourceSessionId").asText();
-    var old=records.find(SESSIONS,id);if(old!=null){owner(old);if(!kind.equals(old.path("kind").asText())||kind.equals("diagnosis")&&!jobId.equals(old.path("jobId").asText())||kind.equals("sql")&&!sqlId.equals(old.path("sqlId").asText())||kind.equals("evaluation")&&!sourceId.equals(old.path("sourceSessionId").asText()))conflict("会话请求号已用于其他内容");return get(id);}
+    var old=records.find(SESSIONS,id);if(old!=null){owner(old);if(!kind.equals(old.path("kind").asText())||kind.equals("diagnosis")&&!jobId.equals(old.path("jobId").asText())||kind.equals("sql")&&!sqlId.equals(old.path("creationSqlId").asText(old.path("sqlId").asText()))||kind.equals("evaluation")&&!sourceId.equals(old.path("sourceSessionId").asText()))conflict("会话请求号已用于其他内容");return get(id);}
     if(list().size()>=20)bad("最多保留20个私有会话，请先删除不再需要的会话");
     String created,name;
     if(kind.equals("diagnosis")){access.require(jobId,"read");var job=jobs.get(jobId);created=job.createdAt().toString();name=job.name();}
-    else if(kind.equals("sql")){access.require("sql:"+sqlId,"edit");var draft=sql.get(sqlId);created=draft.path("createdAt").asText();name=draft.path("name").asText();jobId=draft.path("jobId").asText();}
+    else if(kind.equals("sql")){access.require("sql:"+sqlId,"edit");if(sqlId.isBlank()){created="";name="新需求";jobId="";}else{var draft=sql.get(sqlId);created=draft.path("createdAt").asText();name=draft.path("name").asText();jobId=draft.path("jobId").asText();}}
     else {var source=load(sourceId);if(source.path("kind").asText().equals("evaluation"))bad("请选择诊断或开发会话作为评测来源");created=source.path("epoch").asText();name=source.path("title").asText();jobId="";sqlId="";}
     String title=input.path("title").asText("").strip();if(title.isEmpty())title=(kind.equals("diagnosis")?"诊断 · ":kind.equals("sql")?"开发 · ":"评测 · ")+name;
     if(title.length()>100)bad("会话标题最多100字符");guard.requireSafe(title);
     var session=mapper.createObjectNode().put("owner",access.actor()).put("epoch",UUID.randomUUID().toString()).put("kind",kind)
         .put("jobId",jobId).put("sqlId",sqlId).put("sourceSessionId",sourceId).put("subjectCreatedAt",created).put("title",title).put("sequence",0);
-    records.save(SESSIONS,id,session,0);audit.record("AI_HARNESS_CREATE",id,"SUCCESS");return get(id);
+    session.put("creationSqlId",sqlId);records.save(SESSIONS,id,session,0);audit.record("AI_HARNESS_CREATE",id,"SUCCESS");return get(id);
   }}
 
   /** 获取会话不访问集群，原文上下文仅留在私有服务端记录。 */
@@ -297,7 +297,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   /** 只返回当前用户持有且目标仍为同一生命周期的会话。 */
   private ObjectNode load(String id){var session=records.require(SESSIONS,id);owner(session);
     String kind=session.path("kind").asText();if(kind.equals("diagnosis")){var job=jobs.get(session.path("jobId").asText());if(!job.createdAt().toString().equals(session.path("subjectCreatedAt").asText()))conflict("作业生命周期已变化");}
-    if(kind.equals("sql")){access.require("sql:"+session.path("sqlId").asText(),"edit");var draft=sql.get(session.path("sqlId").asText());if(!draft.path("createdAt").asText().equals(session.path("subjectCreatedAt").asText()))conflict("SQL 生命周期已变化");}return session;}
+    if(kind.equals("sql")){access.require("sql:"+session.path("sqlId").asText(),"edit");var draft=session.path("sqlId").asText().isBlank()?mapper.createObjectNode().put("createdAt",""):sql.get(session.path("sqlId").asText());if(!draft.path("createdAt").asText().equals(session.path("subjectCreatedAt").asText()))conflict("SQL 生命周期已变化");}return session;}
   /** 轮次同时绑定会话、创建者和不可复用的生命周期令牌。 */
   private ObjectNode requireTurn(ObjectNode session,String turnId){var turn=records.require(TURNS,turnId);owner(turn);if(!session.path("id").asText().equals(turn.path("sessionId").asText())||!session.path("epoch").asText().equals(turn.path("epoch").asText()))conflict("任务不属于当前会话生命周期");return turn;}
   /** 使用最新记录更新流式快照，客户端替换投影而非重放文本。 */
@@ -333,8 +333,13 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     access.require("sql:"+session.path("sqlId").asText(),"edit");if(!input.path("mode").asText().equals("save"))bad("SQL 候选在本入口仅保存，发布与运行请在 SQL 工作台明确操作");
     String id=input.path("requestId").asText(),fingerprint=SqlDeploymentSource.hash(plan.path("id").asText()+input.toString());var old=records.find(APPLICATIONS,id);
     if(old!=null){owner(old);if(!session.path("id").asText().equals(old.path("sessionId").asText())||!fingerprint.equals(old.path("fingerprint").asText()))conflict("应用号已用于其他方案");return old;}
-    return transaction.execute(status->{var draft=sql.get(session.path("sqlId").asText());if(draft.path("revision").asLong()!=plan.path("sqlRevision").asLong()||!draft.path("createdAt").asText().equals(plan.path("sqlCreatedAt").asText())||!draft.path("sql").asText().equals(plan.path("beforeSql").asText()))conflict("SQL 已变化，请重新审阅");
+    return transaction.execute(status->{ObjectNode draft;
+      if(plan.path("newDraft").asBoolean()){
+        if(!session.path("sqlId").asText().isBlank())conflict("会话已绑定草稿，请重新审阅");
+        draft=mapper.createObjectNode().put("id",plan.path("sqlName").asText()).put("name",plan.path("sqlName").asText()).put("description","").put("revision",0);draft.putObject("runtime");
+      }else{draft=sql.get(session.path("sqlId").asText());if(draft.path("revision").asLong()!=plan.path("sqlRevision").asLong()||!draft.path("createdAt").asText().equals(plan.path("sqlCreatedAt").asText())||!draft.path("sql").asText().equals(plan.path("beforeSql").asText()))conflict("SQL 已变化，请重新审阅");}
       var saved=sql.save(draft.path("id").asText(),new SqlDraftRequest(draft.path("name").asText(),draft.path("description").asText(),plan.path("sql").asText(),(ObjectNode)draft.path("runtime"),draft.path("revision").asLong()));
+      if(plan.path("newDraft").asBoolean())records.save(SESSIONS,session.path("id").asText(),session.put("sqlId",saved.path("id").asText()).put("subjectCreatedAt",saved.path("createdAt").asText()).put("title","开发 · "+saved.path("name").asText()),session.path("revision").asLong());
       return records.save(APPLICATIONS,id,mapper.createObjectNode().put("owner",access.actor()).put("sessionId",session.path("id").asText()).put("turnId",plan.path("turnId").asText()).put("mode","save").put("state","SAVED").put("fingerprint",fingerprint).put("savedSqlRevision",saved.path("revision").asLong()).put("message","SQL 草稿已保存，未发布或运行"),0);
     });
   }
@@ -347,7 +352,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   /** 关联集合通过会话主体索引清理，不影响共享总结、作业草稿或运行审计。 */
   private List<String> purge(String id){var turns=records.listForSubject(TURNS,id);for(String collection:List.of(TURNS,PLANS,APPLICATIONS))for(var row:records.listForSubject(collection,id))records.delete(collection,row.path("id").asText(),row.path("revision").asLong());var session=records.find(SESSIONS,id);if(session!=null)records.delete(SESSIONS,id,session.path("revision").asLong());return turns.stream().map(t->t.path("id").asText()).toList();}
   /** 中断句柄与 SSE 连接仅在进程内存在，不作为恢复事实来源。 */
-  private void interrupt(String turnId){var future=running.get(turnId);if(future!=null)future.cancel(true);var set=listeners.remove(turnId);if(set!=null)set.forEach(SseEmitter::complete);}
+  private void interrupt(String turnId){var future=running.get(turnId);if(future!=null){future.cancel(true);executor.remove(future);}var set=listeners.remove(turnId);if(set!=null)set.forEach(SseEmitter::complete);}
   /** 写入后返回带修订的原任务，保存不隐式创建已删除任务。 */
   private ObjectNode saveTurn(ObjectNode turn){var saved=records.save(TURNS,turn.path("id").asText(),turn,turn.path("revision").asLong());turn.put("revision",saved.path("revision").asLong());return saved;}
   /** 页面不读取内部生命周期令牌、原始上下文或幂等指纹。 */

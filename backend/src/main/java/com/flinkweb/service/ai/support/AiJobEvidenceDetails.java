@@ -75,7 +75,9 @@ public class AiJobEvidenceDetails {
           if(count++>=2){missing.add("本轮JVM指标仅采集前2个TaskManager");break;}
           String id=manager.path("id").asText();
           if(!id.matches("[A-Za-z0-9_.:-]{1,200}"))continue;
-          var tm=output.addObject().put("id",id);tm.set("metrics",jvm(job,"taskmanagers/"+id+"/metrics",missing,"TaskManager "+id));
+          var tm=output.addObject().put("id",id);
+          try{tm.set("metrics",jvm(job,"taskmanagers/"+id+"/metrics",missing,"TaskManager "+id));}
+          catch(RuntimeException error){missing.add("TaskManager "+id+" JVM指标读取失败或已退出；不能视为使用量为0");}
         }
       }catch(RuntimeException error){missing.add("部分TaskManager JVM指标不可用或已退出");}
     }
