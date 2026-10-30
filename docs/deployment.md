@@ -2,6 +2,8 @@
 
 ## Harness直接开发与首次运行（2026-10-30）
 
+功能提交 `8f6ae3a` 经完整校验和镜像发布后已快进合并本地master，无冲突或新增差异，合并前干净、两分支内容一致；源码Git未推送。独占资源及四条新增私有缓存已清理，正式镜像/原registry/共享资源和截图保留；本轮临时工作目录随最终核对清理。
+
 本轮app/web覆盖发布0.0.9，downloader保持原0.0.9。使用正式Dockerfile、干净Kylin底座和已验证当前产物，Parser/Runner/Nginx版本未改；通过原registry映射推送，并从192.168.68.1:5000核验manifest、config、全部压缩层大小/SHA-256及解压diff_id与已测试镜像一致。
 
 - `app:0.0.9` manifest `sha256:affb389564820cf5e2131a09f852c54f71aafc73f17d39dc59ddcb539d2e4c2f`，config `sha256:3d20a64c61fafe87c49ce2a27e7e9364d11a47682989a1bc7e70be1e3e6ad9b6`；压缩283710369字节/11层，逻辑586565646字节。
