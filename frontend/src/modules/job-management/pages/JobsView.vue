@@ -9,7 +9,7 @@ import JobWorkbench from '../components/JobWorkbench.vue'
 import PodStatusDrawer from '../components/PodStatusDrawer.vue'
 import AiJobAnalysis from '../../ai/components/AiJobAnalysis.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
 import { requestId } from '../../../shared/utils/requestId'
 import { observedJobStatus } from '../utils/runtimeStatus'
@@ -294,6 +294,7 @@ async function load() {
   jobAccess.value = permissions
   developmentLinks.value = links
   loading.value = false
+  await focusRequestedJob()
 }
 const {
   refresh,
@@ -543,6 +544,24 @@ async function remove(job: JobDraft) {
 }
 
 const router = useRouter()
+const route = useRoute()
+let focusedJob = ''
+async function focusRequestedJob() {
+  const id = typeof route.query.job === 'string' ? route.query.job : ''
+  if (!id || focusedJob === id || !drafts.value.some((job) => job.id === id)) return
+  focusedJob = id
+  query.value = id
+  await nextTick()
+  document
+    .querySelector<HTMLElement>('[data-job-id="' + CSS.escape(id) + '"]')
+    ?.scrollIntoView({ block: 'center' })
+}
+watch(
+  () => route.query.job,
+  () => {
+    void focusRequestedJob()
+  },
+)
 const copyDialog = ref<HTMLDialogElement>()
 const copySource = ref<JobDraft>()
 const copyEditor = ref('yaml')

@@ -23,10 +23,16 @@ const mode = ref<'save' | 'restart' | 'run'>('save'),
 const confirmed = ref(false),
   pending = ref<Record<string, unknown>>()
 const candidate = computed(() => props.turn.candidate)
-const steps = computed(() =>
-  Array.isArray(props.turn.plan)
-    ? props.turn.plan
-    : ['核对本轮上下文及执行范围。', '按需使用工具并检查结果。', '交付结论及需要审阅的候选。'],
+const steps = computed(() => (Array.isArray(props.turn.plan) ? props.turn.plan : []))
+const sceneText = computed(
+  () =>
+    ({
+      sql_development: 'SQL 开发',
+      status: '作业状态查询',
+      diagnosis: '作业诊断',
+      repair: '作业修复',
+      evaluation: '轨迹评测',
+    })[props.turn.scene || 'sql_development'],
 )
 const needsRecovery = computed(
   () =>
@@ -59,6 +65,7 @@ const stateText = computed(
         SUPERSEDED: '旧方案已失效',
         CANCELED: '已取消',
         FAILED: '本轮未完成',
+        STALLED: '已停止重复尝试',
         INTERRUPTED: '已中断',
         BUDGET_EXHAUSTED: '已达到本轮预算',
         APPLYING: '正在应用',
@@ -96,8 +103,17 @@ function retryOriginal() {
     <div class="harness-speaker">
       Flink AI <span>{{ stateText }}</span>
     </div>
-    <p class="harness-plan-intro">我会按以下计划处理：</p>
-    <ol class="harness-plan">
+    <p v-if="turn.scene" class="harness-scene">本轮：{{ sceneText }}</p>
+    <p class="harness-plan-intro">
+      {{
+        steps.length
+          ? '本次执行计划：'
+          : activeHarnessTurn(turn)
+            ? '正在调用模型制定执行计划…'
+            : '本轮未生成有效执行计划。'
+      }}
+    </p>
+    <ol v-if="steps.length" class="harness-plan">
       <li v-for="(step, index) in steps" :key="index">{{ step }}</li>
     </ol>
     <details class="harness-process">
@@ -116,7 +132,32 @@ function retryOriginal() {
         <pre>{{ JSON.stringify(event.detail, null, 2) }}</pre>
       </details>
     </details>
-    <AiRichText v-if="turn.reply" :text="turn.reply" />
+    <section v-if="turn.runtimeStatus" class="harness-current-status">
+      <strong
+        >当前作业：{{ turn.runtimeStatus.jobState
+        }}<span v-if="turn.runtimeStatus.lifecycleState">
+          · {{ turn.runtimeStatus.lifecycleState }}</span
+        ></strong
+      >
+      <p>{{ turn.runtimeStatus.message }}</p>
+      <small v-if="turn.runtimeStatus.observedAt"
+        >观测于
+        {{
+          new Date(turn.runtimeStatus.observedAt).toLocaleString()
+        }}；状态查询不会部署或重启作业。</small
+      >
+      <ul v-if="turn.runtimeStatus.issues?.length" class="harness-observation-issues">
+        <li v-for="(issue, index) in turn.runtimeStatus.issues" :key="index">
+          <strong>{{ issue.historical ? '近期告警 · ' : '' }}{{ issue.source }}：</strong
+          >{{ issue.message }}
+        </li>
+      </ul>
+    </section>
+    <details v-if="turn.scene === 'status' && turn.reply">
+      <summary>模型补充说明（实际状态以上方实时观测为准）</summary>
+      <AiRichText :text="turn.reply" />
+    </details>
+    <AiRichText v-else-if="turn.reply" :text="turn.reply" />
     <p v-if="activeHarnessTurn(turn)" class="harness-activity" role="status">
       {{
         turn.state === 'QUEUED'
@@ -127,6 +168,22 @@ function retryOriginal() {
       }}
     </p>
     <p v-if="turn.message" class="harness-turn-notice">{{ turn.message }}</p>
+    <section v-if="turn.recovery" class="harness-recovery" role="status">
+      <strong>{{
+        turn.recovery.action === 'stop' ? '已停止无进展循环' : '正在调整处理策略'
+      }}</strong>
+      <p>{{ turn.recovery.message }}</p>
+      <ul v-if="turn.recovery.nextSteps">
+        <li v-for="item in turn.recovery.nextSteps" :key="item">{{ item }}</li>
+      </ul>
+      <details v-if="turn.recovery.diagnostic">
+        <summary>查看最近错误定位</summary>
+        <p>{{ turn.recovery.diagnostic.message }}</p>
+        <pre v-if="turn.recovery.diagnostic.excerpt">{{
+          turn.recovery.diagnostic.excerpt.map((row) => `${row.line}: ${row.text}`).join('\n')
+        }}</pre>
+      </details>
+    </section>
     <section
       v-if="turn.requirements && !turn.approvedRequirements && !candidate"
       class="harness-requirements"
@@ -256,13 +313,29 @@ function retryOriginal() {
           turn.application?.message || '原申请已登记，请先核对结果，勿另起新申请。'
         }}</strong>
       </p>
-      <p v-if="turn.application?.state === 'ACCEPTED'">运行请求已受理，尚不能判定已运行成功。</p>
+      <p
+        v-if="turn.application?.state === 'ACCEPTED' && !turn.observation?.runningRevisionConfirmed"
+      >
+        运行请求已受理，尚不能判定已运行成功。
+      </p>
       <p v-if="turn.observation">
         {{ turn.observation.message }} · 当前 {{ turn.observation.jobState }}<br />{{
           turn.observation.runningRevisionConfirmed
             ? '已核验对应修订运行中；业务结果仍需单独验收。'
             : '缺少本次修订运行成功的完整证明。'
         }}
+      </p>
+      <ul v-if="turn.observation?.issues?.length" class="harness-observation-issues">
+        <li v-for="(issue, index) in turn.observation.issues" :key="index">
+          <strong>{{ issue.historical ? '近期告警 · ' : '' }}{{ issue.source }}：</strong
+          >{{ issue.message }}
+        </li>
+      </ul>
+      <p v-if="turn.observation?.observedAt" class="muted">
+        观测于 {{ new Date(turn.observation.observedAt).toLocaleString()
+        }}<span v-if="turn.observation.lifecycleState">
+          · 生命周期 {{ turn.observation.lifecycleState }}</span
+        >
       </p>
       <div class="harness-actions">
         <RouterLink
@@ -272,7 +345,7 @@ function retryOriginal() {
         >
         <RouterLink
           v-if="turn.application?.jobId"
-          :to="{ path: '/jobs/' + encodeURIComponent(turn.application.jobId) + '/edit' }"
+          :to="{ path: '/jobs', query: { job: turn.application.jobId } }"
           >查看作业</RouterLink
         >
         <button :disabled="working" @click="emit('observe', turn)">

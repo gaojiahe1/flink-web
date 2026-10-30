@@ -31,6 +31,15 @@ export interface HarnessTurn {
   message?: string
   model?: string
   plan: string[]
+  planStatus?: 'PENDING' | 'READY'
+  runtimeStatus?: HarnessObservation
+  scene?: 'sql_development' | 'status' | 'diagnosis' | 'repair' | 'evaluation'
+  recovery?: {
+    action: 'recover' | 'stop'
+    message: string
+    nextSteps?: string[]
+    diagnostic?: { message: string; line?: number; excerpt?: { line: number; text: string }[] }
+  }
   candidate?: HarnessPlan
   planId?: string
   contextManifest: Record<string, unknown>
@@ -48,12 +57,22 @@ export interface HarnessTurn {
     operationId?: string
     request?: Record<string, unknown>
   }
-  observation?: {
-    jobState: string
-    runningRevisionConfirmed: boolean
-    message: string
-    businessVerified: boolean
-  }
+  observation?: HarnessObservation
+}
+export interface HarnessObservation {
+  jobId?: string
+  jobName?: string
+  jobState: string
+  lifecycleState?: string
+  jobManagerDeploymentStatus?: string
+  serviceAccount?: string
+  observedAt?: string
+  runningRevisionConfirmed: boolean
+  currentRunning?: boolean
+  message: string
+  businessVerified: boolean
+  issues?: { source: string; message: string; historical: boolean }[]
+  diagnosticsIncomplete?: boolean
 }
 export interface HarnessSession {
   id: string

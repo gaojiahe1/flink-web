@@ -458,7 +458,9 @@ onBeforeUnmount(() => {
             <option v-for="model in availableModels" :key="model.id" :value="model.id">
               {{ model.name }}
             </option></select
-          ><label v-if="session.kind === 'diagnosis'" class="harness-check"
+          ><label
+            v-if="session.kind === 'diagnosis' || (session.kind === 'sql' && session.jobId)"
+            class="harness-check"
             ><input
               v-model="includeLogs"
               type="checkbox"

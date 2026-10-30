@@ -3,7 +3,7 @@ import type { CompletionContext, CompletionResult } from '@codemirror/autocomple
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 
-const flinkDialect = SQLDialect.define({
+export const flinkDialect = SQLDialect.define({
   identifierQuotes: '`"',
   // 标准方言 spec 为空；显式扩展必须带完整基础词表，并使用解析器要求的小写。
   keywords: (

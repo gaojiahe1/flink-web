@@ -40,16 +40,17 @@ public class AiJobRepairCoordinator {
   private final AiJobEvidenceCollector evidence;
   private final S3StorageClient storage;
   private final TransactionTemplate transaction;
+  private final com.flinkweb.config.platform.PlatformProperties properties;
 
   /** 复用已有保存、Parser、发布和受版本保护的运行入口。 */
   public AiJobRepairCoordinator(ObjectMapper mapper,RecordRepository records,JobService jobs,SqlJobService sqlJobs,
       YamlService yaml,SqlValidationService validation,OperationService operations,AccessService access,
-      AiContentGuard guard,AiJobEvidenceCollector evidence,S3StorageClient storage,org.springframework.transaction.PlatformTransactionManager manager) {
+      AiContentGuard guard,AiJobEvidenceCollector evidence,S3StorageClient storage,org.springframework.transaction.PlatformTransactionManager manager,com.flinkweb.config.platform.PlatformProperties properties) {
     this.mapper=mapper;this.records=records;this.jobs=jobs;this.sqlJobs=sqlJobs;this.yaml=yaml;this.validation=validation;
-    this.operations=operations;this.access=access;this.guard=guard;this.evidence=evidence;this.storage=storage;this.transaction=new TransactionTemplate(manager);
+    this.operations=operations;this.access=access;this.guard=guard;this.evidence=evidence;this.storage=storage;this.transaction=new TransactionTemplate(manager);this.properties=properties;
   }
 
-  /** 仅允许资源及明确的 Flink 参数标量补丁，不接受整份配置覆盖和身份修改。 */
+  /** 仅允许资源、明确Flink参数及缺失账号补平台默认值；不替换已有账号或其他身份字段。 */
   public ObjectNode patched(JobDraft job,JsonNode changes) {
     if(!changes.isArray() || changes.size()>16) fail("AI_INVALID_PATCH","配置修改须为最多16项的字段补丁");
     var node=yaml.parse(job.yaml());
@@ -59,9 +60,10 @@ public class AiJobRepairCoordinator {
       JsonNode value=change.path("value");
       boolean resource=pointer.matches("/spec/(taskManager|jobManager)/resource/(memory|cpu)");
       boolean parallel=pointer.equals("/spec/job/parallelism");
+      boolean defaultAccount=pointer.equals("/spec/serviceAccount")&&node.at("/spec/serviceAccount").asText().isBlank()&&value.isTextual()&&value.asText().equals(properties.namespace()+"-flink");
       boolean config=pointer.startsWith("/spec/flinkConfiguration/")
           && pointer.substring("/spec/flinkConfiguration/".length()).matches("(taskmanager\\.memory\\.[a-z.-]+|jobmanager\\.memory\\.[a-z.-]+|taskmanager\\.numberOfTaskSlots|parallelism\\.default|execution\\.checkpointing\\.(interval|timeout)|restart-strategy\\.[a-z.-]+|table\\.exec\\.[a-z.-]+)");
-      if(!change.isObject() || !paths.add(pointer) || !(resource||parallel||config)
+      if(!change.isObject() || !paths.add(pointer) || !(resource||parallel||config||defaultAccount)
           || value.isMissingNode() || value.isNull() || value.isContainerNode()
           || value.toString().length()>512) fail("AI_INVALID_PATCH","建议包含重复、非标量或不允许修改的配置字段");
       if(parallel && (!value.isIntegralNumber() || value.asInt()<1 || value.asInt()>10000)) fail("AI_INVALID_PATCH","并行度必须为1到10000的整数");

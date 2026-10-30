@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test'
 
-async function fixture(page: Page, role = 'ROLE_ADMIN') {
+async function fixture(
+  page: Page,
+  role = 'ROLE_ADMIN',
+  scenario: 'normal' | 'stall' | 'status' = 'normal',
+) {
   const sessions: any[] = [],
     sent: any[] = [],
     applications: any[] = [],
@@ -58,7 +62,8 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
           content: input.content,
           reply: '',
           events: [],
-          plan: ['核对作业上下文。', '采集证据并生成候选。', '交付结论，确认后修改。'],
+          plan: [],
+          planStatus: 'PENDING',
           contextManifest: { modelCallPolicy: '不限制调用次数' },
         }
         session.turns.push(data)
@@ -70,8 +75,16 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
             await new Promise<void>((resolve) => {
               streamRelease = resolve
             })
+          turn.plan = [
+            '模型计划：核对作业上下文。',
+            '模型计划：采集证据并生成候选。',
+            '模型计划：交付结论，确认后修改。',
+          ]
+          turn.planStatus = 'READY'
+          turn.scene = session.kind === 'sql' ? 'sql_development' : 'diagnosis'
           turn.state = 'AWAITING_APPROVAL'
-          turn.reply = '诊断结果：内存不足可能导致退出。候选尚未实施。'
+          turn.reply =
+            "诊断结果：内存不足可能导致退出。候选尚未实施。\n\n```sql\nSELECT 'print' AS sink, 10 AS rate; -- demo\n```\n\n行内代码 `sql_propose`"
           turn.events = [
             {
               sequence: 1,
@@ -104,6 +117,35 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
               runYaml: 'spec:\n  image: flink:1.20.5',
             }
           }
+          if (scenario === 'stall') {
+            turn.state = 'STALLED'
+            delete turn.candidate
+            turn.recovery = {
+              action: 'stop',
+              message: '连续相同 SQL 语法错误，已停止重复尝试。',
+              nextSteps: ['修改第11行失败片段后继续'],
+              diagnostic: {
+                message: '第11行第5列 SQL语法错误',
+                excerpt: [{ line: 11, text: 'invalid clause' }],
+              },
+            }
+          }
+          if (scenario === 'status') {
+            turn.state = 'SUCCEEDED'
+            turn.scene = 'status'
+            delete turn.candidate
+            turn.reply = '可以部署了'
+            turn.runtimeStatus = {
+              jobState: 'RUNNING',
+              lifecycleState: 'STABLE',
+              currentRunning: true,
+              runningRevisionConfirmed: false,
+              message: '本次实时查询：作业 RUNNING',
+              observedAt: new Date().toISOString(),
+              businessVerified: false,
+              issues: [],
+            }
+          }
           session.revision++
           return route.fulfill({
             contentType: 'text/event-stream',
@@ -130,6 +172,16 @@ async function fixture(page: Page, role = 'ROLE_ADMIN') {
             runningRevisionConfirmed: false,
             message: '尚缺协调代际证明',
             businessVerified: false,
+            observedAt: new Date().toISOString(),
+            issues: [
+              { source: 'Operator', message: 'ServiceAccount 未配置', historical: false },
+              {
+                source: 'Pod',
+                message: 'FailedScheduling: Insufficient memory',
+                historical: false,
+              },
+              { source: '容器', message: 'CrashLoopBackOff', historical: false },
+            ],
           }
         }
         data = turn
@@ -173,12 +225,14 @@ test('计划先展示，真实事件流结束后展示结论，过程默认折�
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled()
   await expect(page.getByLabel(/允许本轮最多/)).toHaveCount(0)
   await page.getByRole('button', { name: '发送', exact: true }).click()
-  await expect(page.locator('.harness-plan')).toContainText('核对作业上下文')
+  await expect(page.getByText('正在调用模型制定执行计划…', { exact: true })).toBeVisible()
+  await expect(page.locator('.harness-plan')).toHaveCount(0)
   await expect(page.locator('.harness-process')).not.toHaveAttribute('open', '')
   await expect(page.locator('.harness-turn')).not.toContainText('诊断结果')
   await expect.poll(() => f.sent.length).toBe(1)
   f.release()
   await expect(page.locator('.harness-turn')).toContainText('诊断结果')
+  await expect(page.locator('.harness-plan')).toContainText('模型计划：核对作业上下文')
   await expect(page.locator('.harness-process')).not.toHaveAttribute('open', '')
   await page.locator('.harness-process > summary').click()
   await expect(page.locator('.harness-process')).toContainText('采集分类证据完成')
@@ -197,7 +251,7 @@ test('重启必须审阅和确认影响，受理后只能手动核验原操作',
   await create(page)
   await page.getByRole('textbox', { name: '输入需求' }).fill('调整内存')
   await page.getByRole('button', { name: '发送', exact: true }).click()
-  await expect(page.locator('.harness-plan')).toBeVisible()
+  await expect(page.getByText('正在调用模型制定执行计划…', { exact: true })).toBeVisible()
   f.release()
   await expect(page.locator('.harness-candidate')).toBeVisible()
   await page.getByLabel('执行方式').selectOption('restart')
@@ -216,6 +270,8 @@ test('重启必须审阅和确认影响，受理后只能手动核验原操作',
   })
   await page.getByRole('button', { name: '手动刷新运行结果' }).click()
   await expect(page.locator('.harness-application')).toContainText('缺少本次修订运行成功的完整证明')
+  await expect(page.locator('.harness-observation-issues')).toContainText('FailedScheduling')
+  await expect(page.locator('.harness-observation-issues')).toContainText('CrashLoopBackOff')
   expect(f.errors).toEqual([])
 })
 test('运维角色保持只读候选，窄屏对话没有横向溢出', async ({ page }) => {
@@ -224,7 +280,7 @@ test('运维角色保持只读候选，窄屏对话没有横向溢出', async ({
   await create(page)
   await page.getByRole('textbox', { name: '输入需求' }).fill('只诊断')
   await page.getByRole('button', { name: '发送', exact: true }).click()
-  await expect(page.locator('.harness-plan')).toBeVisible()
+  await expect(page.getByText('正在调用模型制定执行计划…', { exact: true })).toBeVisible()
   f.release()
   await expect(page.locator('.harness-candidate')).toBeVisible()
   await expect(page.locator('.harness-approval')).toHaveCount(0)
@@ -256,9 +312,88 @@ test('SQL 首轮直达创建运行，Enter 发送且后续发送无需重复授�
     /draft=ai-sql-test/,
   )
   await expect(page.getByRole('button', { name: '手动刷新运行结果' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '查看作业', exact: true })).toHaveAttribute(
+    'href',
+    '#/jobs?job=job-1',
+  )
   await input.fill('说明当前结果')
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled()
   await input.press('Enter')
   await expect.poll(() => f.sent.length).toBe(2)
   expect(f.errors).toEqual([])
 })
+
+test('重复失败明确停止并给出错误定位，保留输入入口', async ({ page }) => {
+  const f = await fixture(page, 'ROLE_ADMIN', 'stall')
+  await create(page)
+  await page.getByRole('textbox', { name: '输入需求' }).fill('修复同一处 SQL 错误')
+  await page.getByRole('textbox', { name: '输入需求' }).press('Enter')
+  f.release()
+  await expect(page.locator('.harness-recovery')).toContainText('已停止无进展循环')
+  await page.getByText('查看最近错误定位', { exact: true }).click()
+  await expect(page.locator('.harness-recovery')).toContainText('11: invalid clause')
+  await expect(page.getByRole('button', { name: '停止本轮' })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: '输入需求' })).toBeEnabled()
+  expect(f.applications).toEqual([])
+  expect(f.errors).toEqual([])
+})
+test('SQL 会话状态查询展示实时 RUNNING，模型旧部署说法默认折叠且不出现执行按钮', async ({
+  page,
+}) => {
+  const f = await fixture(page, 'ROLE_ADMIN', 'status')
+  await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
+  await page.getByRole('dialog').getByRole('combobox').first().selectOption('sql')
+  await page.getByRole('button', { name: '创建会话' }).click()
+  await page.getByRole('textbox', { name: '输入需求' }).fill('现在作业的状态是什么')
+  await page.getByRole('textbox', { name: '输入需求' }).press('Enter')
+  f.release()
+  await expect(page.locator('.harness-scene')).toHaveText('本轮：作业状态查询')
+  await expect(page.locator('.harness-current-status')).toContainText('RUNNING')
+  await expect(page.getByText('可以部署了', { exact: true })).not.toBeVisible()
+  await expect(page.locator('.harness-approval')).toHaveCount(0)
+  expect(f.applications).toEqual([])
+  expect(f.errors).toEqual([])
+})
+for (const theme of ['mist', 'pearl', 'dark'])
+  test(`对话代码在 ${theme} 主题有语法高亮和可读行内代码`, async ({ page }) => {
+    const f = await fixture(page)
+    await create(page)
+    await page.getByRole('combobox', { name: '界面主题' }).selectOption(theme)
+    await page.getByRole('textbox', { name: '输入需求' }).fill('展示 SQL')
+    await page.getByRole('textbox', { name: '输入需求' }).press('Enter')
+    f.release()
+    await expect(page.locator('.ai-code-block .ai-code-keyword').first()).toContainText('SELECT')
+    await expect(page.locator('.ai-code-block .ai-code-string')).toContainText('print')
+    await expect(page.locator('.ai-code-language')).toHaveText('SQL')
+    const colors = await page.locator('.ai-code-block').evaluate((el) => {
+      const style = getComputedStyle(el.querySelector('pre')!),
+        keyword = getComputedStyle(el.querySelector('.ai-code-keyword')!)
+      const luminance = (color: string) => {
+        const channels = (color.match(/[\d.]+/g) || [])
+          .slice(0, 3)
+          .map(Number)
+          .map((value) => {
+            const channel = value / 255
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+          })
+        return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+      }
+      const background = luminance(style.backgroundColor)
+      const ratios = [...el.querySelectorAll('code span')].map((span) => {
+        const foreground = luminance(getComputedStyle(span).color)
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)
+      })
+      return {
+        text: style.color,
+        background: style.backgroundColor,
+        keyword: keyword.color,
+        contrast: Math.min(...ratios),
+        fontSize: getComputedStyle(el.querySelector('code')!).fontSize,
+      }
+    })
+    expect(colors.keyword).not.toEqual(colors.text)
+    expect(colors.text).not.toEqual(colors.background)
+    expect(colors.contrast).toBeGreaterThanOrEqual(4.5)
+    expect(colors.fontSize).toBe('12px')
+    expect(f.errors).toEqual([])
+  })

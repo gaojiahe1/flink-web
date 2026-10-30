@@ -51,6 +51,7 @@ class AiHarnessIntegrationTest {
   @Autowired SqlJobService sql;
   @Autowired AiJobState state;
   @Autowired AiHarnessTools tools;
+  @Autowired AiJobRepairCoordinator repairs;
   @Autowired org.springframework.context.ApplicationEventPublisher events;
   @Autowired MockMvc mvc;
   @MockitoBean AiHarnessModelClient model;
@@ -83,12 +84,20 @@ class AiHarnessIntegrationTest {
     when(diagnostics.redactEvidence(eq(job.id()),any())).thenAnswer(call->call.getArgument(1));
     modelId="harness-model-"+UUID.randomUUID();var config=mapper.createObjectNode().put("name","测试工具模型").put("model","test").put("baseUrl","https://example.com/v1").put("enabled",true).put("external",false);
     config.putArray("purposes").add("diagnosis").add("sql");models.save(modelId,config);
-    doAnswer(call->{call.getArgument(4,Consumer.class).accept("检查完成，尚未实施修改。");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    doAnswer(call->{var planning=planning(call);if(planning!=null)return planning;call.getArgument(4,Consumer.class).accept("检查完成，尚未实施修改。");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
   }
   /** 构造不含内部推理的最终消息。 */
   private ObjectNode answer(){return mapper.createObjectNode().put("role","assistant").put("content","检查完成，尚未实施修改。").put("streamed",true);}
   /** 原生工具消息由实际运行环消费，不伪造已执行事件。 */
   private ObjectNode call(String name,ObjectNode args){var out=answer();out.put("content","");var item=out.putArray("tool_calls").addObject().put("id","call_"+UUID.randomUUID()).put("type","function");item.putObject("function").put("name",name).put("arguments",args.toString());return out;}
+  /** 模型替身先返回动态计划，执行阶段计数不混入计划请求。 */
+  private ObjectNode planning(org.mockito.invocation.InvocationOnMock invocation)throws Exception{
+    var schemas=invocation.getArgument(3,ArrayNode.class);if(schemas.size()!=1||!schemas.get(0).at("/function/name").asText().equals("plan_update"))return null;
+    var messages=invocation.getArgument(2,ArrayNode.class);String profile=mapper.readTree(messages.get(messages.size()-1).path("content").asText()).at("/context/profile").asText();
+    var args=mapper.createObjectNode().put("intent",profile.equals("sql")?"sql_development":profile);
+    args.putArray("steps").add("模型计划：读取本次目标的当前上下文").add("模型计划：使用相应证据和检查工具").add("模型计划：交付结论与可审阅修改");return call("plan_update",args);
+  }
+
   /** 创建诊断会话不访问模型或集群。 */
   private ObjectNode session(){return harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","diagnosis").put("jobId",job.id()));}
   /** 冻结当前修订和请求身份。 */
@@ -101,7 +110,7 @@ class AiHarnessIntegrationTest {
   /** 工具只生成候选，明确确认后保存一次，原请求重复不再次修改。 */
   @Test
   void nativeToolsProposeAndConfirmedSaveIsIdempotent()throws Exception{
-    var counter=new AtomicInteger();doAnswer(invocation->{
+    var counter=new AtomicInteger();doAnswer(invocation->{var planning=planning(invocation);if(planning!=null)return planning;
       assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       return switch(counter.getAndIncrement()){
         case 0->call("evidence_collect",mapper.createObjectNode().put("category","pods"));
@@ -110,7 +119,7 @@ class AiHarnessIntegrationTest {
       };
     }).when(model).stream(any(),anyString(),any(),any(),any());
     var s=session();String id=s.path("id").asText();var request=input(s);var started=harness.start(id,request);
-    assertThat(started.path("plan")).hasSize(3);assertThat(started.has("context")).isFalse();
+    assertThat(started.path("plan")).isEmpty();assertThat(started.has("context")).isFalse();
     var turn=completed(id,started.path("id").asText());assertThat(turn.path("state").asText()).isEqualTo("AWAITING_APPROVAL");assertThat(turn.path("candidate").isObject()).isTrue();
     assertThat(jobs.get(job.id()).revision()).isEqualTo(job.revision());assertThat(harness.start(id,request).path("id")).isEqualTo(started.path("id"));
     var apply=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("confirmed",true).put("mode","save");
@@ -124,11 +133,11 @@ class AiHarnessIntegrationTest {
   void sqlRequirementsAreOptionalBeforeCandidate()throws Exception{
     String sqlId="sql-"+UUID.randomUUID();var draft=sql.save(sqlId,new SqlDraftRequest(sqlId,"","SELECT 1",mapper.createObjectNode(),0));
     var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql").put("sqlId",sqlId));String id=s.path("id").asText();
-    var count=new AtomicInteger();doAnswer(inv->{
+    var count=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;
       if(count.getAndIncrement()%2==0){var args=mapper.createObjectNode().put("summary","返回常量2");args.putArray("unknowns");return call("requirements_propose",args);}inv.getArgument(4,Consumer.class).accept("请核对需求。");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var first=harness.start(id,input(s));var requirements=completed(id,first.path("id").asText());assertThat(requirements.has("requirements")).isTrue();
     var raw=records.require("ai_harness_turns",first.path("id").asText());assertThat(tools.schemas(records.require("ai_harness_sessions",id),raw).toString()).contains("sql_propose");
-    count.set(0);doAnswer(inv->{if(count.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 2"));inv.getArgument(4,Consumer.class).accept("候选已检查，未保存。");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    count.set(0);doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;if(count.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 2"));inv.getArgument(4,Consumer.class).accept("候选已检查，未保存。");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var request=input(harness.get(id)).put("requirementsTurnId",first.path("id").asText()).put("confirmed",true);var second=harness.start(id,request);var candidate=completed(id,second.path("id").asText());
     assertThat(candidate.path("state").asText()).isEqualTo("AWAITING_APPROVAL");assertThat(sql.get(sqlId).path("sql").asText()).isEqualTo("SELECT 1");
     harness.apply(id,second.path("id").asText(),mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("confirmed",true).put("mode","save"),()->"admin");
@@ -139,7 +148,7 @@ class AiHarnessIntegrationTest {
   @Test
   void deleteCancelsLateResponseAndCascadesEvaluation()throws Exception{
     var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
-    doAnswer(inv->{entered.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){}inv.getArgument(4,Consumer.class).accept("迟到回复");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;entered.countDown();try{release.await(5,TimeUnit.SECONDS);}catch(InterruptedException ignored){}inv.getArgument(4,Consumer.class).accept("迟到回复");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var s=session();String id=s.path("id").asText();var evaluation=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","evaluation").put("sourceSessionId",id));
     var turn=harness.start(id,input(s));assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();
     harness.delete(id,harness.get(id).path("revision").asLong());release.countDown();
@@ -167,7 +176,7 @@ class AiHarnessIntegrationTest {
   /** 内容在模型响应期间变更时，最终回复不能声称当前分析成功。 */
   @Test
   void finalResponseRechecksContext()throws Exception{
-    doAnswer(inv->{jobs.update(job.id(),new DraftRequest(job.name(),"changed",job.flinkVersion(),job.yaml().replace("1024m","3072m"),job.revision()));inv.getArgument(4,Consumer.class).accept("完成");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;jobs.update(job.id(),new DraftRequest(job.name(),"changed",job.flinkVersion(),job.yaml().replace("1024m","3072m"),job.revision()));inv.getArgument(4,Consumer.class).accept("完成");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var s=session();var turn=harness.start(s.path("id").asText(),input(s));assertThat(completed(s.path("id").asText(),turn.path("id").asText()).path("state").asText()).isEqualTo("FAILED");
   }
   /** RUNNING 必须同时满足本次操作、草稿修订和协调代际证明。 */
@@ -175,6 +184,8 @@ class AiHarnessIntegrationTest {
   void runningRequiresOperationRevisionAndReconciliation(){String operation=UUID.randomUUID().toString();live.withObject("/metadata/annotations").put("flink-web/last-request",operation);live.withObject("/status/jobStatus").put("state","RUNNING");
     assertThat(tools.observe(job.id(),operation,job.revision()).path("runningRevisionConfirmed").asBoolean()).isFalse();live.withObject("/status").put("observedGeneration",2);
     assertThat(tools.observe(job.id(),operation,job.revision()).path("runningRevisionConfirmed").asBoolean()).isTrue();assertThat(tools.observe(job.id(),"other",job.revision()).path("runningRevisionConfirmed").asBoolean()).isFalse();
+    var changed=live.deepCopy();changed.withObject("/metadata/annotations").put("flink-web/last-request","new-operation");when(kubernetes.call(eq("GET"),eq("/deployments/"+job.deploymentName()),isNull())).thenReturn(live.deepCopy(),changed);
+    var raced=tools.observe(job.id(),operation,job.revision());assertThat(raced.path("runningRevisionConfirmed").asBoolean()).isFalse();assertThat(raced.path("issues").toString()).contains("采集期间");
   }
   /** 保存完成但重启未提交时，手动核对仍保留原申请恢复状态。 */
   @Test
@@ -200,9 +211,9 @@ class AiHarnessIntegrationTest {
     var create=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql");
     int before=sql.list().size();var s=harness.create(create);String id=s.path("id").asText();
     assertThat(s.path("sqlId").asText()).isEmpty();assertThat(sql.list()).hasSize(before);
-    var count=new AtomicInteger();doAnswer(inv->{if(count.getAndIncrement()==0){var args=mapper.createObjectNode().put("summary","返回常量2");args.putArray("unknowns");return call("requirements_propose",args);}inv.getArgument(4,Consumer.class).accept("请确认需求");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var count=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;if(count.getAndIncrement()==0){var args=mapper.createObjectNode().put("summary","返回常量2");args.putArray("unknowns");return call("requirements_propose",args);}inv.getArgument(4,Consumer.class).accept("请确认需求");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var first=harness.start(id,input(s));completed(id,first.path("id").asText());count.set(0);
-    doAnswer(inv->{if(count.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 2"));inv.getArgument(4,Consumer.class).accept("待审阅");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;if(count.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 2"));inv.getArgument(4,Consumer.class).accept("待审阅");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var next=harness.start(id,input(harness.get(id)).put("requirementsTurnId",first.path("id").asText()).put("confirmed",true));var candidate=completed(id,next.path("id").asText());
     assertThat(candidate.at("/candidate/newDraft").asBoolean()).isTrue();assertThat(sql.list()).hasSize(before);
     var legacy=records.require("ai_harness_plans",candidate.path("planId").asText());legacy.remove(List.of("runtime","execution","runYaml","imageFingerprint"));records.save("ai_harness_plans",legacy.path("id").asText(),legacy,legacy.path("revision").asLong());
@@ -217,10 +228,10 @@ class AiHarnessIntegrationTest {
   @Test
   void externalModelContinuesBeyondOldBudgets()throws Exception{
     var config=mapper.createObjectNode().put("name","外部测试").put("model","test").put("baseUrl","https://example.com/v1").put("enabled",true).put("external",true);
-    config.put("revision",models.require(modelId,"diagnosis").path("revision").asLong());config.putArray("purposes").add("diagnosis");models.save(modelId,config);
-    var count=new AtomicInteger();doAnswer(inv->{if(count.getAndIncrement()<28)return call("memory_update",mapper.createObjectNode().put("summary","测试观察".repeat(900)));inv.getArgument(4,Consumer.class).accept("完成");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
-    var s=session();var t=harness.start(s.path("id").asText(),input(s));var result=completed(s.path("id").asText(),t.path("id").asText());
-    assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");assertThat(result.path("modelRounds").asInt()).isEqualTo(29);assertThat(result.path("toolCalls").asInt()).isEqualTo(28);
+    config.put("revision",models.require(modelId,"diagnosis").path("revision").asLong());config.putArray("purposes").add("diagnosis").add("sql");models.save(modelId,config);
+    var count=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;int n=count.getAndIncrement();if(n<28)return call("sql_check",mapper.createObjectNode().put("sql","SELECT "+n+" /*"+"测试观察".repeat(1800)+"*/"));if(n==28)return call("sql_propose",mapper.createObjectNode().put("sql","SELECT 99"));inv.getArgument(4,Consumer.class).accept("完成");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql"));var t=harness.start(s.path("id").asText(),input(s));var result=completed(s.path("id").asText(),t.path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("AWAITING_APPROVAL");assertThat(result.path("modelRounds").asInt()).isEqualTo(31);assertThat(result.path("toolCalls").asInt()).isEqualTo(30);
     assertThat(result.path("events").size()).isEqualTo(100);assertThat(result.path("eventsTruncated").asBoolean()).isTrue();assertThat(result.path("events").toString()).contains("context.compacted");assertThat(result.path("contextManifest").has("maxModelRounds")).isFalse();
   }
 
@@ -233,13 +244,13 @@ class AiHarnessIntegrationTest {
     if(records.find("settings","downloader")==null)records.save("settings","downloader",mapper.createObjectNode().put("image","example/downloader:test"),0);
     var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql"));String id=s.path("id").asText();
     String script="CREATE TABLE sink_table (v INT) WITH ('connector' = 'print'); INSERT INTO sink_table SELECT 1";
-    var counter=new AtomicInteger();doAnswer(inv->{if(counter.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql",script));inv.getArgument(4,Consumer.class).accept("请审阅并创建运行");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var counter=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;if(counter.getAndIncrement()==0)return call("sql_propose",mapper.createObjectNode().put("sql",script));inv.getArgument(4,Consumer.class).accept("请审阅并创建运行");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
     var started=harness.start(id,input(s));var turn=completed(id,started.path("id").asText());
     assertThat(turn.path("state").asText()).as(turn.toString()).isEqualTo("AWAITING_APPROVAL");assertThat(turn.at("/candidate/execution/available").asBoolean()).as(turn.toString()).isTrue();
     var request=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("mode","run").put("confirmed",true).put("acceptImpact",true);
     when(kubernetes.call(anyString(),anyString(),any())).thenAnswer(inv->inv.getArgument(0).equals("GET")?com.fasterxml.jackson.databind.node.MissingNode.getInstance():inv.getArgument(2));
     var result=harness.apply(id,turn.path("id").asText(),request,()->"admin");
-    assertThat(result.path("state").asText()).as(result.toString()).isEqualTo("WAITING_OBSERVATION");String sqlId=harness.get(id).path("sqlId").asText();String jobId=sql.get(sqlId).path("jobId").asText();assertThat(jobId).isNotBlank();
+    assertThat(result.path("state").asText()).as(result.toString()).isEqualTo("WAITING_OBSERVATION");String sqlId=harness.get(id).path("sqlId").asText();String jobId=sql.get(sqlId).path("jobId").asText();assertThat(jobId).isNotBlank();assertThat(yaml.parse(jobs.get(jobId).yaml()).at("/spec/serviceAccount").asText()).isEqualTo("flink-jobs-flink");
     long revision=sql.get(sqlId).path("revision").asLong();int count=sql.list().size();harness.apply(id,turn.path("id").asText(),request,()->"admin");assertThat(sql.list()).hasSize(count);assertThat(sql.get(sqlId).path("revision").asLong()).isEqualTo(revision);
     var app=records.require("ai_harness_applications",request.path("requestId").asText());records.save("ai_harness_applications",app.path("id").asText(),app.put("state","UNKNOWN"),app.path("revision").asLong());
     harness.apply(id,turn.path("id").asText(),request,()->"admin");assertThat(sql.get(sqlId).path("revision").asLong()).isEqualTo(revision);assertThat(jobs.get(jobId).id()).isEqualTo(jobId);
@@ -249,13 +260,91 @@ class AiHarnessIntegrationTest {
   @Test
   void sqlTextOnlyIsCorrectedToCandidate()throws Exception{
     var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql"));String id=s.path("id").asText();
-    var counter=new AtomicInteger();doAnswer(inv->{var messages=inv.getArgument(2,ArrayNode.class);assertThat(messages.toString()).contains("随机数据写入print");return switch(counter.getAndIncrement()){
+    var counter=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;var messages=inv.getArgument(2,ArrayNode.class);assertThat(messages.toString()).contains("随机数据写入print");return switch(counter.getAndIncrement()){
       case 0->{inv.getArgument(4,Consumer.class).accept("```sql\nSELECT 1\n```");yield answer();}
       case 1->call("sql_propose",mapper.createObjectNode().put("sql","SELECT 1"));
       default->{inv.getArgument(4,Consumer.class).accept("候选已登记，待审阅");yield answer();}
     };}).when(model).stream(any(),anyString(),any(),any(),any());
     var t=harness.start(id,input(s).put("content","随机数据写入print"));var result=completed(id,t.path("id").asText());assertThat(result.path("state").asText()).isEqualTo("AWAITING_APPROVAL");assertThat(result.has("candidate")).isTrue();assertThat(counter.get()).isEqualTo(3);
     assertThat(sql.list().stream().noneMatch(d->d.path("id").asText().equals(result.at("/candidate/sqlName").asText()))).isTrue();
+  }
+
+  /** 反复提交相同不允许脚本时，先提供恢复建议，第三次同类失败就停止，且不创建草稿。 */
+  @Test
+  void repeatedFailureStopsInsteadOfCallingModelForever()throws Exception{
+    var count=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null)return planning;count.incrementAndGet();return call("sql_propose",mapper.createObjectNode().put("sql","DROP TABLE important"));}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql"));int before=sql.list().size();var started=harness.start(s.path("id").asText(),input(s));var result=completed(s.path("id").asText(),started.path("id").asText());
+    assertThat(result.path("state").asText()).as(result.toString()).isEqualTo("STALLED");assertThat(count.get()).isEqualTo(3);assertThat(result.at("/recovery/action").asText()).isEqualTo("stop");assertThat(result.path("events").toString()).contains("recovery.recover","recovery.stop");assertThat(sql.list()).hasSize(before);
+  }
+
+  /** 已发布SQL使用真实服务关联作业，后续会话既可开发也能查询和修复。 */
+  private ObjectNode publishedSqlSession(){
+    when(storage.defaults()).thenReturn(mapper.createObjectNode().put("rootPrefix","artifacts/"));
+    when(storage.describe(anyString())).thenAnswer(inv->mapper.createObjectNode().put("filename","flink-web-sql-runner.jar").put("uri","s3://test/runner.jar"));
+    String imageId="linked-image-"+UUID.randomUUID();records.save("images",imageId,mapper.createObjectNode().put("repository","flink").put("version","1.20.5").put("flinkVersion","1.20.5"),0);
+    if(records.find("settings","downloader")==null)records.save("settings","downloader",mapper.createObjectNode().put("image","example/downloader:test"),0);
+    String sqlId="linked-sql-"+UUID.randomUUID();var runtime=mapper.createObjectNode().put("imageId",imageId).put("upgradeMode","stateless").put("serviceAccount","existing-account");
+    var draft=sql.save(sqlId,new SqlDraftRequest(sqlId,"","CREATE TABLE p (v INT) WITH ('connector'='print'); INSERT INTO p SELECT 1",runtime,0));job=sql.publish(sqlId,draft.path("revision").asLong());
+    live=yaml.parse(job.yaml());live.withObject("/metadata").put("name",job.deploymentName()).put("namespace","flink-jobs").put("uid","linked-uid").put("resourceVersion","10").put("generation",1);
+    live.withObject("/metadata/labels").put("flink-web/job-id",job.id());live.withObject("/status").put("observedGeneration",1);live.withObject("/status/jobStatus").put("state","RUNNING");
+    when(diagnostics.inspect(job.id())).thenReturn(mapper.createObjectNode());when(diagnostics.redactEvidence(eq(job.id()),any())).thenAnswer(inv->inv.getArgument(1));
+    return harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql").put("sqlId",sqlId));
+  }
+
+  /** 在SQL会话询问状态时实时读取RUNNING并切换本轮意图，不提出部署或写入。 */
+  @Test
+  void sqlConversationCanQueryCurrentRunningJob()throws Exception{
+    var s=publishedSqlSession();var count=new AtomicInteger();doAnswer(inv->{var plan=planning(inv);if(plan!=null){((ObjectNode)plan.at("/tool_calls/0/function")).put("arguments","{\"steps\":[\"查询当前作业状态并核对最新运行证据\"],\"intent\":\"status\"}");return plan;}assertThat(inv.getArgument(2,ArrayNode.class).toString()).contains("runtimeStatus","RUNNING");if(count.getAndIncrement()==0)return call("job_status",mapper.createObjectNode());inv.getArgument(4,Consumer.class).accept("当前作业已经运行");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var t=harness.start(s.path("id").asText(),input(s).put("content","作业现在启动成功了吗？"));var result=completed(s.path("id").asText(),t.path("id").asText());
+    assertThat(result.path("scene").asText()).isEqualTo("status");assertThat(result.at("/runtimeStatus/jobState").asText()).isEqualTo("RUNNING");assertThat(result.at("/runtimeStatus/currentRunning").asBoolean()).isTrue();assertThat(result.path("plan").get(0).asText()).contains("查询当前作业状态");assertThat(result.has("candidate")).isFalse();
+    verify(kubernetes,never()).call(eq("POST"),anyString(),any());verify(kubernetes,never()).call(eq("PUT"),anyString(),any());
+  }
+
+  /** 已发布SQL在同一会话采集证据、修改TM内存并批准重启，保留显式账号。 */
+  @Test
+  void sqlConversationCanDiagnoseAndRepairPublishedJob()throws Exception{
+    var s=publishedSqlSession();var count=new AtomicInteger();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;return switch(count.getAndIncrement()){
+      case 0->call("evidence_collect",mapper.createObjectNode().put("category","configuration"));
+      case 1->{var args=mapper.createObjectNode().put("sql","");args.putArray("changes").addObject().put("path","/spec/taskManager/resource/memory").put("value","1024m");yield call("repair_propose",args);}
+      default->{inv.getArgument(4,Consumer.class).accept("已提出内存修复，等待审阅");yield answer();}
+    };}).when(model).stream(any(),anyString(),any(),any(),any());
+    var t=harness.start(s.path("id").asText(),input(s).put("content","诊断当前作业，把TM内存调小一些并重新运行"));var result=completed(s.path("id").asText(),t.path("id").asText());assertThat(result.path("state").asText()).as(result.toString()).isEqualTo("AWAITING_APPROVAL");assertThat(result.path("scene").asText()).isEqualTo("repair");assertThat(result.at("/candidate/afterYaml").asText()).contains("1024m","existing-account");
+    var approved=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("mode","restart").put("confirmed",true).put("restoreMode","stateless").put("acceptImpact",true);
+    var applied=harness.apply(s.path("id").asText(),t.path("id").asText(),approved,()->"admin");assertThat(applied.path("state").asText()).as(applied.toString()).isEqualTo("WAITING_OBSERVATION");assertThat(yaml.parse(jobs.get(job.id()).yaml()).at("/spec/taskManager/resource/memory").asText()).isEqualTo("1024m");assertThat(yaml.parse(jobs.get(job.id()).yaml()).at("/spec/serviceAccount").asText()).isEqualTo("existing-account");
+  }
+
+  /** 手动状态投影包含Operator、Pod调度和容器失败，数据不可读时不报告正常。 */
+  @Test
+  void observationIncludesActualProblemsAndUnavailableState(){
+    live.withObject("/status").put("error","serviceAccount missing");var detail=mapper.createObjectNode().put("error","serviceAccount missing");
+    var pod=detail.putArray("pods").addObject().put("name","tm-one");pod.putArray("conditions").addObject().put("status","False").put("reason","FailedScheduling").put("message","Insufficient memory");pod.putArray("states").addObject().put("name","flink-main-container").put("ready",false).put("reason","CrashLoopBackOff").put("exitCode",137);
+    detail.putArray("events").addObject().put("type","Warning").put("reason","FailedCreate").put("message","serviceaccount does not exist");when(diagnostics.inspect(job.id())).thenReturn(detail);
+    var result=tools.observe(job.id(),"old-operation",job.revision());assertThat(result.path("issues").toString()).contains("FailedScheduling","Insufficient memory","CrashLoopBackOff","serviceaccount does not exist");assertThat(result.path("runningRevisionConfirmed").asBoolean()).isFalse();
+    when(kubernetes.call(anyString(),anyString(),any())).thenThrow(new IllegalStateException("unavailable"));assertThat(tools.observe(job.id(),"old-operation",job.revision()).path("jobState").asText()).isEqualTo("UNKNOWN");
+  }
+
+  /** 缺失账号只能显式补平台默认值，已有账号和任意其他账号都不能被修复工具覆盖。 */
+  @Test
+  void repairCanOnlyFillMissingDefaultAccount(){
+    var changes=mapper.createArrayNode();changes.addObject().put("path","/spec/serviceAccount").put("value","flink-jobs-flink");
+    assertThatThrownBy(()->repairs.patched(job,changes)).hasMessageContaining("不允许");
+    job=jobs.update(job.id(),new DraftRequest(job.name(),job.description(),job.flinkVersion(),job.yaml().replace("  serviceAccount: flink-jobs-flink\n",""),job.revision()));
+    assertThat(repairs.patched(job,changes).at("/spec/serviceAccount").asText()).isEqualTo("flink-jobs-flink");((ObjectNode)changes.get(0)).put("value","arbitrary-admin");assertThatThrownBy(()->repairs.patched(job,changes)).hasMessageContaining("不允许");
+  }
+
+  /** 弱模型跳过计划而直接请求工具时，不执行该工具，重复违约会明确停止。 */
+  @Test
+  void planningIsMandatoryBeforeExecution()throws Exception{
+    doAnswer(inv->call("context_read",mapper.createObjectNode())).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();var started=harness.start(s.path("id").asText(),input(s));var result=completed(s.path("id").asText(),started.path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("STALLED");assertThat(result.path("plan")).isEmpty();assertThat(result.path("events").toString()).doesNotContain("tool.started");assertThat(result.path("modelRounds").asInt()).isEqualTo(3);
+  }
+
+  /** 模型返回正常编号计划时兼容展示，步骤仍来自模型，随后才开放执行工具。 */
+  @Test
+  void acceptsModelWrittenPlanWithoutStaticFallback()throws Exception{
+    var count=new AtomicInteger();doAnswer(inv->{if(count.getAndIncrement()==0){String text="1. 核对本轮最新状态并分析具体原因\n2. 给出针对本次问题的验证方式";inv.getArgument(4,Consumer.class).accept(text);return mapper.createObjectNode().put("role","assistant").put("content",text).put("streamed",true);}inv.getArgument(4,Consumer.class).accept("已核对");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();var started=harness.start(s.path("id").asText(),input(s));var result=completed(s.path("id").asText(),started.path("id").asText());assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");assertThat(result.path("plan").toString()).contains("本轮最新状态","本次问题的验证方式");assertThat(result.path("plan")).hasSize(2);
   }
 
   /** 两个工作线程阻塞时取消排队任务立即释放容量，原身份仍正确结算。 */

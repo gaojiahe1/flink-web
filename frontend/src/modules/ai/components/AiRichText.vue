@@ -1,5 +1,6 @@
 <script lang="ts">
 import { defineComponent, h, type VNodeChild } from 'vue'
+import { highlightCode } from '../../../shared/utils/codeHighlight'
 
 // 使用文本节点渲染，不执行模型给出的HTML，也不接受脚本链接。
 function inline(text: string): VNodeChild[] {
@@ -23,10 +24,20 @@ function render(text: string): VNodeChild[] {
     }
     if (/^\s*```/.test(line)) {
       const content: string[] = []
+      const language =
+        line
+          .replace(/^\s*```/, '')
+          .trim()
+          .split(/\s+/)[0] || 'text'
       i++
       while (i < lines.length && !/^\s*```/.test(lines[i]!)) content.push(lines[i++]!)
       i++
-      result.push(h('pre', h('code', content.join('\n'))))
+      result.push(
+        h('div', { class: 'ai-code-block' }, [
+          h('div', { class: 'ai-code-language' }, language.toUpperCase()),
+          h('pre', h('code', highlightCode(content.join('\n'), language))),
+        ]),
+      )
       continue
     }
     const heading = line.match(/^\s*(#{1,6})\s+(.+)/)
@@ -127,7 +138,9 @@ export default defineComponent({
 }
 .ai-rich-text code {
   font-family: var(--font-family-code);
-  background: var(--color-overlay);
+  color: var(--color-text);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.95em;
@@ -140,7 +153,9 @@ export default defineComponent({
   border-radius: 6px;
 }
 .ai-rich-text pre code {
+  font: inherit;
   padding: 0;
+  border: 0;
   background: none;
 }
 .ai-rich-text h5,
@@ -165,5 +180,48 @@ export default defineComponent({
 .ai-rich-table td {
   border: 1px solid var(--line);
   padding: 6px 10px;
+}
+.ai-rich-text .ai-code-block {
+  margin: 12px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface-soft);
+}
+.ai-rich-text .ai-code-language {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font: 11px var(--font-family-code);
+}
+.ai-rich-text .ai-code-block pre,
+.harness-workspace .ai-rich-text .ai-code-block pre {
+  margin: 0;
+  max-height: 380px;
+  padding: 12px;
+  color: var(--color-text);
+  background: var(--color-surface-soft);
+  font: 12px/1.75 var(--font-family-code);
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow: auto;
+  border-radius: 0;
+}
+.ai-rich-text .ai-code-keyword {
+  color: var(--code-keyword);
+  font-weight: 600;
+}
+.ai-rich-text .ai-code-type {
+  color: var(--code-type);
+}
+.ai-rich-text .ai-code-string {
+  color: var(--code-string);
+}
+.ai-rich-text .ai-code-number {
+  color: var(--code-number);
+}
+.ai-rich-text .ai-code-comment {
+  color: var(--color-muted);
+  font-style: italic;
 }
 </style>

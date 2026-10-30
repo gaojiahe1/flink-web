@@ -466,3 +466,13 @@ test('S3 读取失败不显示空目录，恢复后清除失败提示并启用�
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.getByLabel('上传文件', { exact: true })).toBeEnabled()
 })
+
+test('AI 查看作业链接进入并定位作业列表，清除搜索后手动刷新不重新锁定筛选', async ({ page }) => {
+  await fixture(page)
+  await page.goto('/#/jobs?job=job-one')
+  await expect(page.getByRole('textbox',{name:'搜索作业名称 / ID / 描述'})).toHaveValue('job-one')
+  await expect(page.locator('[data-job-id="job-one"]')).toBeVisible()
+  await page.getByRole('textbox',{name:'搜索作业名称 / ID / 描述'}).fill('')
+  await expect(page.getByRole('textbox',{name:'搜索作业名称 / ID / 描述'})).toHaveValue('')
+  await expect(page).toHaveURL(/#\/jobs\?job=job-one/)
+})

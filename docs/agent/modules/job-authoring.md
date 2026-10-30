@@ -1,5 +1,7 @@
 # 作业配置与表单
 
+2026-10-30 Harness：新建SQL候选补namespace对应默认ServiceAccount，已有显式值保留；已发布作业修复工具只能在缺失时提议补同一默认值，不能覆盖已有账号或使用任意账号。仍需审阅确认并由原运行服务校验提交，不自动迁移现场旧作业。见 [Harness](agent-harness.md)。
+
 2026-10-27界面重设计：共享control-height=30px、table-row-height=56px、table-header-height=34px，替代10-25密度；SQL/JAR标题共用DraftListHeader，表单间距去重、缩小辅助文本，工作区高度与外框统一。代码正文、多行输入和导航不按单行控件裁剪。参见 [UI设计系统](ui-design-system.md)。
 
 更新：2026-10-27。关联 [需求](../requirements/REQ-002-authoring.md)、[决策](../decisions/ADR-004-templates.md)；来源：当前代码与 [功能说明](../../features.md)。
