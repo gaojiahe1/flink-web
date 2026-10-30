@@ -1,5 +1,7 @@
 # 制品与运行文件
 
+2026-10-30：用户授权清理远端0.0.8，三组件旧标签及16份已确认旧manifest已移除，离线GC回收72个blob/219,537,743字节；0.0.9及共享downloader摘要保留。原registry恢复，未知历史与既有孤立数据保持，保留数据本地哈希及API可读取性核验通过。不删除本地镜像或修改实际工作负载/绑定。[清理报告](../cleanup-report.md#仓库008清理2026-10-30)。
+
 更新：2026-10-21。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
 
 职责：S3 浏览/上传/复制/删除、外部文件引用、下载器与 S3 插件准备。S3StorageClient 单独负责存储协议，ArtifactService 管业务，ArtifactPodBuilder/S3PluginPodBuilder 渲染受管卷与容器；实际文件读取在 downloader/Flink 主容器。

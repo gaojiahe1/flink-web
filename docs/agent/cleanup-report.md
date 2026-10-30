@@ -1,5 +1,17 @@
 # 文件治理报告
 
+## 仓库0.0.8清理（2026-10-30）
+
+用户明确删除192.168.68.1:5000的旧版本。起点master `aa2a3b8`干净，记录分支`codex/registry-clean-008`。本轮仅远端仓库操作，不删除源码、生产数据或本地Docker标签。
+
+盘点实际仓库标签、25份manifest及154个blob（1,374,858,029字节），逐一核对标签/内容摘要；从app实际SystemServiceImpl字节码、web实际入口JS确认版本，旧发布记录中的明确0.0.8摘要作补充归属证据。仅选择可确认的5份app/11份web旧manifest；4份内嵌版本0.3.0且归属不明的历史manifest不删。downloader旧/新版本同摘要，仅按标签删除旧0.0.8，不能删除共享摘要。
+
+停止原公有registry，使用同镜像/同配置和同存储的临时维护实例，接口只绑定127.0.0.1:15100；停写后再次核对全部标签、manifest与物理blob集合未变化。经API移除3个旧标签和16份旧manifest，再停止维护实例，离线GC dry-run候选须与预先计算集合完全一致。既有孤立数据及其引用不在用户删除范围，临时备份保护15个blob并在GC后恢复同字节/哈希；未进行全库delete-untagged。
+
+实际清除72个blob、回收219,537,743字节，剩余82个blob/1,155,320,286字节。保留数据全部本地SHA-256/大小与快照一致；原registry恢复后，从指定LAN地址核对全部9份保留manifest及config/layers可读取，0.0.8标签及所选旧摘要均404；0.0.9三组件、Flink与registry摘要不变。原容器/挂载恢复，维护实例无残留，不操作用户K8s/数据库/实际镜像绑定。
+
+依据：[Registry3.1.2标签/摘要删除实现](https://github.com/distribution/distribution/blob/v3.1.2/registry/handlers/manifests.go)、[离线/只读GC要求](https://distribution.github.io/distribution/about/garbage-collection/)。详情与保留镜像摘要见 [部署](../deployment.md#仓库008清理2026-10-30)。收尾只更新文档，校验后提交合并本地master。
+
 审计日期：2026-10-12。基线：`2e21351`；工作区原先干净；治理分支：`codex/project-governance-20261012`。
 
 ## 审计范围与方法
