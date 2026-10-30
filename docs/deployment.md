@@ -2,6 +2,8 @@
 
 ## Harness恢复与跨场景诊断（2026-10-30）
 
+功能提交 `dd2d185` 经完整校验及镜像发布后已快进合并本地master，合并前干净，无冲突或新增差异；工作分支和master内容一致，源码Git未推送。独占资源及两条新增私有缓存已清理，正式镜像/原registry/共享资源与截图保留；临时工作目录在最终核对后移除。
+
 本轮覆盖发布app/web0.0.9，downloader保留原制品；正式Dockerfile、干净Kylin底座及原版Parser/Runner/Nginx构建，未继承旧业务镜像。通过既有registry映射推送，从192.168.68.1:5000核验manifest/config、全部压缩层大小/SHA-256及解压diff_id与已测试镜像一致。
 
 - `app:0.0.9` manifest `sha256:829deb1414346d57a086a435104420fbf19414769eeae0edb6481569de88e195`，config `sha256:387dbfe18b4cae288aab9fd15b88eb4bfc12041d981020036c9ed683c3e41d28`；压缩283723255字节/11层，逻辑586579222字节。
