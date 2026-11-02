@@ -1,5 +1,12 @@
 # Flink Web 部署指南
 
+## 0.0.10源码升级，暂不发布（2026-11-02）
+
+用户明确要求本次暂不发布镜像。源码API/前端包及application.yaml的app/web/downloader目标标签已更新0.0.10；未构建/推送0.0.10镜像、不更新latest、实际Kubernetes或已保存下载器绑定。以下0.0.9摘要仍是已发布历史，不能套用于0.0.10；部署清单中的新标签需要后续正式构建发布后才能用于更新工作负载。
+
+Harness新增共用能力目录、日志/Checkpoint下钻、资源/提示模板、私有偏好及对话交互，不新增迁移或必填环境变量，仍为单后端实例。MCP入口POST /api/ai/mcp使用已登录平台Cookie/CSRF，协议2025-11-25，无独立OAuth；日志额外要求显式同意请求头。Nginx保留原Host端口以通过同源校验。具体使用和限制见[Harness模块](agent/modules/agent-harness.md)，本轮验证见[验收](agent/validation.md#harness-mcp与对话交互2026-11-02)。
+
+
 ## Harness恢复与跨场景诊断（2026-10-30）
 
 功能提交 `dd2d185` 经完整校验及镜像发布后已快进合并本地master，合并前干净，无冲突或新增差异；工作分支和master内容一致，源码Git未推送。独占资源及两条新增私有缓存已清理，正式镜像/原registry/共享资源与截图保留；临时工作目录在最终核对后移除。

@@ -20,7 +20,7 @@ public class SystemServiceImpl implements SystemService {
   /** 汇总版本、Namespace、存储类型和支持的功能说明。 */
   public SystemInfo info() {
     return new SystemInfo(
-        "0.0.9",
+        "0.0.10",
         properties.namespace(),
         properties.storage().type(),
         List.of(

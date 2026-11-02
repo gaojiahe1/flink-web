@@ -33,6 +33,30 @@ const error = ref(''),
   connection = ref(''),
   busy = ref(false),
   collapsed = ref(false)
+const preferenceRevision = ref(0),
+  preferenceValues = ref<Record<string, string>>({}),
+  preferencesOpen = ref(false),
+  preferenceNotice = ref('')
+let composerResponse: { turnId: string; text: string; input: Record<string, unknown> } | undefined
+const templateName = ref('')
+const taskTemplates = [
+  ['develop_sql', 'SQL 开发'],
+  ['diagnose_job', '作业诊断'],
+  ['diagnose_checkpoint_failure', 'Checkpoint 排查'],
+  ['diagnose_restart', '重启排查'],
+  ['review_restore_source', '恢复来源核对'],
+  ['verify_deployment', '部署核验'],
+  ['review_resource_change', '资源调整审阅'],
+  ['compare_sql_versions', 'SQL 版本比较'],
+  ['diagnose_backpressure', '反压排查'],
+]
+const preferenceLabels: Record<string, string> = {
+  responseStyle: '回答方式',
+  defaultCatalogId: '常用 Catalog 编号',
+  defaultSessionId: '常用 Session 编号',
+  sqlStyle: 'SQL 编写习惯',
+  logLines: '常用日志行数',
+}
 const includeLogs = ref(false),
   transcript = ref<HTMLElement>()
 const creating = ref(false),
@@ -255,6 +279,7 @@ async function send(requirementTurn?: HarnessTurn) {
         modelId: modelId.value,
         allowExternal: Boolean(selectedModel.value.external),
         includeLogs: includeLogs.value,
+        templateName: templateName.value,
         ...(requirementTurn ? { requirementsTurnId: requirementTurn.id, confirmed: true } : {}),
       },
     }
@@ -289,6 +314,49 @@ async function cancel() {
     busy.value = false
   }
 }
+async function respond(turn: HarnessTurn, input: Record<string, unknown>): Promise<boolean> {
+  if (!session.value || busy.value || active.value) return false
+  const id = session.value.id,
+    token = selection
+  busy.value = true
+  error.value = ''
+  try {
+    const next = await harnessApi.respond(id, turn.id, input)
+    if (session.value?.id !== id || token !== selection) return false
+    await reloadCurrent(id, token)
+    if (session.value?.id === id && token === selection) {
+      setTurn(next)
+      if (activeHarnessTurn(next)) connect(next)
+    }
+    return true
+  } catch (e) {
+    error.value = (e as Error).message
+    return false
+  } finally {
+    busy.value = false
+  }
+}
+async function savePreferences(clear = false) {
+  busy.value = true
+  preferenceNotice.value = ''
+  try {
+    const saved = await harnessApi.savePreferences({
+      revision: preferenceRevision.value,
+      values: clear
+        ? {}
+        : Object.fromEntries(
+            Object.entries(preferenceValues.value).filter(([, value]) => value.trim()),
+          ),
+    })
+    preferenceRevision.value = saved.revision
+    preferenceValues.value = saved.values
+    preferenceNotice.value = clear ? '已清空偏好' : '偏好已保存，将用于后续轮次'
+  } catch (e) {
+    preferenceNotice.value = (e as Error).message
+  } finally {
+    busy.value = false
+  }
+}
 async function apply(turn: HarnessTurn, input: Record<string, unknown>) {
   if (!session.value || busy.value) return
   busy.value = true
@@ -318,6 +386,35 @@ function confirmRequirements(turn: HarnessTurn) {
   void send(turn)
 }
 function submit() {
+  const waiting = turns.value.find(
+    (turn) => turn.state === 'WAITING_USER' && turn.interaction?.state === 'PENDING',
+  )
+  if (waiting && content.value.trim()) {
+    const text = content.value.trim()
+    if (
+      !composerResponse ||
+      composerResponse.turnId !== waiting.id ||
+      composerResponse.text !== text
+    )
+      composerResponse = {
+        turnId: waiting.id,
+        text,
+        input: {
+          requestId: requestId(),
+          interactionId: waiting.interaction!.id,
+          decision: 'submit',
+          answers: { note: text },
+          grantLogs: false,
+        },
+      }
+    void respond(waiting, composerResponse.input).then((ok) => {
+      if (ok && content.value.trim() === text) {
+        content.value = ''
+        composerResponse = undefined
+      }
+    })
+    return
+  }
   void send()
 }
 function composerKey(event: KeyboardEvent) {
@@ -331,6 +428,9 @@ onMounted(async () => {
     const [list, configured] = await Promise.all([harnessApi.list(), aiApi.models()])
     sessions.value = list
     models.value = configured
+    const prefs = await harnessApi.preferences()
+    preferenceRevision.value = prefs.revision || 0
+    preferenceValues.value = prefs.values && typeof prefs.values === 'object' ? prefs.values : {}
     if (list[0]) await select(list[0].id)
   } catch (e) {
     error.value = (e as Error).message
@@ -435,11 +535,33 @@ onBeforeUnmount(() => {
             :editable="editable"
             :working="busy || !!active"
             :latest="index === turns.length - 1"
+            @respond="respond"
             @apply="apply"
             @observe="observe"
             @requirements="confirmRequirements"
           />
         </div>
+      </div>
+      <div v-if="session" class="harness-personalization">
+        <label
+          >任务模板
+          <select v-model="templateName" :disabled="busy || !!active">
+            <option value="">自动选择</option>
+            <option v-for="item in taskTemplates" :key="item[0]" :value="item[0]">
+              {{ item[1] }}
+            </option>
+          </select></label
+        >
+        <button type="button" @click="preferencesOpen = !preferencesOpen">我的偏好</button>
+        <section v-if="preferencesOpen" class="harness-preferences" aria-label="我的偏好">
+          <p>仅当前账号可见。本轮要求优先，偏好不会授予日志读取、部署或重启权限。</p>
+          <label v-for="(label, key) in preferenceLabels" :key="key"
+            >{{ label }}<input v-model="preferenceValues[key]" maxlength="300" :disabled="busy"
+          /></label>
+          <button type="button" :disabled="busy" @click="savePreferences()">保存偏好</button>
+          <button type="button" :disabled="busy" @click="savePreferences(true)">清空偏好</button
+          ><span role="status">{{ preferenceNotice }}</span>
+        </section>
       </div>
       <form v-if="session" class="harness-composer" @submit.prevent="submit">
         <textarea

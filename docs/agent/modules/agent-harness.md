@@ -1,12 +1,32 @@
 # Flink AI Harness 工作台
 
+## 0.0.10 能力扩展（2026-11-02）
+
+用户要求补齐工具、资源、提示模板、用户习惯、日志/Checkpoint查询及对话下方确认/补充；明确本次不发布镜像。源码/API/前端包和部署目标标签升级0.0.10，已发布镜像仍为0.0.9，未改实际Kubernetes或下载器持久化绑定。
+
+- [能力目录](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiHarnessCapabilities.java)由内部Harness和MCP共用。按角色发现并逐次鉴权，严格校验字段/类型/必填项；提供作业/SQL搜索、配置/历史、Catalog库表字段/函数、Session状态/诊断/日志、镜像/制品、SQL预览/版本比较和验证状态。跨目标查询只读，现有候选应用仍绑定原会话目标。
+- 日志来源发现、精确Pod/容器和current/previous、JM/TM文件日志、日志快照分页/字面检索/主动释放。容器最多10000行/4MiB尾部；Flink文件尾部4MiB、传输64MiB，响应每页12000字符。每用户最多20份私有快照，30分钟后拒绝读取，后续读取时清理过期记录；会话/作业删除清理关联快照。明确源截断、游标、范围和时间，不承诺已轮转/删除Pod的历史日志。新工具不受旧600行摘录限制；兼容旧evidence_collect。
+- Checkpoint概览/配置/详情/算子子任务、TM发现、异常、Savepoint/Checkpoint历史台账及元数据检查。64位Checkpoint ID；Checkpoint/TM JSON上限2MiB，算子/子任务/历史每页50项，进行中数据逐页重新采集。前后核对资源UID、spec及Flink JobID，失败/不支持明确报告。台账不是实时状态，元数据可读不证明恢复成功。
+- [交互契约](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiHarnessInteraction.java)支持clarification/choice/logs；服务端另生成绑定当前已保存SQL及修订的verification卡片。[页面卡片](../../../frontend/src/modules/ai/components/AiHarnessInteraction.vue)展示问题/选项/补充说明或具体授权动作。WAITING_USER持久化后释放账号执行资格和工作线程，24小时过期；回答保留原任务目标及问题/回答对应关系，绑定会话、轮次和交互ID，通过/respond原子受理新轮次，同号重试返回同一轮。取消/新轮次/基准变化使旧交互失效，断线/刷新/重启不丢失等待记录。
+- 用户直接在输入框补充时关联当前卡片，失败保留文字和原请求号。仅点击日志授权按钮设置续接轮次includeLogs，普通补充不自动授权；授权不存为偏好。SQL验证submit/cancel先保存原请求意图，在数据库事务外复用既有服务，需具体确认资源和Source/Sink影响；未知结果保留原号，截止取消沿用原服务。普通配置/SQL修改和启停仍使用原候选审阅/apply边界。
+- [私有偏好](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiHarnessPreferences.java)显式维护回答方式、常用Catalog/Session、SQL习惯和日志行数，使用ai_harness_preferences集合与乐观锁；GET/PUT /api/ai/harness/preferences，空values清空。每轮冻结并载入模型，日志行数用于默认读取；资源引用使用前核实。本轮指令优先，不存密码、权限、批准或集群事实，暂不自动从行为推断偏好。
+- 9份版本化任务提示模板随0.0.10制品发布，页面可选择，选择结果冻结到轮次；也可通过prompts_list/prompt_get按需读取。核心提示词版本flink-harness-v4。资源发现提供用户偏好和作业配置/Checkpoint/台账、SQL草稿、Session配置、Catalog表结构、私有日志URI模板。资源读取依旧通过领域权限及日志授权，不开放任意URL。
+
+### MCP HTTP配置
+
+[协议实现](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiHarnessMcpServiceImpl.java)、[入口](../../../backend/src/main/java/com/flinkweb/controller/ai/AiHarnessMcpController.java)：POST /api/ai/mcp，无状态Streamable HTTP的JSON响应形式，协议2025-11-25；initialize/ping、tools/list/call、resources/list/templates/list/read、prompts/list/get，通知202无正文。不声明订阅、变化通知或GET事件流；不新增集群后台采集。
+
+沿用平台已登录会话、用户修订、角色和CSRF，请求不得匿名；日志调用额外需要调用方在已获用户同意后设置X-Flink-Log-Consent: true，模型参数不能设置该请求头。内部Harness用本轮includeLogs授权，两个入口共用处理器。不支持独立OAuth客户端授权，不能声称任意外部MCP客户端已可直接连接；客户端需要能复用平台登录Cookie和CSRF。Origin严格核验，Nginx保留Host端口，协议/解析错误为JSON-RPC错误、工具业务错误为isError，输出及日志持久化前脱敏并记录调用审计。
+
+不新增数据库结构迁移或必填环境变量，单后端约束不变。验证和现场未验证范围见[本轮验收](../validation.md#harness-mcp与对话交互2026-11-02)。
+
 2026-10-30恢复与跨场景扩展：会话类型用于组织历史，关联作业固定，模型通过每轮 `plan_update.intent` 选择 SQL开发/状态/诊断/修复/评测；实际使用状态/取证/修复工具同步本轮场景。SQL已关联作业时直接开放 `job_status`、`evidence_collect`、`repair_propose`，无需另建诊断会话。只问状态不会提供SQL/修复提案工具；修复仍沿用完整差异、恢复方式、UID/spec/修订及原请求号批准边界。
 
 2026-10-30：SQL 开发可从空白需求进入，sqlId 可空，仍可选择已有草稿继续开发。未绑定时只构造内存空白基准，需求确认/SQL检查/候选生成不创建草稿；候选显示拟创建名称，明确批准后同一事务创建 SQL 草稿、绑定会话并结算应用，同号重试不会重复创建，名称冲突拒绝覆盖。删除私有会话保留已创建草稿。取消 Future 同时 executor.remove，及时释放排队容量，保留 done 清理及运行中断语义。
 
 2026-10-30补充：取消强制需求确认与调用次数上限。sql_propose 从首轮开放，可选 imageId 只能引用新环境下的登记镜像，按用户要求选择实际 Flink 版本；运行配置由服务端生成并审阅。模型仅返回 SQL 文本或 sql_check 时，控制程序提醒登记真实候选，仍缺失则明确失败，不冒充已保存。提示词采用 [Flink1.20官方DataGen说明](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/connectors/table/datagen/) 的选项，缺口一次合并且不反复询问已回答问题。
 
-更新：2026-10-30。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[原 AI 助手](ai-assistant.md)、[ADR-008](../decisions/ADR-008-agent-harness.md)。首期覆盖作业诊断/最小参数修复、SQL 开发、真实执行轨迹结构评测；尚不支持通用代码仓库开发、任意 Shell、分布式工作流或自动业务验收。
+更新：2026-11-02。关联 [REQ-003](../requirements/REQ-003-sql-session.md)、[原 AI 助手](ai-assistant.md)、[ADR-008](../decisions/ADR-008-agent-harness.md)。首期覆盖作业诊断/最小参数修复、SQL 开发、真实执行轨迹结构评测；尚不支持通用代码仓库开发、任意 Shell、分布式工作流或自动业务验收。
 
 ## 页面与确认
 

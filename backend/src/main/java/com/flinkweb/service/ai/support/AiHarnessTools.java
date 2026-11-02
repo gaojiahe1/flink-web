@@ -27,15 +27,28 @@ public class AiHarnessTools {
   private final RecordRepository records;
   private final com.flinkweb.config.platform.PlatformProperties properties;
   private final AiHarnessObservation observation;
+  private final AiHarnessCapabilities capabilities;
 
   /** 只组合现有领域能力，模型不获得写入凭据。 */
   public AiHarnessTools(ObjectMapper mapper,JobService jobs,SqlJobService sql,AiJobEvidenceCollector evidence,
-      AiSharedSummary memory,AiJobRepairCoordinator repairs,AiContentGuard guard,AccessService access,RecordRepository records,com.flinkweb.config.platform.PlatformProperties properties,AiHarnessObservation observation){
-    this.mapper=mapper;this.jobs=jobs;this.sql=sql;this.evidence=evidence;this.memory=memory;this.repairs=repairs;this.guard=guard;this.access=access;this.records=records;this.properties=properties;this.observation=observation;
+      AiSharedSummary memory,AiJobRepairCoordinator repairs,AiContentGuard guard,AccessService access,RecordRepository records,com.flinkweb.config.platform.PlatformProperties properties,AiHarnessObservation observation,AiHarnessCapabilities capabilities){
+    this.mapper=mapper;this.jobs=jobs;this.sql=sql;this.evidence=evidence;this.memory=memory;this.repairs=repairs;this.guard=guard;this.access=access;this.records=records;this.properties=properties;this.observation=observation;this.capabilities=capabilities;
   }
 
   /** 工具返回值与待持久化产物分离，防止内部字段混进模型消息。 */
   public record Outcome(ObjectNode output,ObjectNode proposal,ObjectNode evidence,ObjectNode requirements) {}
+
+  /** 用户选择的模板由服务端目录读取并冻结。 */
+  public ObjectNode template(String name){return capabilities.prompt(name);}
+
+  /** 对已保存SQL发起验证必须先审阅资源和执行影响。 */
+  private Outcome verification(ObjectNode session,ObjectNode turn,ObjectNode args,boolean cancel){
+    String sqlId=session.path("sqlId").asText();if(sqlId.isBlank())bad("请先审阅并保存SQL草稿，再申请运行验证");access.require("sql:"+sqlId,"edit");
+    var draft=sql.get(sqlId);checkSqlBaseline(draft,turn);var card=mapper.createObjectNode().put("id",UUID.randomUUID().toString()).put("kind","verification").put("state","PENDING").put("sqlId",sqlId).put("sqlRevision",draft.path("revision").asLong()).put("action",cancel?"cancel":"submit").put("expiresAt",java.time.Instant.now().plusSeconds(86400).toString());
+    if(cancel){var run=records.require("sql_validations",args.path("verificationId").asText());if(!sqlId.equals(run.path("sqlId").asText()))bad("验证任务不属于当前SQL");card.put("verificationId",run.path("id").asText());}
+    card.put("title",cancel?"取消当前SQL验证任务？":"运行当前已保存SQL的短时验证？").put("scope",cancel?"将向验证Session发送取消请求，需后续核对最终状态。":"将在专用验证Session执行SQL，可能访问真实Source/Sink并产生写入；最多1000条或两分钟后清理，受限结果将发送给本轮模型。草稿："+draft.path("name").asText()+"；修订："+draft.path("revision").asLong());card.putArray("questions");card.putArray("options");
+    return new Outcome(mapper.createObjectNode().set("interaction",card),null,null,null);
+  }
 
   /** 每轮重建来源、版本和共享总结，不导入其他会话正文。 */
   public ObjectNode context(ObjectNode session){
@@ -73,12 +86,18 @@ public class AiHarnessTools {
     if(turn.path("plan").isEmpty())return list;
     add(list,"context_read","读取本轮已冻结的当前上下文；已有结果足够时不重复读取。",Map.of());
     add(list,"memory_update","提出本会话的精简记忆，保留用户约束、已验证事实及未知项；不更新共享作业总结或权限。",Map.of("summary","string"));
+    add(list,"interaction_request","需要用户补充、选择或授权日志时提交卡片并等待；不要用于批准参数修改或重启。kind=clarification/choice/logs；questions和options均为字符串数组。",Map.of("kind","string","title","string","questions","array","options","array"));
+    for(var spec:capabilities.tools()){
+      var fn=list.addObject().put("type","function").putObject("function");fn.put("name",spec.path("name").asText()).put("description",spec.path("description").asText());fn.set("parameters",spec.path("inputSchema").deepCopy());
+    }
     String kind=session.path("kind").asText();
     if(kind.equals("diagnosis")){
       add(list,"job_status","实时读取当前作业状态、Operator/Pod/容器/近期事件问题，不进行部署或重启。",Map.of());
       add(list,"evidence_collect","按类别重新采集当前作业证据；不可用不是零，不读任意目标。",Map.of("category","string"));
       if(access.allowed(session.path("jobId").asText(),"edit"))add(list,"repair_propose","生成待用户审阅的最小参数/SQL方案，不保存或重启；必须先取得本轮证据。",Map.of("changes","array","sql","string"));
     }else if(kind.equals("sql")){
+      add(list,"sql_verification_propose","对当前已保存SQL申请短时真实执行验证，等待用户确认资源和Source/Sink影响，不直接运行。",Map.of());
+      add(list,"sql_verification_cancel_propose","申请取消当前SQL的指定验证任务，等待用户确认。",Map.of("verificationId","string"));
       add(list,"requirements_propose","整理完整业务需求及必要缺口，供用户确认；不生成SQL或修改草稿。",Map.of("summary","string","unknowns","array"));
       add(list,"sql_check","按当前草稿运行环境检查候选SQL；Parser不是Planner或业务认证。",Map.of("sql","string"));
       add(list,"sql_propose","根据用户需求直接生成完整SQL候选和服务端运行配置；不要求额外需求确认，不保存或运行。imageId 可选，仅在新草稿未配置运行环境时从 runtimeImages 选择匹配用户版本的已登记镜像。",Map.of("sql","string"));
@@ -89,7 +108,7 @@ public class AiHarnessTools {
         if(access.allowed(turn.at("/context/jobId").asText(),"edit"))add(list,"repair_propose","对本 SQL 已发布作业提出资源参数及可选完整SQL修复；必须先取证，审阅并确认恢复方式后才能保存/发布/启动或重启。",Map.of("changes","array","sql","string"));
       }
     }else add(list,"trace_inspect","读取指定源会话的真实轨迹并执行确定性结构评分，不回放模型或部署。",Map.of());
-    if(turn.path("scene").asText().equals("status"))for(int n=list.size()-1;n>=0;n--)if(Set.of("sql_check","sql_propose","repair_propose","requirements_propose").contains(list.get(n).at("/function/name").asText()))list.remove(n);
+    if(turn.path("scene").asText().equals("status"))for(int n=list.size()-1;n>=0;n--)if(Set.of("sql_check","sql_propose","repair_propose","requirements_propose","sql_verification_propose","sql_verification_cancel_propose").contains(list.get(n).at("/function/name").asText()))list.remove(n);
     return list;
   }
 
@@ -98,6 +117,15 @@ public class AiHarnessTools {
     var schema=schemas(session,turn);JsonNode found=null;
     for(var item:schema)if(name.equals(item.at("/function/name").asText()))found=item;
     if(found==null)throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_TOOL_DENIED","当前阶段或角色未开放该工具");
+    if(name.equals("sql_verification_propose")){if(!args.isEmpty())bad("验证申请不接受额外参数");return verification(session,turn,args,false);}
+    if(name.equals("sql_verification_cancel_propose")){if(args.size()!=1||!args.path("verificationId").isTextual())bad("需要验证任务编号");return verification(session,turn,args,true);}
+    if(name.equals("interaction_request")){
+      guard.requireSafe(args.toString());var card=AiHarnessInteraction.create(args);
+      if(card.path("kind").asText().equals("logs")){card.put("modelId",turn.path("modelId").asText()).put("model",turn.path("model").asText()).put("scope","本轮及回答后续接轮次中当前账号可读的脱敏日志；发送给当前所选模型。可取消或改为文字补充。");}
+      return new Outcome(mapper.createObjectNode().set("interaction",card),null,null,null);
+    }
+    boolean extension=false;for(var spec:capabilities.tools())if(name.equals(spec.path("name").asText()))extension=true;
+    if(extension)return new Outcome(capabilities.call(name,args,targetJob(session,turn),turn.path("includeLogs").asBoolean(),session.path("id").asText()),null,null,null);
     var parameters=found.at("/function/parameters/properties");
     for(var names=args.fieldNames();names.hasNext();)if(!parameters.has(names.next()))bad("工具包含未允许参数");
     for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();if(Set.of("imageId","intent").contains(field.getKey())&&value.isMissingNode())continue;

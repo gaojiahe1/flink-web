@@ -45,6 +45,11 @@ class AiHarnessIntegrationTest {
   @Autowired ObjectMapper mapper;
   @Autowired RecordRepository records;
   @Autowired AiHarnessService harness;
+  @Autowired AiHarnessCapabilities capabilities;
+  @Autowired AiHarnessPreferences preferences;
+  @Autowired AiHarnessMcpService mcp;
+  @MockitoBean com.flinkweb.client.flink.AiFlinkEvidenceClient evidenceClient;
+  @MockitoBean com.flinkweb.service.sql.SqlExecutionService executions;
   @Autowired AiModelService models;
   @Autowired JobService jobs;
   @Autowired YamlService yaml;
@@ -104,7 +109,7 @@ class AiHarnessIntegrationTest {
   private ObjectNode input(ObjectNode session){return mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("revision",session.path("revision").asLong()).put("modelId",modelId).put("content","请检查并给出最小方案");}
   /** 等待实际有界后台执行结束，不启动业务刷新。 */
   private ObjectNode completed(String sessionId,String turnId){
-    org.awaitility.Awaitility.await().pollInSameThread().atMost(Duration.ofSeconds(10)).until(()->!Set.of("QUEUED","RUNNING").contains(records.require("ai_harness_turns",turnId).path("state").asText()));
+    org.awaitility.Awaitility.await().pollInSameThread().atMost(Duration.ofSeconds(30)).until(()->!Set.of("QUEUED","RUNNING").contains(records.require("ai_harness_turns",turnId).path("state").asText()));
     for(var turn:harness.get(sessionId).path("turns"))if(turn.path("id").asText().equals(turnId))return (ObjectNode)turn;throw new AssertionError("缺少任务");
   }
   /** 工具只生成候选，明确确认后保存一次，原请求重复不再次修改。 */
@@ -361,4 +366,116 @@ class AiHarnessIntegrationTest {
       assertThat(records.require("ai_harness_turns",queued.path("id").asText()).path("state").asText()).isEqualTo("CANCELED");
     }finally{for(var filler:fillers){filler.cancel(true);executor.remove(filler);}release.countDown();}
   }
+  /** 等待用户不占模型线程，回答恢复原目标且同号仅创建一次。 */
+  @Test
+  void interactionPersistsAndResumesIdempotently()throws Exception{
+    var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;
+      if(!once.getAndSet(true)){var args=mapper.createObjectNode().put("kind","clarification").put("title","请选择时间字段");args.putArray("questions").add("时间字段是什么？");args.putArray("options");return call("interaction_request",args);}
+      inv.getArgument(4,Consumer.class).accept("已按补充继续分析");return answer();
+    }).when(model).stream(any(),anyString(),any(),any(),any());
+    var session=session();String id=session.path("id").asText();var turn=harness.start(id,input(session));var waiting=completed(id,turn.path("id").asText());
+    assertThat(waiting.path("state").asText()).isEqualTo("WAITING_USER");assertThat(harness.get(id).at("/turns/0/interaction/state").asText()).isEqualTo("PENDING");
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit");response.putObject("answers").put("q0","event_time");
+    var resumed=harness.respond(id,turn.path("id").asText(),response);completed(id,resumed.path("id").asText());assertThat(harness.respond(id,turn.path("id").asText(),response).path("id")).isEqualTo(resumed.path("id"));
+    assertThat(harness.get(id).path("turns")).hasSize(2);assertThat(resumed.path("content").asText()).contains("event_time","时间字段是什么");assertThat(records.require("ai_harness_turns",resumed.path("id").asText()).path("continuationGoal").asText()).isEqualTo(turn.path("content").asText());
+    var changed=response.deepCopy().put("requestId",UUID.randomUUID().toString());assertThatThrownBy(()->harness.respond(id,turn.path("id").asText(),changed)).hasMessageContaining("已提交");
+  }
+  /** 日志同意只来自本次显式动作，文字补充和用户偏好不能替代授权。 */
+  @Test
+  void logInteractionDoesNotTreatTextAsConsent()throws Exception{
+    var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(!once.getAndSet(true)){var args=mapper.createObjectNode().put("kind","logs").put("title","需要日志");args.putArray("questions");args.putArray("options");return call("interaction_request",args);}inv.getArgument(4,Consumer.class).accept("继续分析");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var session=session();String id=session.path("id").asText();var turn=harness.start(id,input(session));var waiting=completed(id,turn.path("id").asText());
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit").put("grantLogs",false);response.putObject("answers").put("note","先看Checkpoint");
+    var resumed=harness.respond(id,turn.path("id").asText(),response);completed(id,resumed.path("id").asText());assertThat(records.require("ai_harness_turns",resumed.path("id").asText()).path("includeLogs").asBoolean()).isFalse();
+  }
+  /** 原资源修订变化和新轮次都使等待卡片失效。 */
+  @Test
+  void staleInteractionCannotContinue()throws Exception{
+    doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;var args=mapper.createObjectNode().put("kind","choice").put("title","选排查方向");args.putArray("questions");args.putArray("options").add("Checkpoint");return call("interaction_request",args);}).when(model).stream(any(),anyString(),any(),any(),any());
+    var session=session();String id=session.path("id").asText();var turn=harness.start(id,input(session));var waiting=completed(id,turn.path("id").asText());
+    jobs.update(job.id(),new DraftRequest(job.name(),"changed",job.flinkVersion(),job.yaml(),job.revision()));
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit");response.putObject("answers").put("choice","Checkpoint");
+    assertThatThrownBy(()->harness.respond(id,turn.path("id").asText(),response)).hasMessageContaining("变化");
+    assertThat(records.require("ai_harness_turns",turn.path("id").asText()).path("state").asText()).isEqualTo("WAITING_USER");harness.cancel(id,turn.path("id").asText());
+  }
+  /** 日志快照可继续翻页、检索和清理；不允许用参数绕过本轮同意。 */
+  @Test
+  void preciseLogReadPagesAndSearchesSamePrivateSnapshot(){
+    var args=mapper.createObjectNode().put("pod","jm-1").put("container","flink-main-container").put("lines",10000).put("previous",true);
+    assertThatThrownBy(()->capabilities.call("logs_read",args,job.id(),false,"")).hasMessageContaining("授权");
+    when(diagnostics.log(job.id(),"jm-1","flink-main-container",10000,true)).thenReturn(mapper.createObjectNode().put("text","x".repeat(15000)+"Checkpoint failed").put("previous",true).put("truncated",true));
+    var first=capabilities.call("logs_read",args,job.id(),true,"");assertThat(first.path("hasMore").asBoolean()).isTrue();assertThat(first.path("text").asText()).hasSize(12000);
+    var next=capabilities.call("logs_page",mapper.createObjectNode().put("logId",first.path("logId").asText()).put("offset",12000),"",true,"");assertThat(next.path("text").asText()).endsWith("Checkpoint failed");assertThat(next.path("truncated").asBoolean()).isTrue();
+    var found=capabilities.call("logs_search",mapper.createObjectNode().put("logId",first.path("logId").asText()).put("query","Checkpoint"),"",true,"");assertThat(found.path("matches")).hasSize(1);
+    assertThatThrownBy(()->capabilities.call("logs_page",mapper.createObjectNode().put("logId",first.path("logId").asText()),"",false,"")).hasMessageContaining("授权");
+    assertThat(capabilities.call("logs_release",mapper.createObjectNode().put("logId",first.path("logId").asText()),"",true,"").path("released").asBoolean()).isTrue();assertThat(records.find("ai_harness_log_snapshots",first.path("logId").asText())).isNull();
+  }
+  /** Checkpoint下钻端点绑定实际运行身份，读取期间重建会拒绝混合证据。 */
+  @Test
+  void checkpointDetailsBindCurrentRun(){
+    String jid="a".repeat(32),vertex="b".repeat(32);live.withObject("/status/jobStatus").put("jobId",jid);
+    when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/checkpoints/details/12/subtasks/"+vertex)).thenReturn(mapper.createObjectNode().putArray("subtasks").addObject().put("index",0));
+    var args=mapper.createObjectNode().put("checkpointId",12).put("vertexId",vertex);
+    var out=capabilities.call("checkpoint_operator_detail",args,job.id(),false,"");assertThat(out.path("flinkJobId").asText()).isEqualTo(jid);assertThat(out.path("source").asText()).contains("subtasks/"+vertex);
+    when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/checkpoints")).thenAnswer(inv->{live.withObject("/status/jobStatus").put("jobId","c".repeat(32));return mapper.createObjectNode();});
+    assertThatThrownBy(()->capabilities.call("checkpoint_overview",mapper.createObjectNode(),job.id(),false,"")).hasMessageContaining("身份变化");
+  }
+  /** MCP协议、私有偏好和CSRF走真实HTTP过滤链。 */
+  @Test
+  void mcpDiscoveryPreferencesAndHttpGuards()throws Exception{
+    var req=mapper.createObjectNode().put("jsonrpc","2.0").put("id",1).put("method","initialize");req.putObject("params").put("protocolVersion","2025-11-25");
+    mvc.perform(post("/api/ai/mcp").with(csrf()).contentType("application/json").content(req.toString())).andExpect(status().isOk()).andExpect(jsonPath("$.result.serverInfo.version").value("0.0.10"));
+    mvc.perform(post("/api/ai/mcp").contentType("application/json").content(req.toString())).andExpect(status().isForbidden());
+    mvc.perform(post("/api/ai/mcp").with(csrf()).header("Origin","https://evil.example").contentType("application/json").content(req.toString())).andExpect(status().isForbidden());
+    org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("admin","",List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))));
+    req.put("method","tools/list");assertThat(mcp.dispatch(req,false).path("result").path("tools").toString()).contains("checkpoint_operator_detail","logs_read","catalog_metadata");
+    req.put("method","prompts/list");assertThat(mcp.dispatch(req,false).path("result").path("prompts")).hasSize(9);
+    var old=preferences.get();var input=mapper.createObjectNode().put("revision",old.path("revision").asLong());input.putObject("values").put("responseStyle","先给结论");var saved=preferences.save(input);assertThat(preferences.get().at("/values/responseStyle").asText()).isEqualTo("先给结论");
+    assertThatThrownBy(()->preferences.save(input)).hasMessageContaining("修改");
+    var invalid=mapper.createObjectNode().put("revision",saved.path("revision").asLong());invalid.putObject("values").put("allowRestart","true");assertThatThrownBy(()->preferences.save(invalid)).hasMessageContaining("无效");
+    preferences.save(mapper.createObjectNode().put("revision",saved.path("revision").asLong()).set("values",mapper.createObjectNode()));
+  }
+
+  /** SQL真实验证只在卡片明确批准后提交，网络不进入元数据事务。 */
+  @Test
+  void verificationRequiresConcreteUserConfirmation()throws Exception{
+    String sqlId="verify-"+UUID.randomUUID();sql.save(sqlId,new SqlDraftRequest(sqlId,"","SELECT 1",mapper.createObjectNode(),0));
+    var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(!once.getAndSet(true))return call("sql_verification_propose",mapper.createObjectNode());inv.getArgument(4,Consumer.class).accept("验证已受理，需核对状态");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    when(executions.submit(eq(sqlId),anyLong(),anyString())).thenAnswer(inv->{assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();return mapper.createObjectNode().put("id","validation-one").put("state","RUNNING");});
+    var s=harness.create(mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("kind","sql").put("sqlId",sqlId));String id=s.path("id").asText();var turn=harness.start(id,input(s));var waiting=completed(id,turn.path("id").asText());assertThat(waiting.at("/interaction/kind").asText()).isEqualTo("verification");verify(executions,never()).submit(anyString(),anyLong(),anyString());
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit").put("confirmedVerification",true);response.putObject("answers");
+    var next=harness.respond(id,turn.path("id").asText(),response);completed(id,next.path("id").asText());harness.respond(id,turn.path("id").asText(),response);verify(executions,times(1)).submit(eq(sqlId),anyLong(),anyString());
+    assertThat(records.require("ai_harness_turns",next.path("id").asText()).at("/interactionResponse/verificationResult/id").asText()).isEqualTo("validation-one");
+  }
+  /** 发现过滤不能替代调用鉴权，跨用户偏好与日志快照保持隔离。 */
+  @Test
+  void capabilitiesRecheckRoleAndPrivateLogOwner(){
+    var auth=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+    try{
+      org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("operator","",List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_OPERATOR"))));
+      assertThat(capabilities.tools().toString()).doesNotContain("catalog_metadata");assertThatThrownBy(()->capabilities.call("catalog_metadata",mapper.createObjectNode().put("catalogId","c"),"",false,"")).hasMessageContaining("角色");
+      var preference=preferences.get();assertThat(preference.path("values").isEmpty()).isTrue();
+      var log=records.save("ai_harness_log_snapshots","private-log-"+UUID.randomUUID(),mapper.createObjectNode().put("owner","someone-else").put("expiresAt",java.time.Instant.now().plusSeconds(600).toString()).put("text","private"),0);
+      assertThatThrownBy(()->capabilities.call("logs_page",mapper.createObjectNode().put("logId",log.path("id").asText()),"",true,"")).hasMessageContaining("其他用户");
+    }finally{org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);}
+  }
+
+  /** MCP解析错误、通知和带端口的同源请求遵守JSON-RPC与HTTP约定。 */
+  @Test
+  void mcpParseErrorsNotificationsAndOriginPort()throws Exception{
+    mvc.perform(post("/api/ai/mcp").with(csrf()).contentType("application/json").content("{" )).andExpect(status().isOk()).andExpect(jsonPath("$.error.code").value(-32700));
+    mvc.perform(post("/api/ai/mcp").with(csrf()).contentType("application/json").content("[]")).andExpect(status().isOk()).andExpect(jsonPath("$.error.code").value(-32600));
+    mvc.perform(post("/api/ai/mcp").with(csrf()).contentType("application/json").content("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")).andExpect(status().isAccepted());
+    mvc.perform(post("/api/ai/mcp").with(csrf()).header("Host","localhost:30080").header("Origin","http://localhost:30080").contentType("application/json").content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}")).andExpect(status().isOk());
+    mvc.perform(post("/api/ai/mcp").with(csrf()).header("MCP-Protocol-Version","unsupported").contentType("application/json").content("{}")).andExpect(status().isBadRequest());
+  }
+  /** 大Checkpoint详情按算子及子任务分页，偏移和64位ID不会截断。 */
+  @Test
+  void checkpointPagesSupportLargeIds(){
+    String jid="a".repeat(32);live.withObject("/status/jobStatus").put("jobId",jid);var data=mapper.createObjectNode();var rows=data.putArray("subtasks");for(int n=0;n<120;n++)rows.addObject().put("index",n);
+    when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/checkpoints/details/9999999999/subtasks/"+"b".repeat(32))).thenReturn(data);
+    var args=mapper.createObjectNode().put("checkpointId",9999999999L).put("vertexId","b".repeat(32)).put("offset",50);
+    var out=capabilities.call("checkpoint_operator_detail",args,job.id(),false,"");assertThat(out.at("/data/subtasks")).hasSize(50);assertThat(out.at("/data/subtasks/0/index").asInt()).isEqualTo(50);assertThat(out.at("/data/page/nextOffset").asInt()).isEqualTo(100);
+  }
+
 }

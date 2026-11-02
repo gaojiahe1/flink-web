@@ -68,7 +68,7 @@ class AiTaskConcurrencyTest {
       assertThat(created.get(2,TimeUnit.SECONDS).path("state").asText()).isEqualTo("FAILED");
       finisher.join(2000);assertThat(finisher.isAlive()).isFalse();assertThat(failure.get()).isNull();
       assertThat(data.get(completed).path("state").asText()).isEqualTo("SUCCEEDED");
-      release.countDown();var next=new CountDownLatch(1);pool.execute(next::countDown);
+      release.countDown();org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2)).until(()->pool.getQueue().isEmpty());var next=new CountDownLatch(1);pool.execute(next::countDown);
       assertThat(next.await(2,TimeUnit.SECONDS)).isTrue();
     } finally {release.countDown();service.close();}
   }

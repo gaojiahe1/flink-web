@@ -502,3 +502,65 @@
 .harness-current-status p {
   margin: 6px 0;
 }
+
+.harness-interaction {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.harness-interaction-field {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+.harness-interaction-field input,
+.harness-interaction-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.harness-interaction fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.harness-interaction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.harness-interaction small {
+  color: var(--muted);
+}
+.harness-personalization {
+  padding: 6px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+}
+.harness-preferences {
+  width: 100%;
+  max-height: 240px;
+  overflow: auto;
+}
+.harness-preferences label {
+  display: inline-grid;
+  gap: 4px;
+  margin: 0 12px 8px 0;
+}
+@media (max-width: 700px) {
+  .harness-interaction-actions button {
+    flex: 1 1 auto;
+  }
+  .harness-preferences label {
+    display: grid;
+    margin-right: 0;
+  }
+}

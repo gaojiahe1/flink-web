@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import AiRichText from './AiRichText.vue'
+import AiHarnessInteraction from './AiHarnessInteraction.vue'
 import CodeDiff from '../../../shared/components/editor/CodeDiff.vue'
 import { activeHarnessTurn, type HarnessTurn } from '../api/harness'
 import { requestId } from '../../../shared/utils/requestId'
@@ -12,6 +13,7 @@ const props = defineProps<{
   latest: boolean
 }>()
 const emit = defineEmits<{
+  respond: [turn: HarnessTurn, input: Record<string, unknown>]
   apply: [turn: HarnessTurn, input: Record<string, unknown>]
   observe: [turn: HarnessTurn]
   requirements: [turn: HarnessTurn]
@@ -58,6 +60,8 @@ const stateText = computed(
   () =>
     (
       ({
+        WAITING_USER: '等待你的补充',
+        ANSWERED: '已回答，继续原任务',
         QUEUED: '已排队',
         RUNNING: '执行中',
         SUCCEEDED: '分析完成',
@@ -202,6 +206,13 @@ function retryOriginal() {
       </button>
       <small>也可直接在下方补充需求；生成候选不会保存或运行。</small>
     </section>
+    <AiHarnessInteraction
+      v-if="turn.interaction"
+      :card="turn.interaction"
+      :enabled="latest && turn.state === 'WAITING_USER'"
+      :working="working"
+      @respond="emit('respond', turn, $event)"
+    />
     <section v-if="candidate" class="harness-candidate">
       <p v-if="candidate.newDraft && !turn.applicationId">
         批准后新建并绑定 SQL 草稿：<strong>{{ candidate.sqlName }}</strong

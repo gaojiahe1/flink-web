@@ -21,7 +21,22 @@ export interface HarnessPlan {
   check: string
   changes?: { path: string; value: unknown }[]
 }
+export interface HarnessInteraction {
+  id: string
+  kind: 'clarification' | 'choice' | 'logs' | 'verification'
+  title: string
+  questions: string[]
+  options: string[]
+  state: 'PENDING' | 'ANSWERED' | 'CANCELED' | 'EXPIRED'
+  expiresAt: string
+  scope?: string
+  model?: string
+  action?: string
+  verificationResult?: { state: string; message?: string }
+  answers?: Record<string, string>
+}
 export interface HarnessTurn {
+  interaction?: HarnessInteraction
   id: string
   sessionId: string
   sequence: number
@@ -90,6 +105,15 @@ const base = '/api/ai/harness/sessions'
 const path = (id: string) => base + '/' + encodeURIComponent(id)
 const turnPath = (id: string, turn: string) => path(id) + '/turns/' + encodeURIComponent(turn)
 export const harnessApi = {
+  preferences: () =>
+    request<{ revision: number; values: Record<string, string> }>('/api/ai/harness/preferences'),
+  savePreferences: (input: unknown) =>
+    request<{ revision: number; values: Record<string, string> }>('/api/ai/harness/preferences', {
+      method: 'PUT',
+      ...jsonBody(input),
+    }),
+  respond: (id: string, turn: string, input: unknown) =>
+    request<HarnessTurn>(turnPath(id, turn) + '/respond', { method: 'POST', ...jsonBody(input) }),
   list: () => request<HarnessSession[]>(base),
   create: (input: unknown) => request<HarnessSession>(base, { method: 'POST', ...jsonBody(input) }),
   get: (id: string) => request<HarnessSession>(path(id)),

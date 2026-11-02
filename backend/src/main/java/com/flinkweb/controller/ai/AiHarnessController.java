@@ -35,6 +35,9 @@ public class AiHarnessController {
   @PostMapping("/{id}/turns")
   @ResponseStatus(HttpStatus.ACCEPTED)
   public ApiResponse<ObjectNode> start(@PathVariable String id,@RequestBody ObjectNode input){return ApiResponse.ok(harness.start(id,input));}
+  /** 提交用户选择或补充信息，服务端重验交互身份和基准。 */
+  @PostMapping("/{id}/turns/{turnId}/respond")
+  public ApiResponse<ObjectNode> respond(@PathVariable String id,@PathVariable String turnId,@RequestBody ObjectNode input){return ApiResponse.ok(harness.respond(id,turnId,input));}
   /** 只取消本轮后续执行，不撤销已提交运行操作。 */
   @PostMapping("/{id}/turns/{turnId}/cancel")
   public ApiResponse<ObjectNode> cancel(@PathVariable String id,@PathVariable String turnId){return ApiResponse.ok(harness.cancel(id,turnId));}

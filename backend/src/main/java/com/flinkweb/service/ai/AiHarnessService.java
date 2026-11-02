@@ -17,6 +17,8 @@ public interface AiHarnessService {
   void delete(String id,long revision);
   /** 创建一轮有界任务，计划先于模型输出持久化。 */
   ObjectNode start(String id,ObjectNode input);
+  /** 回答私有交互卡片，幂等创建续接轮次或取消。 */
+  ObjectNode respond(String id,String turnId,ObjectNode input);
   /** 取消本轮后续模型和工具，不宣称撤销已提交动作。 */
   ObjectNode cancel(String id,String turnId);
   /** 通过真实执行事件投影当前任务；断开连接不等于取消。 */
