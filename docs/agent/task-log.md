@@ -2,7 +2,7 @@
 
 ## 2026-11-04 Spring AI与Langfuse双模式
 
-统一旧SQL/作业助手、模型测试与Harness为Spring AI1.1.7模型调用；保留平台工具权限、审批和恢复。新增仅元数据的OTLP观测及direct/collector环境切换、独立Collector部署示例和显式现场联调脚本。完整后端363通过/4条件跳过，受影响补验71项通过；实际Langfuse4.70.1验证两种模式的chain/generation/tool、关联及用量。平台保持0.0.10，未构建或发布镜像，未更新实际工作负载；原用户Collector配置不变。原理见[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，配置及验证边界见[接入说明](../../deploy/observability/README.md)、[验收](validation.md#spring-ai与langfuse双模式2026-11-04)。
+统一旧SQL/作业助手、模型测试与Harness为Spring AI1.1.7模型调用；保留平台工具权限、审批和恢复。新增仅元数据的OTLP观测及direct/collector环境切换、独立Collector部署示例和显式现场联调脚本。完整后端363通过/4条件跳过，受影响补验71项通过；实际Langfuse4.70.1验证两种模式的chain/generation/tool、关联及用量。功能提交 `ece4914` 经验证后快进合并本地master，无冲突/新增代码差异，源码未推送。平台保持0.0.10，未构建或发布镜像，未更新实际工作负载；原用户Collector配置不变。原理见[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，配置及验证边界见[接入说明](../../deploy/observability/README.md)、[验收](validation.md#spring-ai与langfuse双模式2026-11-04)。
 
 ## 2026-11-02 Harness MCP、日志/Checkpoint与对话交互
 
