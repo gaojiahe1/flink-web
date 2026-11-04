@@ -1,5 +1,9 @@
 # AI 助手与模型服务
 
+2026-11-04：全项目AI模型请求迁移Spring AI1.1.7（Boot3.5.16/Java17），旧助手、模型连接测试和Harness共用[SpringAiModelGateway](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiModelGateway.java)。框架负责ChatModel消息与流式工具分片，平台保留网络/超时/字节/UTF-8/完整终止验证、ModelScope参数和链内推理回传；旧适配入口保持契约。框架不自动执行工具、不自动重试。
+
+新增[AiTelemetry](../../../backend/src/main/java/com/flinkweb/client/ai/AiTelemetry.java)及[配置](../../../backend/src/main/java/com/flinkweb/config/ai/AiTelemetryConfiguration.java)，支持direct到Langfuse、collector到OTLP完整端点；默认关闭，仅元数据/模型/状态/耗时/Token，未上传提示词、SQL/日志或推理正文。凭据仅环境配置，直连在后端、Collector模式在Collector。版本仍0.0.10，不新增迁移/必填启动变量、不发布镜像。决策见[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)，使用见[接入说明](../../../deploy/observability/README.md)，结果见[验收](../validation.md#spring-ai与langfuse双模式2026-11-04)。
+
 2026-10-30：TaskManager JVM/GC指标在每个实例内部隔离异常，一个实例失败继续读取后续实例；提示带实例ID，不把失败/空值当0。仍仅取前2个并保留截断提示，JM/列表读取失败逻辑不变。
 
 2026-10-29新增独立 [Flink AI Harness 工作台](agent-harness.md)：原生工具循环、SSE对话、诊断/SQL开发/实际轨迹结构评测、批准实施及私有会话删除。原抽屉继续兼容；新工作台模型也没有改参数/重启写工具，须人批准后由平台运行服务实施。

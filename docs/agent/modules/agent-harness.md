@@ -1,5 +1,7 @@
 # Flink AI Harness 工作台
 
+2026-11-04：模型调用已由Spring AI1.1.7接管；原生工具/消息协议仍通过原适配入口与领域契约衔接，不把工具执行和审批交给框架。新旧AI均支持Langfuse direct/collector观测；每轮chain、模型generation、工具tool，回答/应用/取消/手动观察为event。等待用户结束当前span，续接轮次共用session；traceId启用时进入轮次投影。默认仅元数据，日志授权不等于外部观测正文授权。见[AI模块](ai-assistant.md)、[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)和[本轮验收](../validation.md#spring-ai与langfuse双模式2026-11-04)。
+
 ## 0.0.10 能力扩展（2026-11-02）
 
 用户要求补齐工具、资源、提示模板、用户习惯、日志/Checkpoint查询及对话下方确认/补充；明确本次不发布镜像。源码/API/前端包和部署目标标签升级0.0.10，已发布镜像仍为0.0.9，未改实际Kubernetes或下载器持久化绑定。

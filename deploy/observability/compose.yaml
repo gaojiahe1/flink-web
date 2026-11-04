@@ -1,0 +1,16 @@
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?Set project public key}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?Set project secret key}
+      LANGFUSE_OTLP_BASE_URL: ${LANGFUSE_OTLP_BASE_URL:-http://host.docker.internal:3000/api/public/otel}
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:14318:4318"
+      - "127.0.0.1:14317:4317"
+      - "127.0.0.1:14133:13133"
+    mem_limit: 256m
+    restart: unless-stopped

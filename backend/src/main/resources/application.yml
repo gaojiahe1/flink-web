@@ -53,3 +53,17 @@ platform:
     bucket: ${FLINK_WEB_S3_BUCKET:}
     prefix: ${FLINK_WEB_S3_PREFIX:artifacts/}
     region: ${AWS_REGION:us-east-1}
+
+flink-web:
+  ai:
+    telemetry:
+      enabled: ${FLINK_WEB_AI_TELEMETRY_ENABLED:false}
+      mode: ${FLINK_WEB_AI_TELEMETRY_MODE:collector}
+      langfuse-base-url: ${LANGFUSE_BASE_URL:http://127.0.0.1:3000}
+      public-key: ${LANGFUSE_PUBLIC_KEY:}
+      secret-key: ${LANGFUSE_SECRET_KEY:}
+      endpoint: ${FLINK_WEB_OTEL_TRACES_ENDPOINT:http://127.0.0.1:4318/v1/traces}
+logging:
+  level:
+    org.springframework.ai: "OFF"
+    org.springframework.web.reactive.function.client: "OFF"

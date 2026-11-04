@@ -33,6 +33,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AiHarnessServiceImpl implements AiHarnessService {
   private static final String SESSIONS="ai_harness_sessions",TURNS="ai_harness_turns",PLANS="ai_harness_plans",APPLICATIONS="ai_harness_applications";
   private static final Set<String> ACTIVE=Set.of("QUEUED","RUNNING","APPLYING");
+  @org.springframework.beans.factory.annotation.Autowired
+  private com.flinkweb.client.ai.AiTelemetry telemetry;
   private final ObjectMapper mapper;
   private final RecordRepository records;
   private final AccessService access;
@@ -165,6 +167,10 @@ public class AiHarnessServiceImpl implements AiHarnessService {
 
   /** 回答卡片不占用等待线程；原请求重试返回同一个续接轮次。 */
   public ObjectNode respond(String id,String turnId,ObjectNode input){
+    try(var trace=telemetry.start("interaction.response","event",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){try{var result=respondInternal(id,turnId,input);trace.attribute("flink.harness.state",result.path("state").asText());return result;}catch(RuntimeException error){trace.error(error instanceof BusinessException business?business.code():error.getClass().getSimpleName());throw error;}}
+  }
+  /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
+  private ObjectNode respondInternal(String id,String turnId,ObjectNode input){
     boolean verify;
     synchronized(state.monitor()){var session=load(id);var turn=requireTurn(session,turnId);verify=turn.at("/interaction/kind").asText().equals("verification")&&!turn.at("/interaction/state").asText().equals("ANSWERED");}
     if(verify&&input.path("decision").asText().equals("submit")&&input.path("confirmedVerification").asBoolean())submitVerification(id,turnId,input);
@@ -218,7 +224,11 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   }}
 
   /** 显式取消先持久化，后中断请求；迟到响应不能复活任务。 */
-  public ObjectNode cancel(String id,String turnId){ObjectNode out;
+  public ObjectNode cancel(String id,String turnId){
+    try(var trace=telemetry.start("turn.cancel","event",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){try{var result=cancelInternal(id,turnId);trace.attribute("flink.harness.state",result.path("state").asText());return result;}catch(RuntimeException error){trace.error(error instanceof BusinessException business?business.code():error.getClass().getSimpleName());throw error;}}
+  }
+  /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
+  private ObjectNode cancelInternal(String id,String turnId){ObjectNode out;
     synchronized(state.monitor()){var session=load(id);var turn=requireTurn(session,turnId);
       if(turn.path("state").asText().equals("APPLYING"))conflict("执行操作已提交处理中，请核对原应用；取消对话不能撤回集群操作");
       if(ACTIVE.contains(turn.path("state").asText())||turn.path("state").asText().equals("WAITING_USER")){if(turn.path("interaction").isObject())((ObjectNode)turn.path("interaction")).put("state","CANCELED");turn.put("state","CANCELED").put("message","本轮已取消");addEvent(turn,"run.canceled","本轮已取消",mapper.createObjectNode());saveTurn(turn);}
@@ -237,7 +247,11 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   }}
 
   /** 用户批准后只使用本轮最新候选；原运行服务负责恢复模式、身份与 dry-run。 */
-  public ObjectNode apply(String id,String turnId,ObjectNode input,Principal actor){synchronized(state.monitor()){
+  public ObjectNode apply(String id,String turnId,ObjectNode input,Principal actor){
+    try(var trace=telemetry.start("approval.apply","event",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){try{var result=applyInternal(id,turnId,input,actor);trace.attribute("flink.harness.state",result.path("state").asText());return result;}catch(RuntimeException error){trace.error(error instanceof BusinessException business?business.code():error.getClass().getSimpleName());throw error;}}
+  }
+  /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
+  private ObjectNode applyInternal(String id,String turnId,ObjectNode input,Principal actor){synchronized(state.monitor()){
     var session=load(id);var turn=requireTurn(session,turnId);String requestId=uuid(input.path("requestId").asText());
     if(!input.path("confirmed").asBoolean())bad("请明确确认本次方案及执行方式");settled(session,requestId);
     if(ACTIVE.contains(turn.path("state").asText()))conflict("当前任务尚未完成，不能应用候选");
@@ -260,7 +274,11 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   }}
 
   /** 三秒手动核对只观察原操作对应的目标，不推进模型或重复提交。 */
-  public ObjectNode observe(String id,String turnId){synchronized(state.monitor()){
+  public ObjectNode observe(String id,String turnId){
+    try(var trace=telemetry.start("operation.observe","event",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){try{var result=observeInternal(id,turnId);trace.attribute("flink.harness.state",result.path("state").asText());return result;}catch(RuntimeException error){trace.error(error instanceof BusinessException business?business.code():error.getClass().getSimpleName());throw error;}}
+  }
+  /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
+  private ObjectNode observeInternal(String id,String turnId){synchronized(state.monitor()){
     var session=load(id);var turn=requireTurn(session,turnId);String applicationId=turn.path("applicationId").asText();if(applicationId.isBlank())bad("本轮没有需要核对的应用");
     long now=System.currentTimeMillis();if(now-turn.path("lastObserveAt").asLong()<3000)conflict("请间隔三秒后手动刷新");
     turn.put("lastObserveAt",now);saveTurn(turn);
@@ -285,7 +303,14 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   public void sqlDeleted(AiJobState.SqlDeleted event){removeSubject("sqlId",event.sqlId());}
 
   /** 模型与工具按目标持续推进，取消和内容大小保护独立于调用次数。 */
-  private void execute(String id,String turnId){try{
+  private void execute(String id,String turnId){
+    try(var trace=telemetry.start("harness.turn","chain",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){
+      if(!trace.id().isBlank())update(id,turnId,t->t.put("traceId",trace.id()));
+      executeRun(id,turnId);var turn=records.find(TURNS,turnId);if(turn!=null){String status=turn.path("state").asText();trace.attribute("flink.harness.state",status);if(Set.of("FAILED","STALLED","CANCELED","INTERRUPTED").contains(status))trace.error(status);}
+    }
+  }
+  /** 原有编排、审批和恢复继续由平台控制，不交给框架自动执行。 */
+  private void executeRun(String id,String turnId){try{
     var initial=active(id,turnId);update(id,turnId,t->t.put("state","RUNNING"));
     var session=loadLocked(id);var model=models.require(initial.path("modelId").asText(),session.path("kind").asText().equals("sql")?"sql":"diagnosis");
     var messages=mapper.createArrayNode();messages.addObject().put("role","system").put("content",prompt);

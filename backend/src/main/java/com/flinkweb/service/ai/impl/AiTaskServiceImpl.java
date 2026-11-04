@@ -28,6 +28,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class AiTaskServiceImpl implements AiTaskService {
   private final RecordRepository records;
+  @org.springframework.beans.factory.annotation.Autowired(required=false)
+  private com.flinkweb.client.ai.AiTelemetry telemetry=com.flinkweb.client.ai.AiTelemetry.noop();
   private final ObjectMapper mapper;
   private final AiModelService models;
   private final AiModelClient client;
@@ -309,7 +311,11 @@ public class AiTaskServiceImpl implements AiTaskService {
   }
 
   /** 网络调用放在有界工作线程，任务状态持久化不持长事务。 */
-  private void execute(String id, ObjectNode input, ObjectNode model) {
+  private void execute(String id,ObjectNode input,ObjectNode model){
+    try(var trace=telemetry.start("assistant.task","chain",java.util.Map.of("langfuse.session.id",input.path("sqlId").asText(input.path("jobId").asText(id)),"langfuse.user.id",access.actor(),"langfuse.trace.metadata.taskId",id))){executeRun(id,input,model);var task=records.find("ai_tasks",id);if(task!=null){trace.attribute("flink.task.state",task.path("state").asText());if(task.path("state").asText().equals("FAILED"))trace.error("FAILED");}}
+  }
+  /** 旧助手同样走Spring AI，领域状态机及事务边界保持独立。 */
+  private void executeRun(String id, ObjectNode input, ObjectNode model) {
     try {
       synchronized (taskLock) {
         var task = records.find("ai_tasks", id);

@@ -1,5 +1,16 @@
 # 治理与记忆系统验收
 
+## Spring AI与Langfuse双模式（2026-11-04）
+
+- 基线本地master449e753，修改前干净；工作分支codex/spring-ai-langfuse。保持0.0.10及暂不发布镜像，不更新实际Flink/Kubernetes工作负载。
+- Spring AI1.1.7 OpenAiChatModel覆盖旧SQL/作业助手、模型连接测试、Harness流式对话。关闭内部工具执行和自动重试，保留权限/审批/修订/原请求恢复。响应正常JSON伪装成SSE的兼容由受限HTTP适配提供，SSE/工具分片由框架处理；字节/UTF-8/超时/完整终止校验和请求链推理字段继续保留。
+- 最终完整后端367项363通过/4条件跳过（原3项外部条件和1项显式真实Langfuse条件），0失败/0错误；协议、模型HTTP错误分类与不回显、JSON兼容、中文/工具分片、请求链推理字段、私有交互、日志/Checkpoint、审批/取消、状态及事务回归通过。随后复用共享HTTP连接并补验真实工具定义传输，受影响AI套件71项再次全部通过。
+- 用户实际Langfuse4.70.1（127.0.0.1:3000）及Collector0.164.0。Collector配置经真实镜像validate通过；脚本使用进程环境认证，独立临时Collector共用原Docker网络，不修改原配置或数据卷，结束自动删除。两条Java SDK→Langfuse链路通过Observations API v2实际读取：direct trace e523a64da7c5da7f988ed827f4f8436f，collector trace 379e21e8bb1edb84640b39a98ecbbab8，各3观测，CHAIN/GENERATION/TOOL、父子关系及session均正确；模型test-model，usage输入12/输出3/总15。仅合成验证，不代表真实厂商模型或生产业务验收。
+- 模型/工具/任务及交互事件的关联属性复制到子span，默认只元数据。直连后端认证，Collector模式后端不携带Langfuse密钥；不记录用户消息、SQL/日志、工具正文、内部推理、凭据或原始异常。关闭模式无导出，队列有界；不替代数据库审计。
+- 最终后端制品package成功；中文Javadoc/架构259类1629方法及知识链接40文档706链接通过。完整回归后，两模式现场脚本再次成功（direct trace 1baac7509d3c76a15fa336c7cec1cb63、collector trace 289606f8beb8c9ac9687dc4c1b94b5e0），各3观测及12/3 Token通过，临时Collector已删除。
+- 原用户Collector挂载文件仍仅debug，未覆盖；本轮读取后启动已有Langfuse依赖用于验证，最终保留用户现有服务状态。没有创建新项目、删除用户数据、发布镜像或更新实际集群。部署指引见[说明](../../deploy/observability/README.md)。
+
+
 ## Harness MCP与对话交互（2026-11-02）
 
 功能提交 `53c3e4b` 在验证后已由codex/harness-mcp-010快进合并本地master；合并前干净、无冲突和新增代码差异。源码Git未推送，镜像未构建/发布。预览服务和本任务独占验证临时目录已清理，截图、标准构建产物及共享/未知缓存保留。

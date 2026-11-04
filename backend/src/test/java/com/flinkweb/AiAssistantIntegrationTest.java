@@ -239,7 +239,7 @@ class AiAssistantIntegrationTest {
             if (sleep > 0) Thread.sleep(sleep);
             var m = new ObjectMapper();
             var body = m.createObjectNode();
-            body.putArray("choices").addObject().putObject("message").put("content", content);
+            body.putArray("choices").addObject().put("index",0).put("finish_reason","stop").putObject("message").put("role","assistant").put("content", content);
             byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);

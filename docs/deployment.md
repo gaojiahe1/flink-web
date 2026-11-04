@@ -1,5 +1,14 @@
 # Flink Web 部署指南
 
+## Spring AI与Langfuse双模式（2026-11-04）
+
+平台仍0.0.10，本轮不构建/发布应用镜像、不更新Flink/Kubernetes工作负载。模型调用统一Spring AI1.1.7，Java17/Boot3.5.16/BES保持。
+
+新增FLINK_WEB_AI_TELEMETRY_ENABLED（默认false）及FLINK_WEB_AI_TELEMETRY_MODE（collector/direct）。direct使用LANGFUSE_BASE_URL、LANGFUSE_PUBLIC_KEY、LANGFUSE_SECRET_KEY；collector使用FLINK_WEB_OTEL_TRACES_ENDPOINT（完整/v1/traces端点），Langfuse凭据只给Collector。默认元数据，不上传模型输入输出、SQL/日志/内部推理。现有数据库、密钥和下载器绑定不变。
+
+提供[配置与运行说明](../deploy/observability/README.md)、[Collector配置](../deploy/observability/otel-collector.yaml)、[独立Compose](../deploy/observability/compose.yaml)。用户原Collector配置仅debug，未覆盖其挂载文件；真实验证使用临时Collector，完成后删除。实际Langfuse4.70.1两种链路均查到完整层级与正确usage，见[验收](agent/validation.md#spring-ai与langfuse双模式2026-11-04)。
+
+
 ## 0.0.10源码升级，暂不发布（2026-11-02）
 
 用户明确要求本次暂不发布镜像。源码API/前端包及application.yaml的app/web/downloader目标标签已更新0.0.10；未构建/推送0.0.10镜像、不更新latest、实际Kubernetes或已保存下载器绑定。以下0.0.9摘要仍是已发布历史，不能套用于0.0.10；部署清单中的新标签需要后续正式构建发布后才能用于更新工作负载。

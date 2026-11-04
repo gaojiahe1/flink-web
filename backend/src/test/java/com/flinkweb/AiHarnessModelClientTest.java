@@ -33,7 +33,10 @@ class AiHarnessModelClientTest {
   void fragmentedToolsAndChineseText()throws Exception{
     response.set("data: {\"choices\":[{\"delta\":{\"content\":\"中文\",\"reasoning_content\":\"内部\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"sql_check\",\"arguments\":\"{\\\"sql\\\":\"}}]}}]}\n\n"+
       "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"SELECT 1\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n");
-    var content=new StringBuilder();var out=client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),content::append);
+    var tools=mapper.createArrayNode();var definition=tools.addObject().put("type","function").putObject("function").put("name","sql_check").put("description","Validate SQL");
+    var parameters=definition.putObject("parameters").put("type","object");parameters.putObject("properties").putObject("sql").put("type","string");parameters.putArray("required").add("sql");
+    var content=new StringBuilder();var out=client.stream(model,"",mapper.createArrayNode(),tools,content::append);
+    assertThat(mapper.readTree(request.get()).path("tools")).isEqualTo(tools);
     assertThat(content.toString()).isEqualTo("中文");assertThat(out.at("/tool_calls/0/function/arguments").asText()).isEqualTo("{\"sql\":\"SELECT 1\"}");assertThat(mapper.readTree(request.get()).path("stream").asBoolean()).isTrue();
   }
   /** 单步七个完整工具不再被旧次数预算拒绝，仍验证每个调用的完整参数。 */
@@ -49,11 +52,19 @@ class AiHarnessModelClientTest {
   }
   /** 半截参数或缺少明确终止状态时不能返回可执行工具消息。 */
   @Test
-  void rejectsInterruptedTools(){response.set("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"sql_check\",\"arguments\":\"{\"}}]}}]}\n\n");assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).hasCauseInstanceOf(IllegalStateException.class);}
+  void rejectsInterruptedTools(){response.set("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"sql_check\",\"arguments\":\"{\"}}]}}]}\n\n");assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).isInstanceOf(IllegalStateException.class);}
   /** 兼容非流式厂商响应，也必须验证 finish_reason，长度截断不得执行。 */
   @Test
   void nonStreamingFallbackStillRequiresCompleteFinish()throws Exception{
     response.set("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"答复\"},\"finish_reason\":\"stop\"}]}");var output=client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{});assertThat(output.path("streamed").asBoolean()).isFalse();
-    response.set("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"部分\"},\"finish_reason\":\"length\"}]}");assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).hasCauseInstanceOf(IllegalStateException.class);
+    response.set("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"部分\"},\"finish_reason\":\"length\"}]}");assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).isInstanceOf(IllegalStateException.class);
   }
+  /** 框架迁移后仍只在当前请求链回传供应商推理字段。 */
+  @Test
+  void preservesReasoningInRequestChain()throws Exception{
+    response.set("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"完成\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+    var history=mapper.createArrayNode();history.addObject().put("role","assistant").put("content","").put("reasoning_content","只用于本次请求链的推理");history.addObject().put("role","user").put("content","继续");
+    client.stream(model,"",history,mapper.createArrayNode(),text->{});assertThat(mapper.readTree(request.get()).at("/messages/0/reasoning_content").asText()).isEqualTo("只用于本次请求链的推理");
+  }
+
 }

@@ -38,81 +38,18 @@ class AiModelClientTest {
     }
   }
 
-  /** 账号验证及常见 HTTP 错误使用稳定错误码，不转发上游回显的密钥或上下文。 */
+  /** 真实Spring AI HTTP调用保持稳定错误码，不回显供应商正文。 */
   @Test
-  @SuppressWarnings("unchecked")
-  void classifiesHttpErrorsWithoutReturningUpstreamContent() throws Exception {
-    var client = spy(new AiModelClient(mapper));
-    doReturn(URI.create("https://api-inference.modelscope.cn/v1/chat/completions"))
-        .when(client)
-        .endpoint(anyString(), anyBoolean());
-    var http = mock(HttpClient.class);
-    ReflectionTestUtils.setField(client, "http", http);
-    var response = (HttpResponse<byte[]>) mock(HttpResponse.class);
-    when(response.body())
-        .thenReturn(
-            "{\"error\":{\"message\":\"Please verify email first; secret-sentinel sql-sentinel\"}}"
-                .getBytes(StandardCharsets.UTF_8));
-    when(http.sendAsync(any(), any(HttpResponse.BodyHandler.class)))
-        .thenReturn(CompletableFuture.completedFuture(response));
-    var model =
-        mapper
-            .createObjectNode()
-            .put("baseUrl", "https://api-inference.modelscope.cn")
-            .put("model", "Qwen/Qwen3.5-27B");
-    int[] statuses = {401, 403, 404, 429, 400, 500};
-    String[] codes = {
-      "AI_MODEL_AUTH_FAILED",
-      "AI_MODEL_ACCOUNT_VERIFICATION_REQUIRED",
-      "AI_MODEL_NOT_FOUND",
-      "AI_MODEL_RATE_LIMITED",
-      "AI_MODEL_INVALID_REQUEST",
-      "AI_MODEL_HTTP_ERROR"
-    };
-    for (int i = 0; i < statuses.length; i++) {
-      when(response.statusCode()).thenReturn(statuses[i]);
-      String code = codes[i];
-      assertThatThrownBy(() -> client.complete(model, "secret-sentinel", "system", "sql-sentinel"))
-          .isInstanceOfSatisfying(
-              BusinessException.class,
-              error -> {
-                assertThat(error.code()).isEqualTo(code);
-                assertThat(error.getMessage()).doesNotContain("secret-sentinel", "sql-sentinel");
-              });
-    }
-    var request = org.mockito.ArgumentCaptor.forClass(HttpRequest.class);
-    verify(http, times(statuses.length))
-        .sendAsync(request.capture(), any(HttpResponse.BodyHandler.class));
-    var bytes = new java.io.ByteArrayOutputStream();
-    request
-        .getValue()
-        .bodyPublisher()
-        .orElseThrow()
-        .subscribe(
-            new Flow.Subscriber<ByteBuffer>() {
-              /** 请求完整请求体以验证序列化参数。 */
-              public void onSubscribe(Flow.Subscription subscription) {
-                subscription.request(Long.MAX_VALUE);
-              }
-
-              /** 合并发送的数据片段。 */
-              public void onNext(ByteBuffer buffer) {
-                byte[] chunk = new byte[buffer.remaining()];
-                buffer.get(chunk);
-                bytes.writeBytes(chunk);
-              }
-
-              /** 传输错误直接使本测试失败。 */
-              public void onError(Throwable error) {
-                throw new AssertionError(error);
-              }
-
-              /** 正文收集完成。 */
-              public void onComplete() {}
-            });
-    var body = mapper.readTree(bytes.toByteArray());
-    assertThat(body.path("stream").asBoolean()).isFalse();
-    assertThat(body.path("enable_thinking").asBoolean(true)).isFalse();
-    assertThat(body.path("messages").size()).isEqualTo(2);
+  void classifiesHttpErrorsWithoutReturningUpstreamContent()throws Exception {
+    var status=new java.util.concurrent.atomic.AtomicInteger();var captured=new java.util.concurrent.atomic.AtomicReference<String>();
+    var server=com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+    server.createContext("/v1/chat/completions",exchange->{captured.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));byte[] body="{\"error\":{\"message\":\"Please verify email first; secret-sentinel sql-sentinel\"}}".getBytes(StandardCharsets.UTF_8);exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(status.get(),body.length);try(var out=exchange.getResponseBody()){out.write(body);}});server.start();
+    try{
+      var client=spy(new AiModelClient(mapper));doReturn(URI.create("http://127.0.0.1:"+server.getAddress().getPort()+"/v1/chat/completions")).when(client).endpoint(anyString(),anyBoolean());
+      var model=mapper.createObjectNode().put("baseUrl","https://api-inference.modelscope.cn").put("model","Qwen/Qwen3.5-27B");
+      int[] statuses={401,403,404,429,400,500};String[] codes={"AI_MODEL_AUTH_FAILED","AI_MODEL_ACCOUNT_VERIFICATION_REQUIRED","AI_MODEL_NOT_FOUND","AI_MODEL_RATE_LIMITED","AI_MODEL_INVALID_REQUEST","AI_MODEL_HTTP_ERROR"};
+      for(int n=0;n<statuses.length;n++){status.set(statuses[n]);String code=codes[n];assertThatThrownBy(()->client.complete(model,"secret-sentinel","system","sql-sentinel")).isInstanceOfSatisfying(BusinessException.class,error->{assertThat(error.code()).isEqualTo(code);assertThat(error.getMessage()).doesNotContain("secret-sentinel","sql-sentinel");});}
+      var request=mapper.readTree(captured.get());assertThat(request.path("enable_thinking").asBoolean(true)).isFalse();assertThat(request.path("stream").asBoolean()).isFalse();
+    }finally{server.stop(0);}
   }
 }

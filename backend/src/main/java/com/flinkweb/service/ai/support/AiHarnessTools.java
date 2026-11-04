@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 /** 按角色和阶段发现能力，所有目标来自服务端会话，不接受模型传入地址或资源身份。 */
 @Component
 public class AiHarnessTools {
+  @org.springframework.beans.factory.annotation.Autowired
+  private com.flinkweb.client.ai.AiTelemetry telemetry;
   private final ObjectMapper mapper;
   private final JobService jobs;
   private final SqlJobService sql;
@@ -114,6 +116,10 @@ public class AiHarnessTools {
 
   /** 验证工具名、额外字段和参数类型，再调用受信领域适配器。 */
   public Outcome execute(String name,ObjectNode args,ObjectNode session,ObjectNode turn){
+    try(var trace=telemetry.start("tool."+name,"tool",Map.of("flink.tool.name",name))){try{var outcome=executeTool(name,args,session,turn);if(outcome.output().has("error"))trace.error(outcome.output().path("error").asText());return outcome;}catch(RuntimeException ex){trace.error(ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName());throw ex;}}
+  }
+  /** 工具权限和阶段每次重新验证，观测不会扩大能力。 */
+  private Outcome executeTool(String name,ObjectNode args,ObjectNode session,ObjectNode turn){
     var schema=schemas(session,turn);JsonNode found=null;
     for(var item:schema)if(name.equals(item.at("/function/name").asText()))found=item;
     if(found==null)throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_TOOL_DENIED","当前阶段或角色未开放该工具");

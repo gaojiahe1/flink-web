@@ -1,5 +1,10 @@
 # REQ-003 SQL 草稿、发布与 Session 验证
 
+## 2026-11-04 Spring AI与Langfuse
+
+用户明确将整个项目AI模型调用迁移Spring AI并接入Langfuse，支持后端直连和OpenTelemetry Collector两条路线。实际实例4.70.1、Collector0.164.0；需要保留现有Harness、旧助手、动态模型、交互/审批/幂等和恢复能力。观测不取代运行状态或业务验收，凭据不进入代码/知识库，默认仅元数据。本轮沿用0.0.10及暂不发布镜像。见[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)、[接入说明](../../../deploy/observability/README.md)。
+
+
 ## 2026-11-02 Harness MCP与对话交互
 
 用户要求补齐Harness工具、资源、提示模板、用户习惯能力；补充开放日志及Checkpoint/Savepoint信息，并在助手回复下方通过按钮、选项、表单或文字完成确认/补充后续接任务。实现需复用既有权限/脱敏/身份/修订边界，等待不占工作线程、回答幂等且可恢复。跨会话偏好可查看、修改与清空，不构成权限或写操作批准。SQL真实验证及日志外发范围明确确认；配置/SQL应用沿用具体候选审阅。版本0.0.10，本次明确不发布镜像。接口、实现及范围见[Harness模块](../modules/agent-harness.md)，验证见[本轮验收](../validation.md#harness-mcp与对话交互2026-11-02)。
