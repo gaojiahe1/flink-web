@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import com.flinkweb.exception.common.BusinessException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.atomic.*;
@@ -15,19 +14,13 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.openai.*;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.model.NoopApiKey;
-import org.springframework.http.*;
-import org.springframework.http.client.*;
-import org.springframework.http.client.reactive.JdkClientHttpConnector;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.*;
-import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.retry.support.RetryTemplate;
 import reactor.core.publisher.Flux;
 
 /** 全项目共用Spring AI模型调用；平台仅维护安全传输边界和领域消息适配。 */
 public class SpringAiModelGateway {
-  private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8))
-      .followRedirects(HttpClient.Redirect.NEVER).build();
   private final ObjectMapper mapper;
   private final AiTelemetry telemetry;
   /** JSON与Spring AI消息之间保持显式契约。 */
@@ -43,21 +36,8 @@ public class SpringAiModelGateway {
   /** 框架负责序列化和流式合并，保留平台自己的超时与网络限制。 */
   private ObjectNode invoke(ObjectNode model,String key,URI endpoint,ArrayNode history,ArrayNode tools,Consumer<String> consumer)throws Exception {
     int seconds=model.path("timeoutSeconds").asInt(90);if(seconds<1||seconds>600)throw new IllegalArgumentException("模型超时范围无效");
-    var factory=new JdkClientHttpRequestFactory(HTTP);factory.setReadTimeout(Duration.ofSeconds(seconds));
-    var rest=RestClient.builder().requestFactory(new BoundedModelRequestFactory(factory,seconds)).defaultStatusHandler(status->!status.is2xxSuccessful(),(req,res)->{throw failure(res.getStatusCode().value(),new String(res.getBody().readNBytes(65536),java.nio.charset.StandardCharsets.UTF_8),model);});
-    var streamed=new AtomicBoolean(true);var total=new AtomicLong();var utf8=new Utf8Guard();
-    var web=WebClient.builder().clientConnector(new JdkClientHttpConnector(HTTP)).codecs(c->c.defaultCodecs().maxInMemorySize(1024*1024)).filter((request,next)->next.exchange(request).flatMap(response->{
-      Flux<org.springframework.core.io.buffer.DataBuffer> buffers=response.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class).<org.springframework.core.io.buffer.DataBuffer>handle((buffer,sink)->{if(total.addAndGet(buffer.readableByteCount())>1024*1024){DataBufferUtils.release(buffer);sink.error(new IllegalStateException("模型响应超过大小限制"));}else{try{utf8.accept(buffer);sink.next(buffer);}catch(Exception ex){DataBufferUtils.release(buffer);sink.error(new IllegalStateException("模型响应UTF-8无效",ex));}}}).doOnComplete(utf8::finish);
-      var normalized=buffers.switchOnFirst((signal,body)->{
-        if(signal.hasValue()){var first=signal.get();int n=first.readPosition();while(n<first.writePosition()&&Character.isWhitespace(first.getByte(n)))n++;
-          if(n<first.writePosition()&&first.getByte(n)=='{')return DataBufferUtils.join(body,1024*1024).map(buffer->{try{byte[] bytes=new byte[buffer.readableByteCount()];buffer.read(bytes);var json=(ObjectNode)mapper.readTree(bytes);if(response.statusCode().is2xxSuccessful()){streamed.set(false);for(var choice:json.path("choices"))if(choice.has("message"))((ObjectNode)choice).set("delta",choice.get("message"));bytes=("data: "+json+"\n\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);}return org.springframework.core.io.buffer.DefaultDataBufferFactory.sharedInstance.wrap(bytes);}catch(Exception ex){throw new IllegalStateException("模型JSON响应无效");}finally{DataBufferUtils.release(buffer);}});
-        }return body;
-      });
-      var bounded=ClientResponse.create(response.statusCode()).headers(h->{h.addAll(response.headers().asHttpHeaders());if(response.statusCode().is2xxSuccessful())h.setContentType(MediaType.TEXT_EVENT_STREAM);h.remove(HttpHeaders.CONTENT_LENGTH);}).body(normalized).build();
-      if(!response.statusCode().is2xxSuccessful())return bounded.bodyToMono(String.class).defaultIfEmpty("").flatMap(body->reactor.core.publisher.Mono.error(failure(response.statusCode().value(),body,model)));
-      return reactor.core.publisher.Mono.just(bounded);
-    }));
-    var api=new ReasoningApi(endpoint,key,rest,web,history);
+    var transport=new SpringAiTransport(mapper,model,seconds);
+    var api=new ReasoningApi(endpoint,key,transport.rest(),transport.web(),history);
 
     var options=OpenAiChatOptions.builder().model(model.path("model").asText()).maxTokens(model.path("maxTokens").asInt(4096)).internalToolExecutionEnabled(false).streamUsage(consumer!=null);
     if(!tools.isEmpty()){var functions=new ArrayList<OpenAiApi.FunctionTool>();for(var tool:tools)functions.add(mapper.treeToValue(tool,OpenAiApi.FunctionTool.class));options.tools(functions);}
@@ -68,7 +48,7 @@ public class SpringAiModelGateway {
     else {
       var security=org.springframework.security.core.context.SecurityContextHolder.getContext();
       try(var responses=chat.stream(prompt).takeUntilOther(reactor.core.publisher.Mono.delay(Duration.ofSeconds(seconds)).flatMap(n->reactor.core.publisher.Mono.error(new java.util.concurrent.TimeoutException("模型请求超过截止时间")))).toStream()){responses.forEach(response->new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(()->accept(result,response,consumer),security).run());}
-      result.put("streamed",streamed.get());
+      result.put("streamed",transport.streamed());
     }
     validate(result);result.remove("finishReason");return result;
   }
@@ -91,12 +71,6 @@ public class SpringAiModelGateway {
   }
   /** 未明确完成、重复工具标识或不完整JSON参数都不能交付执行。 */
   private void validate(ObjectNode result)throws Exception {String finish=result.path("finishReason").asText();var calls=result.path("tool_calls");if(!Set.of("stop","tool_calls").contains(finish)||finish.equals("tool_calls")==calls.isEmpty())throw new IllegalStateException("模型输出未完整结束");var ids=new HashSet<String>();for(var call:calls)if(!call.path("id").asText().matches("[A-Za-z0-9_-]{1,200}")||!ids.add(call.path("id").asText())||!call.at("/function/name").asText().matches("[A-Za-z0-9_]{1,80}")||call.at("/function/arguments").asText().length()>32768||!(mapper.readTree(call.at("/function/arguments").asText()) instanceof ObjectNode))throw new IllegalStateException("工具调用参数无效");}
-  /** 上游错误只转换稳定原因，不回显供应商正文、密钥或SQL。 */
-  private BusinessException failure(int status,String body,ObjectNode model){String code="AI_MODEL_HTTP_ERROR",message="模型服务请求失败（HTTP "+status+"）";switch(status){
-    case 401->{code="AI_MODEL_AUTH_FAILED";message="模型服务鉴权失败，请检查API Key";}
-    case 403->{boolean verification=model.path("baseUrl").asText().contains("api-inference.modelscope.cn")&&body.toLowerCase(Locale.ROOT).contains("email")&&body.toLowerCase(Locale.ROOT).contains("verif");code=verification?"AI_MODEL_ACCOUNT_VERIFICATION_REQUIRED":"AI_MODEL_ACCESS_DENIED";message=verification?"ModelScope账号尚未完成邮箱验证":"模型服务拒绝访问，请检查模型权限";}
-    case 404->code="AI_MODEL_NOT_FOUND";case 429->code="AI_MODEL_RATE_LIMITED";case 400->code="AI_MODEL_INVALID_REQUEST";default->{}
-  }return new BusinessException(HttpStatus.BAD_GATEWAY,code,message);}
   /** 保留供应商要求回传的推理字段，仅在请求链内使用，不进入持久化或观测。 */
   private final class ReasoningApi extends OpenAiApi {
     private final ArrayNode history;
@@ -108,19 +82,6 @@ public class SpringAiModelGateway {
     @Override public org.springframework.http.ResponseEntity<ChatCompletion> chatCompletionEntity(ChatCompletionRequest request,org.springframework.util.MultiValueMap<String,String> headers){return super.chatCompletionEntity(reasoning(request),headers);}
     /** 流式请求保持推理回传兼容，解析仍由Spring AI执行。 */
     @Override public Flux<ChatCompletionChunk> chatCompletionStream(ChatCompletionRequest request,org.springframework.util.MultiValueMap<String,String> headers){return super.chatCompletionStream(reasoning(request),headers);}
-  }
-
-  /** 字节预算之外保留严格UTF-8验证；不参与SSE分帧或工具参数合并。 */
-  private static final class Utf8Guard {
-    private final java.nio.charset.CharsetDecoder decoder=java.nio.charset.StandardCharsets.UTF_8.newDecoder();
-    private byte[] pending=new byte[0];
-    /** 跨网络片段保留未完成码点，损坏输入不能替换成可执行工具内容。 */
-    private void accept(org.springframework.core.io.buffer.DataBuffer buffer)throws java.nio.charset.CharacterCodingException {
-      byte[] bytes=new byte[pending.length+buffer.readableByteCount()];System.arraycopy(pending,0,bytes,0,pending.length);for(int n=0;n<buffer.readableByteCount();n++)bytes[pending.length+n]=buffer.getByte(buffer.readPosition()+n);
-      var input=java.nio.ByteBuffer.wrap(bytes);var output=java.nio.CharBuffer.allocate(bytes.length);var result=decoder.decode(input,output,false);if(result.isError())result.throwException();pending=new byte[input.remaining()];input.get(pending);
-    }
-    /** 流结束时不接受半个UTF-8字符。 */
-    private void finish(){if(pending.length!=0)throw new IllegalStateException("模型UTF-8响应未完整结束");}
   }
 
 }

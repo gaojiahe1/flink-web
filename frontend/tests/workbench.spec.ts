@@ -1,106 +1,185 @@
 import { confirmJarName } from './draft-name'
-import {test,expect,type Page} from '@playwright/test'
-async function login(page:Page) {
- await page.goto('/');await page.getByLabel('用户名').fill(process.env.E2E_USERNAME!)
- await page.getByLabel('密码',{exact:false}).first().fill(process.env.E2E_PASSWORD!)
- await page.getByRole('button',{name:'登录',exact:true}).click()
- await expect(page.getByRole('heading',{name:'作业管理',exact:true})).toBeVisible()
+import { test, expect, type Page } from '@playwright/test'
+async function login(page: Page) {
+  await page.goto('/')
+  await page.getByLabel('用户名').fill(process.env.E2E_USERNAME!)
+  await page.getByLabel('密码', { exact: false }).first().fill(process.env.E2E_PASSWORD!)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '作业管理', exact: true })).toBeVisible()
 }
-async function write(page:Page,path:string,data:object) {
- const csrf=(await (await page.request.get('/api/auth/csrf')).json()).data
- const response=await page.request.put(path,{data,headers:{[csrf.headerName]:csrf.token}})
- expect(response.ok(),await response.text()).toBeTruthy()
- return (await response.json()).data
+async function write(page: Page, path: string, data: object) {
+  const csrf = (await (await page.request.get('/api/auth/csrf')).json()).data
+  const response = await page.request.put(path, {
+    data,
+    headers: { [csrf.headerName]: csrf.token },
+  })
+  expect(response.ok(), await response.text()).toBeTruthy()
+  return (await response.json()).data
 }
-test('configuration editor suggests keys, rejects duplicates and preserves colon values',async({page})=>{
- await login(page);const id='config-'+Date.now()
- await write(page,'/api/catalog/images/'+id,{name:'配置测试',repository:'registry.test/flink',version:'1.20.3',flinkVersion:'1.20.3',revision:0})
- await page.goto('/#/jar')
- await page.getByRole('link',{name:'＋ 新建 JAR 作业',exact:true}).click()
- await confirmJarName(page, id)
- await page.getByLabel('镜像版本',{exact:false}).selectOption(id)
- await page.getByRole('checkbox',{name:'启用状态存储与 Checkpoint'}).uncheck()
- await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
- const editor=page.getByRole('textbox',{name:'Flink 配置文本域',exact:true})
- await editor.fill('execution.checkpointing.')
- await editor.press('Control+Space')
- await expect(page.locator('.cm-tooltip-autocomplete')).toContainText('execution.checkpointing.interval')
- await editor.press('Escape')
- await editor.fill('parallelism.default: 2\nparallelism.default: 3')
- await expect(page.getByRole('alert').filter({hasText:'配置键重复'})).toBeVisible()
- await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
- await expect(page.getByRole('alert').filter({hasText:'请先修正 Flink 配置'})).toBeVisible()
- await editor.fill('execution.checkpointing.interval: 60 s\nstate.checkpoints.num-retained: 1\nstate.checkpoints.dir: s3://state/custom:checkpoint\npipeline.name: "a: b"')
- await page.getByRole('button',{name:'本地验证与预览',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('本地验证通过')
- const yaml=page.getByRole('textbox',{name:'YAML 编辑器',exact:true})
- await expect(yaml).toContainText('s3://state/custom:checkpoint')
- await expect(yaml).toContainText('a: b')
+test('configuration editor suggests keys, rejects duplicates and preserves colon values', async ({
+  page,
+}) => {
+  await login(page)
+  const id = 'config-' + Date.now()
+  await write(page, '/api/catalog/images/' + id, {
+    name: '配置测试',
+    repository: 'registry.test/flink',
+    version: '1.20.3',
+    flinkVersion: '1.20.3',
+    revision: 0,
+  })
+  await page.goto('/#/jar')
+  await page.getByRole('link', { name: '＋ 新建 JAR 作业', exact: true }).click()
+  await confirmJarName(page, id)
+  await page.getByLabel('镜像版本', { exact: false }).selectOption(id)
+  await page.getByRole('checkbox', { name: '启用状态存储与 Checkpoint' }).uncheck()
+  await page.locator('[data-field="upgradeMode"]').selectOption('stateless')
+  const editor = page.getByRole('textbox', { name: 'Flink 配置文本域', exact: true })
+  await editor.fill('execution.checkpointing.')
+  await editor.press('Control+Space')
+  await expect(page.locator('.cm-tooltip-autocomplete')).toContainText(
+    'execution.checkpointing.interval',
+  )
+  await editor.press('Escape')
+  await editor.fill('parallelism.default: 2\nparallelism.default: 3')
+  await expect(page.getByRole('alert').filter({ hasText: '配置键重复' })).toBeVisible()
+  await page.getByRole('button', { name: '本地验证与预览', exact: true }).click()
+  await expect(page.getByRole('alert').filter({ hasText: '请先修正 Flink 配置' })).toBeVisible()
+  await editor.fill(
+    'execution.checkpointing.interval: 60 s\nstate.checkpoints.num-retained: 1\nstate.checkpoints.dir: s3://state/custom:checkpoint\npipeline.name: "a: b"',
+  )
+  await page.getByRole('button', { name: '本地验证与预览', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('本地验证通过')
+  const yaml = page.getByRole('textbox', { name: 'YAML 编辑器', exact: true })
+  await expect(yaml).toContainText('s3://state/custom:checkpoint')
+  await expect(yaml).toContainText('a: b')
 })
-test('SQL copies PodTemplate, uses installed parser and restores history without cluster calls',async({page})=>{
- await login(page);const id='sql-history-'+Date.now(),template='pod-'+Date.now()
- await write(page,'/api/catalog/images/'+id,{name:'Parser 1.20.3',repository:'registry.test/sql',version:'1.20.3',flinkVersion:'1.20.3',revision:0})
- const base=(await (await page.request.get('/api/catalog/templates')).json()).data.find((r:{id:string})=>r.id==='application-basic')
- await write(page,'/api/catalog/templates/'+template,{name:template,revision:0,yaml:base.yaml+'\n  podTemplate:\n    metadata:\n      labels:\n        team: data\n    spec:\n      containers:\n        - name: flink-main-container\n          env:\n            - name: MODE\n              value: test\n'})
- let clusterCalls=0;page.on('request',r=>{if(r.url().endsWith('/api/jobs/refresh'))clusterCalls++})
- await page.getByRole('link',{name:'SQL 开发',exact:true}).click()
- await page.getByRole('button',{name:'＋ 新建 SQL',exact:true}).click()
- const dialog=page.getByRole('dialog')
- await dialog.getByLabel('新草稿作业名称').fill(id)
- await expect(dialog).toContainText('名称可用')
- await dialog.getByRole('checkbox').check()
- await dialog.getByRole('button',{name:'确认并创建'}).click()
- await expect(dialog).toBeHidden()
- await page.getByRole('button',{name:'部署配置',exact:true}).click()
- await expect(page.getByLabel('作业名称',{exact:false})).toHaveValue(id)
- await page.getByRole('combobox',{name:'镜像版本',exact:true}).selectOption(id)
- await page.getByText('程序与依赖及 Flink 配置',{exact:true}).click()
- await page.getByLabel('从模板获取 PodTemplate').selectOption(template)
- await page.getByRole('button',{name:'应用 PodTemplate'}).click()
- await page.locator('[data-field="podTemplate"] summary').click()
- await expect(page.getByRole('textbox',{name:'共享 PodTemplate（YAML）'})).toContainText('team: data')
- const sql=page.getByRole('textbox',{name:'SQL 编辑器',exact:true})
- await sql.fill("CREATE TEMPORARY TABLE sink (n INT) WITH ('connector'='blackhole');\nINSERT INTO sink VALUES (1);")
- await page.getByRole('button',{name:'SQL 检查',exact:true}).click()
- await expect(page.locator('.sql-diagnostics')).toContainText('PARSER')
- await page.getByRole('button',{name:'保存 SQL',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
- const versions=(await (await page.request.get('/api/sql/jobs/'+id+'/versions')).json()).data.filter((v:{sql:string})=>v.sql.includes('VALUES (1)'))
- await sql.fill("CREATE TEMPORARY TABLE sink (n INT) WITH ('connector'='blackhole');\nINSERT INTO sink VALUES (2);")
- await page.getByRole('button',{name:'保存 SQL',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
- await page.getByRole('button',{name:'版本历史',exact:true}).click()
- await page.getByLabel('SQL 历史版本').selectOption(versions[0].id)
- await page.getByRole('button',{name:'恢复此版本',exact:true}).click()
- await page.getByRole('dialog',{name:'确认操作'}).getByRole('button',{name:'确定',exact:true}).click()
- await expect(sql).toContainText('VALUES (1)')
- expect(clusterCalls).toBe(1)
- await page.screenshot({path:'test-results/sql-history-workbench.png',fullPage:true})
+test('SQL copies PodTemplate, uses installed parser and restores history without cluster calls', async ({
+  page,
+}) => {
+  await login(page)
+  const id = 'sql-history-' + Date.now(),
+    template = 'pod-' + Date.now()
+  await write(page, '/api/catalog/images/' + id, {
+    name: 'Parser 1.20.3',
+    repository: 'registry.test/sql',
+    version: '1.20.3',
+    flinkVersion: '1.20.3',
+    revision: 0,
+  })
+  const base = (await (await page.request.get('/api/catalog/templates')).json()).data.find(
+    (r: { id: string }) => r.id === 'application-basic',
+  )
+  await write(page, '/api/catalog/templates/' + template, {
+    name: template,
+    revision: 0,
+    yaml:
+      base.yaml +
+      '\n  podTemplate:\n    metadata:\n      labels:\n        team: data\n    spec:\n      containers:\n        - name: flink-main-container\n          env:\n            - name: MODE\n              value: test\n',
+  })
+  let clusterCalls = 0
+  page.on('request', (r) => {
+    if (r.url().endsWith('/api/jobs/refresh')) clusterCalls++
+  })
+  await page.getByRole('link', { name: 'SQL 开发', exact: true }).click()
+  await page.getByRole('button', { name: '＋ 新建 SQL', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('新草稿作业名称').fill(id)
+  await expect(dialog).toContainText('名称可用')
+  await dialog.getByRole('checkbox').check()
+  await dialog.getByRole('button', { name: '确认并创建' }).click()
+  await expect(dialog).toBeHidden()
+  await page.getByRole('button', { name: '部署配置', exact: true }).click()
+  await expect(page.getByLabel('作业名称', { exact: false })).toHaveValue(id)
+  await page.getByRole('combobox', { name: '镜像版本', exact: true }).selectOption(id)
+  await page.getByText('程序与依赖及 Flink 配置', { exact: true }).click()
+  await page.getByLabel('从模板获取 PodTemplate').selectOption(template)
+  await page.getByRole('button', { name: '应用 PodTemplate' }).click()
+  await page.locator('[data-field="podTemplate"] summary').click()
+  await expect(page.getByRole('textbox', { name: '共享 PodTemplate（YAML）' })).toContainText(
+    'team: data',
+  )
+  const sql = page.getByRole('textbox', { name: 'SQL 编辑器', exact: true })
+  await sql.fill(
+    "CREATE TEMPORARY TABLE sink (n INT) WITH ('connector'='blackhole');\nINSERT INTO sink VALUES (1);",
+  )
+  await page.getByRole('button', { name: 'SQL 检查', exact: true }).click()
+  await expect(page.locator('.sql-diagnostics')).toContainText('PARSER')
+  await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
+  const versions = (
+    await (await page.request.get('/api/sql/jobs/' + id + '/versions')).json()
+  ).data.filter((v: { sql: string }) => v.sql.includes('VALUES (1)'))
+  await sql.fill(
+    "CREATE TEMPORARY TABLE sink (n INT) WITH ('connector'='blackhole');\nINSERT INTO sink VALUES (2);",
+  )
+  await page.getByRole('button', { name: '保存 SQL', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('SQL 草稿已保存')
+  await page.getByRole('button', { name: '版本历史', exact: true }).click()
+  await page.getByLabel('SQL 历史版本').selectOption(versions[0].id)
+  await page.getByRole('button', { name: '恢复此版本', exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '确认操作' })
+    .getByRole('button', { name: '确定', exact: true })
+    .click()
+  await expect(sql).toContainText('VALUES (1)')
+  expect(clusterCalls).toBe(1)
+  await page.screenshot({ path: 'test-results/sql-history-workbench.png', fullPage: true })
 })
-test('running and suspended jobs prohibit draft deletion but can both be stopped',async({page})=>{
- const jobs=['running','suspended','finished'].map((state,i)=>({id:'policy-'+i,jobNumber:i+1,deploymentName:'policy-'+state,name:'policy-'+state,description:'',flinkVersion:'1.20.3',revision:0,yaml:''}))
- const states=jobs.map((j,i)=>({name:j.name,jobId:j.id,managed:true,desiredState:i===1?'suspended':'running',jobState:['RUNNING','SUSPENDED','FINISHED'][i],snapshots:[]}))
- await page.route('**/api/jobs',r=>r.fulfill({json:{data:jobs}}))
- await page.route('**/api/jobs/refresh',r=>r.fulfill({json:{data:{items:states,queriedAt:new Date().toISOString()}}}))
- await login(page)
- const row=(name:string)=>page.locator('.jobs-panel tbody tr').filter({hasText:name})
- await expect(row('policy-running').getByRole('button',{name:'删除',exact:true})).toBeDisabled()
- await expect(row('policy-suspended').getByRole('button',{name:'删除',exact:true})).toBeDisabled()
- await expect(row('policy-finished').getByRole('button',{name:'删除',exact:true})).toBeEnabled()
- await expect(row('policy-running').getByRole('button',{name:'停止',exact:true})).toBeEnabled()
- await expect(row('policy-suspended').getByRole('button',{name:'停止',exact:true})).toBeEnabled()
- await expect(page.getByRole('button',{name:'管理',exact:true})).toHaveCount(0)
+test('running and suspended jobs prohibit draft deletion but can both be stopped', async ({
+  page,
+}) => {
+  const jobs = ['running', 'suspended', 'finished'].map((state, i) => ({
+    id: 'policy-' + i,
+    jobNumber: i + 1,
+    deploymentName: 'policy-' + state,
+    name: 'policy-' + state,
+    description: '',
+    flinkVersion: '1.20.3',
+    revision: 0,
+    yaml: '',
+  }))
+  const states = jobs.map((j, i) => ({
+    name: j.name,
+    jobId: j.id,
+    managed: true,
+    desiredState: i === 1 ? 'suspended' : 'running',
+    jobState: ['RUNNING', 'SUSPENDED', 'FINISHED'][i],
+    snapshots: [],
+  }))
+  await page.route('**/api/jobs', (r) => r.fulfill({ json: { data: jobs } }))
+  await page.route('**/api/jobs/refresh', (r) =>
+    r.fulfill({ json: { data: { items: states, queriedAt: new Date().toISOString() } } }),
+  )
+  await login(page)
+  const row = (name: string) => page.locator('.jobs-panel tbody tr').filter({ hasText: name })
+  await expect(
+    row('policy-running').getByRole('button', { name: '删除', exact: true }),
+  ).toBeDisabled()
+  await expect(
+    row('policy-suspended').getByRole('button', { name: '删除', exact: true }),
+  ).toBeDisabled()
+  await expect(
+    row('policy-finished').getByRole('button', { name: '删除', exact: true }),
+  ).toBeEnabled()
+  await expect(
+    row('policy-running').getByRole('button', { name: '停止', exact: true }),
+  ).toBeEnabled()
+  await expect(
+    row('policy-suspended').getByRole('button', { name: '停止', exact: true }),
+  ).toBeEnabled()
+  await expect(page.getByRole('button', { name: '管理', exact: true })).toHaveCount(0)
 })
-test('user permissions persist a group without collaboration entry',async({page})=>{
- await login(page)
- await expect(page.getByRole('link',{name:'协作与集成',exact:true})).toHaveCount(0)
- await page.getByRole('link',{name:'用户与权限',exact:true}).click()
- const id='e2e-'+Date.now()
- await page.getByLabel('组标识',{exact:true}).fill(id)
- await page.getByLabel('名称',{exact:true}).fill('数据研发')
- await page.getByLabel('成员账号',{exact:false}).fill('admin')
- await page.getByRole('button',{name:'保存用户组',exact:true}).click()
- await expect(page.getByRole('status')).toContainText('用户组已保存')
- await expect(page.getByRole('row').filter({hasText:id})).toBeVisible()
- await page.screenshot({path:'test-results/collaboration-workbench.png',fullPage:true})
+test('user permissions persist a group without collaboration entry', async ({ page }) => {
+  await login(page)
+  await expect(page.getByRole('link', { name: '协作与集成', exact: true })).toHaveCount(0)
+  await page.getByRole('link', { name: '用户与权限', exact: true }).click()
+  const id = 'e2e-' + Date.now()
+  await page.getByLabel('组标识', { exact: true }).fill(id)
+  await page.getByLabel('名称', { exact: true }).fill('数据研发')
+  await page.getByLabel('成员账号', { exact: false }).fill(process.env.E2E_USERNAME!)
+  await page.getByRole('button', { name: '保存用户组', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('用户组已保存')
+  await expect(page.getByRole('row').filter({ hasText: id })).toBeVisible()
+  await page.screenshot({ path: 'test-results/collaboration-workbench.png', fullPage: true })
 })

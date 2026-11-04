@@ -48,6 +48,8 @@
 
 ## 回归入口
 
+2026-11-04：Playwright拆分fixture/live，默认命令只运行无真实账号依赖的fixture，并自动管理页面服务器；live显式使用隔离后端。更新旧导航/表单、环境前提及断言，保持现行Catalog/连接/保留API契约；前端文本固定LF，使Windows格式检查可重复。192项fixture和最终镜像26项live通过，详见[回归指南](../../testing.md)。
+
 [全站尺寸](../../../frontend/tests/ui-design.spec.ts)、[一致性](../../../frontend/tests/platform-consistency.spec.ts)共用[隔离数据](../../../frontend/tests/fixtures/platform.ts)。覆盖1440×900、1280×720、900×650、390×844，以及资源编辑和Session保存入口。现有AI、SQL/JAR、Catalog、文件、Pod与权限回归继续保留；与现场/协议替身的区别见 [验收记录](../validation.md)。
 
 [主题回归](../../../frontend/tests/themes.spec.ts)覆盖三主题全站桌面/窄屏、登录、深色工作面、跨标签页和刷新持久化、受限存储、未保存SQL/撤销及嵌套弹窗/代码差异。`E2E_THEME=dark`可让既有AI/日志等用例在深色初始状态运行；仅用于隔离测试。

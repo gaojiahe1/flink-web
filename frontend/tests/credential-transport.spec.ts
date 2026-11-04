@@ -11,10 +11,12 @@ test('login layout and encrypted credentials work without SubtleCrypto', async (
     await page.setViewportSize({ width, height: 900 })
     const inputBox = (await password.boundingBox())!
     const toggleBox = (await toggle.boundingBox())!
-    expect(inputBox.height).toBe(40)
-    expect((await username.boundingBox())!.height).toBe(40)
-    expect((await submit.boundingBox())!.height).toBe(40)
-    expect(Math.abs(toggleBox.y + toggleBox.height / 2 - inputBox.y - inputBox.height / 2)).toBeLessThan(1)
+    expect(inputBox.height).toBe(30)
+    expect((await username.boundingBox())!.height).toBe(30)
+    expect((await submit.boundingBox())!.height).toBe(30)
+    expect(
+      Math.abs(toggleBox.y + toggleBox.height / 2 - inputBox.y - inputBox.height / 2),
+    ).toBeLessThan(1)
     expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(inputBox.x + inputBox.width)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
@@ -30,7 +32,9 @@ test('login layout and encrypted credentials work without SubtleCrypto', async (
   await page.screenshot({ path: 'test-results/login-desktop.png', fullPage: true })
   await username.fill(process.env.E2E_USERNAME!)
   await password.fill(process.env.E2E_PASSWORD!)
-  const submitted = page.waitForRequest(r => r.url().endsWith('/api/auth/login') && r.method() === 'POST')
+  const submitted = page.waitForRequest(
+    (r) => r.url().endsWith('/api/auth/login') && r.method() === 'POST',
+  )
   await submit.click()
   const sent = new URLSearchParams((await submitted).postData()!)
   expect(sent.get('password')).toMatch(/^fwenc1:/)
@@ -43,10 +47,16 @@ test('key retrieval failure blocks login and permits explicit retry', async ({ p
   await page.getByLabel('用户名', { exact: true }).fill(process.env.E2E_USERNAME!)
   await page.getByLabel('密码', { exact: true }).fill(process.env.E2E_PASSWORD!)
   let submits = 0
-  page.on('request', request => { if (request.url().endsWith('/api/auth/login')) submits++ })
-  await page.route('**/api/auth/transport-key?*', route => route.fulfill({
-    status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: '加密参数暂不可用' } }),
-  }))
+  page.on('request', (request) => {
+    if (request.url().endsWith('/api/auth/login')) submits++
+  })
+  await page.route('**/api/auth/transport-key?*', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: '加密参数暂不可用' } }),
+    }),
+  )
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('加密参数暂不可用')
   expect(submits).toBe(0)
@@ -56,7 +66,10 @@ test('key retrieval failure blocks login and permits explicit retry', async ({ p
   expect(submits).toBe(1)
 })
 
-test('user password is encrypted before save and the new account can sign in', async ({ page, browser }) => {
+test('user password is encrypted before save and the new account can sign in', async ({
+  page,
+  browser,
+}) => {
   await page.goto('/login')
   await page.getByLabel('用户名', { exact: true }).fill(process.env.E2E_USERNAME!)
   await page.getByLabel('密码', { exact: true }).fill(process.env.E2E_PASSWORD!)
@@ -67,7 +80,9 @@ test('user password is encrypted before save and the new account can sign in', a
   const password = 'Transport-only-' + Date.now()
   await page.getByLabel('用户名', { exact: false }).first().fill(account)
   await page.getByLabel('密码', { exact: false }).first().fill(password)
-  const submitted = page.waitForRequest(r => r.url().endsWith('/api/users/' + account) && r.method() === 'PUT')
+  const submitted = page.waitForRequest(
+    (r) => r.url().endsWith('/api/users/' + account) && r.method() === 'PUT',
+  )
   await page.getByRole('button', { name: '保存', exact: true }).click()
   const body = (await submitted).postDataJSON()
   expect(body.password).toMatch(/^fwenc1:/)

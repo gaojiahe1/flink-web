@@ -53,4 +53,4 @@ python scripts/check_ai_observability.py
 
 该脚本面向当前本地Docker命名：Langfuse Web为langfuse-langfuse-web-1；创建独立临时Collector，顺序验证Java直连和Java→Collector两条链路，并通过Observations API v2核对chain/generation/tool、父子关系、模型和12输入/3输出Token。结束自动删除测试Collector，保留合成测试轨迹；不修改现有Collector配置、Langfuse数据卷或业务作业。其他部署可使用liveLangfuse条件测试配合实际端点。
 
-本次没有构建或发布应用镜像，没有更新实际Flink/Kubernetes工作负载。验收记录见[项目验收](../../docs/agent/validation.md#spring-ai与langfuse双模式2026-11-04)。
+Spring AI迁移阶段未发布镜像；2026-11-04整体回归后0.0.10已发布，摘要见[部署指南](../../docs/deployment.md#整体回归与0010发布2026-11-04)。未更新实际Flink/Kubernetes工作负载。验收记录见[项目验收](../../docs/agent/validation.md#spring-ai与langfuse双模式2026-11-04)。

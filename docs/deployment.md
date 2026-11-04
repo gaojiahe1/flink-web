@@ -1,8 +1,27 @@
 # Flink Web 部署指南
 
+## 整体回归与0.0.10发布（2026-11-04）
+
+用户本轮明确要求整体回归、结构/逻辑优化并生成镜像，替代此前暂不发布约定。app/web已用正式Dockerfile、干净Kylin底座及验证产物构建；downloader源码未变，复用已通过Linux回归的0.0.9制品标记0.0.10。三个标签通过既有registry的localhost:15000映射发布，再从指定192.168.68.1:5000逐层核验manifest响应/正文、config、层大小/压缩SHA-256及解压diff_id，与最终测试镜像一致。
+
+| 组件 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.10 | `sha256:e0a66cbd1104d2aa753e48d50ae9a1ef7729e2c661d451b4078837217b9d580f` | `sha256:bd1ca1be1adfefd2e01feef8a80eff904c0ade2c303e479359798a605192e5b8` | 296225282 | 11 |
+| web:0.0.10 | `sha256:bd9bfa4ed2419a9074fc2aefdd9454c21fe9d5bce045a27d787b16958325d307` | `sha256:45ca6b92f9ea8b1a69264feaa8a01fa3ce7d3a51493de8b07d66f48b8ce2bad8` | 116645578 | 8 |
+| downloader:0.0.10 | `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0` | `sha256:f35eed19bbc787181949acf926499be696614adabbb9c2b3e985a0362b8fbb2c` | 146379002 | 5 |
+
+均为linux/amd64，app/web UID10001，downloader UID9999。逻辑大小分别600071360/318510905/392503512字节。app增加Spring AI/OTLP依赖；web包含此前0.0.10 Harness/MCP/交互的待发布改动。本轮新增修复跨空白网络分片的JSON兼容及流式错误分类，拆分模型传输边界并统一交互观测；不更改权限、审批、幂等或状态恢复约定。
+
+完整后端371项369通过/2条件跳过后，独占MinIO条件用例另行通过，最终报告370通过/1项真实Langfuse条件跳过；两份Parser Java8/17共32协议用例、Runner12项及Linux下载器12项通过。前端192项fixture、最终只读非root镜像26项live、自动启动测试服务器2项、Web代理4类、镜像内模型连接与MCP42工具/9模板发现通过。细节与未验证边界见[验收](agent/validation.md#整体回归结构优化与0010发布2026-11-04)，可重复入口见[回归指南](testing.md)。
+
+无新数据库迁移、必填启动变量或主密钥变更。Langfuse默认仍关闭，direct/collector均可按下节启用；正文和凭据不进入观测。已保存的下载器绑定优先于环境变量，本轮不自动修改。未更新latest、实际Kubernetes或用户作业，旧版本保留；标签发布不代表现有Pod已升级，现场更新仍需对应授权。
+
+本任务独占容器/网络/推送别名和两条新增私有缓存（98.08MB/98.34MB）已清理；正式镜像、原registry/Langfuse服务、旧标签及共享/未知缓存保留。
+
+
 ## Spring AI与Langfuse双模式（2026-11-04）
 
-平台仍0.0.10，本轮不构建/发布应用镜像、不更新Flink/Kubernetes工作负载。模型调用统一Spring AI1.1.7，Java17/Boot3.5.16/BES保持。
+本节为Spring AI迁移阶段的历史记录；后续0.0.10镜像发布以上方整体回归发布节为准。迁移阶段未构建/发布镜像、未更新Flink/Kubernetes工作负载。模型调用统一Spring AI1.1.7，Java17/Boot3.5.16/BES保持。
 
 新增FLINK_WEB_AI_TELEMETRY_ENABLED（默认false）及FLINK_WEB_AI_TELEMETRY_MODE（collector/direct）。direct使用LANGFUSE_BASE_URL、LANGFUSE_PUBLIC_KEY、LANGFUSE_SECRET_KEY；collector使用FLINK_WEB_OTEL_TRACES_ENDPOINT（完整/v1/traces端点），Langfuse凭据只给Collector。默认元数据，不上传模型输入输出、SQL/日志/内部推理。现有数据库、密钥和下载器绑定不变。
 

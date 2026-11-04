@@ -16,13 +16,16 @@ class AiHarnessModelClientTest {
   HttpServer server;
   final AtomicReference<String> response=new AtomicReference<>();
   final AtomicReference<String> request=new AtomicReference<>();
+  final java.util.concurrent.atomic.AtomicInteger status=new java.util.concurrent.atomic.AtomicInteger(200);
+  final java.util.concurrent.atomic.AtomicInteger pause=new java.util.concurrent.atomic.AtomicInteger();
+  final AtomicReference<byte[]> raw=new AtomicReference<>();
   AiHarnessModelClient client;
   ObjectNode model;
   /** 本机测试服务器逐字节发送，覆盖中文 UTF-8 及分片工具参数。 */
   @BeforeEach
   void setup()throws Exception{
     server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
-    server.createContext("/v1/chat/completions",exchange->{request.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));exchange.getResponseHeaders().set("Content-Type","text/event-stream");exchange.sendResponseHeaders(200,0);try(var out=exchange.getResponseBody()){for(byte value:response.get().getBytes(StandardCharsets.UTF_8)){out.write(value);out.flush();}}});server.start();
+    server.createContext("/v1/chat/completions",exchange->{request.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8));exchange.getResponseHeaders().set("Content-Type","text/event-stream");exchange.sendResponseHeaders(status.get(),0);try(var out=exchange.getResponseBody()){if(raw.get()!=null){out.write(raw.get());return;}int index=0;for(byte value:response.get().getBytes(StandardCharsets.UTF_8)){out.write(value);out.flush();if(index++==0&&pause.get()>0)try{Thread.sleep(pause.get());}catch(InterruptedException error){Thread.currentThread().interrupt();return;}}}});server.start();
     client=new AiHarnessModelClient(mapper,new AiModelClient(mapper));model=mapper.createObjectNode().put("baseUrl","http://127.0.0.1:"+server.getAddress().getPort()+"/v1").put("privateNetwork",true).put("model","test").put("timeoutSeconds",5);
   }
   /** 不遗留监听端口或服务线程。 */
@@ -65,6 +68,34 @@ class AiHarnessModelClientTest {
     response.set("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"完成\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
     var history=mapper.createArrayNode();history.addObject().put("role","assistant").put("content","").put("reasoning_content","只用于本次请求链的推理");history.addObject().put("role","user").put("content","继续");
     client.stream(model,"",history,mapper.createArrayNode(),text->{});assertThat(mapper.readTree(request.get()).at("/messages/0/reasoning_content").asText()).isEqualTo("只用于本次请求链的推理");
+  }
+
+  /** 前导空白单独成片也能识别伪装成SSE的完整JSON。 */
+  @Test
+  void jsonFallbackWaitsAcrossWhitespaceFragments()throws Exception {
+    pause.set(200);response.set(" \n\t{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"完整答复\"},\"finish_reason\":\"stop\"}]}");
+    var out=client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{});
+    assertThat(out.path("content").asText()).isEqualTo("完整答复");assertThat(out.path("streamed").asBoolean()).isFalse();
+  }
+  /** 残缺的错误JSON不掩盖上游HTTP分类，也不回显原始正文。 */
+  @Test
+  void classifiesMalformedStreamingErrorBeforeJsonFallback() {
+    status.set(401);response.set("{broken upstream-private-value");
+    assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{}))
+        .isInstanceOfSatisfying(com.flinkweb.exception.common.BusinessException.class,error->{assertThat(error.code()).isEqualTo("AI_MODEL_AUTH_FAILED");assertThat(error.getMessage()).doesNotContain("upstream-private-value");});
+  }
+  /** 慢速响应必须受总截止时间约束，不能靠持续分片无限续期。 */
+  @Test
+  void stopsSlowStreamAtTotalDeadline() {
+    model.put("timeoutSeconds",1);pause.set(1500);response.set("data: {\"choices\":[]}\n\n");long started=System.nanoTime();
+    assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).hasRootCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+    assertThat(java.time.Duration.ofNanos(System.nanoTime()-started)).isLessThan(java.time.Duration.ofSeconds(3));
+  }
+  /** 坏UTF-8不能被替换为看似完整的工具或答复。 */
+  @Test
+  void rejectsMalformedUtf8() {
+    raw.set(new byte[]{(byte)0xc3,0x28});
+    assertThatThrownBy(()->client.stream(model,"",mapper.createArrayNode(),mapper.createArrayNode(),text->{})).hasMessageContaining("UTF-8");
   }
 
 }

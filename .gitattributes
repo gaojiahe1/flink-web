@@ -1,1 +1,4 @@
 *.sh text eol=lf
+
+# Keep the frontend formatter reproducible on Windows checkouts.
+frontend/** text=auto eol=lf

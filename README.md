@@ -9,6 +9,7 @@ Spring Boot / JDK 17 + Vue 3 / TypeScript 的 Flink 管理平台。通过运维�
 - [项目知识索引](docs/agent/INDEX.md)：新会话按需恢复、模块代码定位、需求/决策与当前状态。
 
 - [功能说明](docs/features.md)：作业管理、JAR/YAML/SQL、数据源与 Catalog、权限、密钥、Operator 版本筛选及功能边界。
+- [回归指南](docs/testing.md)：默认替身测试、隔离真实接口联调、最终镜像及仓库逐层校验。
 - [部署指南](docs/deployment.md)：本地启动、环境变量、容器/RBAC、数据库、SQL 运行镜像、S3、备份与排障。
 
 作业与 Session 列表首次进入查询一次，之后 3 秒手动刷新。当前 FlinkDeployment YAML 随刷新获取，点击只展示本页脱敏快照。平台和只读 Flink UI 共用 IP:NodePort。2026-10-09：左侧 JAR 开发管理新建入口及开发映射；SQL 验证使用唯一专用 Session，验证期间主动监听日志，最多展示 100 条，截止两分钟取消。SQL/JAR/Session 共用运行镜像，Runner 使用 S3 挂载 JAR，无需单独 SQL 镜像。

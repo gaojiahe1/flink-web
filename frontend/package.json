@@ -11,7 +11,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "vue-tsc --noEmit",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --project=fixture",
+    "test:e2e:live": "playwright test --project=live",
     "format": "prettier --write src",
     "format:check": "prettier --check src"
   },

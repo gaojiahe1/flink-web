@@ -1,5 +1,7 @@
 # AI 助手与模型服务
 
+2026-11-04整体回归：新增[SpringAiTransport](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiTransport.java)集中HTTP响应预算、严格编码、JSON/SSE兼容和错误分类；Gateway只负责模型/消息及结果适配。修复前导空白跨片误判和残缺错误JSON掩盖HTTP鉴权分类；新增慢响应截止及坏UTF-8真实HTTP回归。0.0.10镜像已正式发布，替代下方迁移阶段暂不发布约定，见[验收](../validation.md#整体回归结构优化与0010发布2026-11-04)。
+
 2026-11-04：全项目AI模型请求迁移Spring AI1.1.7（Boot3.5.16/Java17），旧助手、模型连接测试和Harness共用[SpringAiModelGateway](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiModelGateway.java)。框架负责ChatModel消息与流式工具分片，平台保留网络/超时/字节/UTF-8/完整终止验证、ModelScope参数和链内推理回传；旧适配入口保持契约。框架不自动执行工具、不自动重试。
 
 新增[AiTelemetry](../../../backend/src/main/java/com/flinkweb/client/ai/AiTelemetry.java)及[配置](../../../backend/src/main/java/com/flinkweb/config/ai/AiTelemetryConfiguration.java)，支持direct到Langfuse、collector到OTLP完整端点；默认关闭，仅元数据/模型/状态/耗时/Token，未上传提示词、SQL/日志或推理正文。凭据仅环境配置，直连在后端、Collector模式在Collector。版本仍0.0.10，不新增迁移/必填启动变量、不发布镜像。决策见[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)，使用见[接入说明](../../../deploy/observability/README.md)，结果见[验收](../validation.md#spring-ai与langfuse双模式2026-11-04)。

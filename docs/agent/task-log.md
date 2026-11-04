@@ -1,5 +1,9 @@
 # 重要任务摘要
 
+## 2026-11-04 整体回归与0.0.10镜像
+
+按用户要求检查整体回归并优化结构/逻辑，修复已复现的两项模型HTTP边界，拆分模型传输及收拢重复event观测；前端分离fixture/live、自动管理页面服务、固定LF，更新过期联调契约。后端370通过/1条件跳过，前端192+26项、自动服务2项、Parser32项和Runner/下载器各12项通过。app/web由正式Dockerfile及干净底座构建，downloader复用经验证未变制品，0.0.10三标签发布并核对指定仓库所有层；不改latest或现场。独占验证资源/别名及两条私有缓存已清理，用户服务与旧版本保留。详见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)、[发布](../deployment.md#整体回归与0010发布2026-11-04)、[回归指南](../testing.md)。
+
 ## 2026-11-04 Spring AI与Langfuse双模式
 
 统一旧SQL/作业助手、模型测试与Harness为Spring AI1.1.7模型调用；保留平台工具权限、审批和恢复。新增仅元数据的OTLP观测及direct/collector环境切换、独立Collector部署示例和显式现场联调脚本。完整后端363通过/4条件跳过，受影响补验71项通过；实际Langfuse4.70.1验证两种模式的chain/generation/tool、关联及用量。功能提交 `ece4914` 经验证后快进合并本地master，无冲突/新增代码差异，源码未推送。平台保持0.0.10，未构建或发布镜像，未更新实际工作负载；原用户Collector配置不变。原理见[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，配置及验证边界见[接入说明](../../deploy/observability/README.md)、[验收](validation.md#spring-ai与langfuse双模式2026-11-04)。

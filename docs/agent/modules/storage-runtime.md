@@ -1,5 +1,7 @@
 # 制品与运行文件
 
+2026-11-04：app/web/downloader0.0.10已按整体回归任务发布。app/web使用正式Dockerfile与干净Kylin底座；downloader未改代码，复用经Linux验证的0.0.9制品，新旧标签同摘要。新增[只读仓库核验](../../../scripts/check_registry_images.py)，核对本地测试镜像与远端manifest/config及全部层的大小、压缩/解压摘要。结果见[部署](../../deployment.md#整体回归与0010发布2026-11-04)。
+
 2026-10-30：用户授权清理远端0.0.8，三组件旧标签及16份已确认旧manifest已移除，离线GC回收72个blob/219,537,743字节；0.0.9及共享downloader摘要保留。原registry恢复，未知历史与既有孤立数据保持，保留数据本地哈希及API可读取性核验通过。不删除本地镜像或修改实际工作负载/绑定。[清理报告](../cleanup-report.md#仓库008清理2026-10-30)。
 
 更新：2026-10-21。关联 [需求](../requirements/REQ-004-storage-security.md)、[决策](../decisions/ADR-003-storage-security.md)；来源：当前代码与 [功能说明](../../features.md)。
