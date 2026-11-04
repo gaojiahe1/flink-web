@@ -2,6 +2,8 @@
 
 ## 整体回归与0.0.10发布（2026-11-04）
 
+功能提交 `b5ed4b3` 已在完整回归、镜像发布及逐层核验后，由codex/regression-release-010快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 用户本轮明确要求整体回归、结构/逻辑优化并生成镜像，替代此前暂不发布约定。app/web已用正式Dockerfile、干净Kylin底座及验证产物构建；downloader源码未变，复用已通过Linux回归的0.0.9制品标记0.0.10。三个标签通过既有registry的localhost:15000映射发布，再从指定192.168.68.1:5000逐层核验manifest响应/正文、config、层大小/压缩SHA-256及解压diff_id，与最终测试镜像一致。
 
 | 组件 | Manifest | Config | 压缩字节 | 层数 |
