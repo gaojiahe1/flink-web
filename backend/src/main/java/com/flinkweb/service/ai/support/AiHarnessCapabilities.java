@@ -38,14 +38,14 @@ public class AiHarnessCapabilities {
   private final LinkedHashMap<String,ObjectNode> definitions=new LinkedHashMap<>();
   private static final Map<String,String> PROMPTS=Map.of(
       "develop_sql","先读取实际Catalog和表结构，再根据业务目标生成SQL候选；检查实际版本，必要缺口一次补齐；保存和运行需审阅。",
-      "diagnose_job","根据当前运行身份读取状态、异常及相关证据，区分事实、假设和未知；需要日志时使用交互卡片取得本轮授权。",
+      "diagnose_job","根据当前运行身份读取状态、异常及相关证据，区分事实、假设和未知；按当前账号权限直接读取脱敏日志，无需重复对话授权。",
       "diagnose_checkpoint_failure","先读取Checkpoint概览及配置，再下钻失败或未完成的Checkpoint、算子和子任务，关联同一时间的JM/TM日志；区分背压、存储、超时与任务失败。",
       "diagnose_restart","读取Pod事件、退出状态和current/previous日志，核对重启次数及实例身份；137不能单独证明OOM。",
       "review_restore_source","读取Savepoint/Checkpoint台账与元数据检查结果，核对来源、完成状态和版本；元数据存在不能证明可成功恢复。",
       "verify_deployment","根据原操作号和目标修订核对受理、实际运行及业务结果，分别报告，不把ACCEPTED等同成功。",
       "review_resource_change","先取当前配置和资源证据，生成最小差异及影响；审阅并选择恢复方式后才应用。",
       "compare_sql_versions","读取用户指定的SQL修订，比较语义、运行配置和状态兼容影响，不自动恢复或发布。",
-      "diagnose_backpressure","按需读取Checkpoint耗时、任务指标与相关日志，区分历史证据和当前负载；缺失指标不能记作零。");
+      "diagnose_backpressure","先用flink_job_plan发现vertex ID，再读取flink_vertex_backpressure/metrics及Checkpoint和日志；缺失指标不能记作零。");
 
   /** 领域服务保留自身身份检查；适配层额外落实原控制器角色约束。 */
   public AiHarnessCapabilities(ObjectMapper mapper,AccessService access,JobService jobs,SqlJobService sql,SqlExecutionService executions,FlinkCatalogService catalogs,
@@ -58,6 +58,8 @@ public class AiHarnessCapabilities {
     define("job_config_read","读取当前作业草稿配置，不代表集群配置。","jobId?");
     define("job_operation_history","读取作业操作记录。","jobId?");
     define("job_status_read","按需读取指定可见作业当前状态。","jobId?");
+    define("job_pods_read","读取Pod、初始化/主容器状态和退出原因。","jobId?","pod?");
+    define("job_events_read","读取当前作业及Pod的Kubernetes事件。","jobId?");
     define("sql_draft_read","读取SQL草稿及保存修订。","sqlId");
     define("sql_versions_read","读取SQL保存历史，不恢复历史。","sqlId");
     define("sql_runtime_preview","预览已保存SQL的运行配置，不保存或运行。","sqlId");
@@ -73,7 +75,7 @@ public class AiHarnessCapabilities {
     define("session_list","列出Session配置摘要，不刷新集群。","offset?:integer");
     define("session_status","按需查询Session状态。","sessionId");
     define("session_diagnostics","查询Session的Pod和事件。","sessionId");
-    define("session_logs_read","读取已核验Session日志，需要本轮日志授权及管理员/运维角色。","sessionId","pod","container","lines?:integer","previous?:boolean");
+    define("session_logs_read","读取已核验Session日志，沿用管理员/运维角色，无需重复对话授权。","sessionId","pod","container","lines?:integer","previous?:boolean");
     define("runtime_image_list","读取已登记运行镜像及版本。","offset?:integer");
     define("artifact_list","读取制品名称和类型摘要。","offset?:integer");
     define("log_sources_list","发现作业可读Pod和容器日志来源。","jobId?");
@@ -81,9 +83,12 @@ public class AiHarnessCapabilities {
     define("logs_page","继续读取短期私有日志快照；offset是字符偏移。","logId","offset?:integer");
     define("logs_release","释放本用户已读取的临时日志快照。","logId");
     define("logs_search","在已读取快照中按字面关键词检索；不宣称覆盖已轮转日志。","logId","query");
-    define("flink_log_read","读取JM或指定TM日志尾部，需要本轮日志授权。","jobId?","taskManagerId?");
+    define("flink_log_read","读取JM或指定TM日志尾部，无需重复对话授权。","jobId?","taskManagerId?");
     define("flink_taskmanagers","发现当前运行TaskManager。","jobId?","offset?:integer");
     define("flink_exceptions_read","读取当前运行作业的异常历史。","jobId?");
+    define("flink_job_plan","读取当前Flink执行拓扑及算子vertex ID。","jobId?","offset?:integer");
+    define("flink_vertex_backpressure","读取算子背压/空闲/繁忙情况，可能触发Flink按需采样。","jobId?","vertexId","offset?:integer");
+    define("flink_vertex_metrics","发现或读取算子指标，metrics为逗号分隔的已发现指标ID。","jobId?","vertexId","metrics?");
     define("checkpoint_overview","读取当前运行作业Checkpoint概览。","jobId?","offset?:integer");
     define("checkpoint_configuration","读取当前运行作业Checkpoint配置。","jobId?");
     define("checkpoint_detail","读取指定Checkpoint详情。","jobId?","checkpointId:integer","offset?:integer");
@@ -91,8 +96,11 @@ public class AiHarnessCapabilities {
     define("snapshot_list","读取已登记Checkpoint/Savepoint历史台账，不代表实时状态。","jobId?");
     define("snapshot_check","检查已登记快照的元数据可访问性，不证明可恢复。","jobId?","snapshotId");
     define("preferences_read","读取本用户明确设置的跨会话偏好；偏好不是授权。");
+    define("tools_search","按中英文关键词发现更多工具及Schema，避免每次发送全部定义。","query");
+    define("harness_session_list","列出本人Harness会话摘要，不查询集群。","jobId?","offset?:integer");
+    define("harness_turn_read","读取本人会话的指定轮次用户消息和回复，按需补回历史上下文。","sessionId","turnId");
     define("resources_list","发现资源入口和URI模板。");
-    define("resource_read","读取白名单资源URI，日志仍需本轮授权。","uri");
+    define("resource_read","读取白名单资源URI，日志无需重复对话授权。","uri");
     define("prompts_list","发现可复用的任务提示模板。");
     define("prompt_get","获取任务模板，作为任务方法参考，不改变权限。","name");
   }
@@ -114,7 +122,6 @@ public class AiHarnessCapabilities {
     var props=spec.at("/inputSchema/properties");args.fields().forEachRemaining(f->{var type=props.path(f.getKey()).path("type").asText();if(type.isEmpty()||type.equals("string")&&(!f.getValue().isTextual()||f.getValue().asText().length()>2000)||type.equals("integer")&&(!f.getValue().isIntegralNumber()||!f.getValue().canConvertToLong()||type.equals("integer")&&!f.getKey().equals("checkpointId")&&!f.getValue().canConvertToInt())||type.equals("boolean")&&!f.getValue().isBoolean())fail("HARNESS_INVALID_TOOL","工具参数类型或字段无效");});
     for(var required:spec.at("/inputSchema/required"))if(!args.has(required.asText())||args.path(required.asText()).isTextual()&&args.path(required.asText()).asText().isBlank())fail("HARNESS_INVALID_TOOL","缺少工具必填参数");
     guard.requireSafe(args.toString());
-    if((name.contains("logs")||name.equals("flink_log_read"))&&!allowLogs)throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_LOG_CONSENT_REQUIRED","本轮尚未授权日志取证及向当前模型发送；请使用logs交互请求");
     String jobId=args.path("jobId").asText(defaultJob);ObjectNode out;
     switch(name){
       case "job_search" -> {var rows=mapper.createArrayNode();for(var job:jobs.list())if(job.name().contains(args.path("query").asText()))rows.addObject().put("id",job.id()).put("name",job.name()).put("revision",job.revision());out=page(rows,args);}
@@ -122,6 +129,7 @@ public class AiHarnessCapabilities {
       case "job_config_read" -> {access.require(jobId,"read");out=evidence.current(jobs.get(jobId));}
       case "job_operation_history" -> {access.require(jobId,"read");jobs.get(jobId);out=mapper.createObjectNode();out.set("items",mapper.valueToTree(operations.history(jobId)));}
       case "job_status_read" -> {access.require(jobId,"read");out=observation.status(jobId);}
+      case "job_pods_read","job_events_read" -> {access.require(jobId,"read");var data=diagnostics.inspect(jobId);out=mapper.createObjectNode();String field=name.equals("job_pods_read")?"pods":"events";out.set(field,data.path(field).deepCopy());if(data.has("error"))out.set("deploymentError",data.get("error"));if(field.equals("pods")&&!args.path("pod").asText().isBlank()){var rows=out.putArray("pods");for(var pod:data.path("pods"))if(args.path("pod").asText().equals(pod.path("name").asText()))rows.add(pod);if(rows.isEmpty())fail("HARNESS_POD_NOT_FOUND","当前作业未发现该Pod");}}
       case "sql_draft_read" -> {access.require("sql:"+args.path("sqlId").asText(),"edit");out=sql.get(args.path("sqlId").asText());}
       case "sql_versions_read" -> {out=mapper.createObjectNode();out.set("items",mapper.valueToTree(sql.versions(args.path("sqlId").asText())));}
       case "sql_runtime_preview" -> {var draft=sql.get(args.path("sqlId").asText());out=sql.preview(new com.flinkweb.dto.sql.SqlDraftRequest(draft.path("name").asText(),draft.path("description").asText(),draft.path("sql").asText(),(ObjectNode)draft.path("runtime"),draft.path("revision").asLong()));}
@@ -140,13 +148,16 @@ public class AiHarnessCapabilities {
       case "session_logs_read" -> {requireSessionLogs();out=logSnapshot(diagnostics.sessionLog(args.path("sessionId").asText(),args.path("pod").asText(),args.path("container").asText(),lines(args),args.path("previous").asBoolean()),"",args.path("sessionId").asText(),sessionId);}
       case "runtime_image_list" -> {var rows=mapper.createArrayNode();for(var row:records.list("images"))rows.addObject().put("id",row.path("id").asText()).put("name",row.path("name").asText()).put("flinkVersion",row.path("flinkVersion").asText()).put("image",row.path("repository").asText()+":"+row.path("version").asText());out=page(rows,args);}
       case "artifact_list" -> out=page(summaries(records.list("artifacts"),""),args);
-      case "log_sources_list" -> {access.require(jobId,"operate");out=diagnostics.inspect(jobId);}
+      case "log_sources_list" -> {access.require(jobId,"operate");out=diagnostics.inspect(jobId).deepCopy();if(out.has("error"))out.set("deploymentError",out.remove("error"));}
       case "logs_read" -> {access.require(jobId,"operate");out=logSnapshot(diagnostics.log(jobId,args.path("pod").asText(),args.path("container").asText(),lines(args),args.path("previous").asBoolean()),jobId,"",sessionId);}
       case "logs_page","logs_search","logs_release" -> out=storedLog(name,args);
-      case "flink_log_read","flink_taskmanagers","flink_exceptions_read","checkpoint_overview","checkpoint_configuration","checkpoint_detail","checkpoint_operator_detail" -> {out=runtime(name,args,jobId);if(name.equals("flink_log_read"))out=logSnapshot(out,jobId,"",sessionId);}
+      case "flink_log_read","flink_taskmanagers","flink_exceptions_read","flink_job_plan","flink_vertex_backpressure","flink_vertex_metrics","checkpoint_overview","checkpoint_configuration","checkpoint_detail","checkpoint_operator_detail" -> {out=runtime(name,args,jobId);if(name.equals("flink_log_read"))out=logSnapshot(out,jobId,"",sessionId);}
       case "snapshot_list" -> {access.require(jobId,"read");jobs.get(jobId);out=mapper.createObjectNode().put("source","LOCAL_LEDGER").put("note","历史台账，不是本次实时观测");out.set("items",mapper.valueToTree(snapshots.list(jobId)));}
       case "snapshot_check" -> {access.require(jobId,"operate");jobs.get(jobId);out=snapshots.check(jobId,args.path("snapshotId").asText());}
       case "preferences_read" -> out=preferences.get();
+      case "tools_search" -> out=searchTools(args.path("query").asText());
+      case "harness_session_list" -> {var rows=mapper.createArrayNode();for(var row:records.list("ai_harness_sessions"))if(access.actor().equals(row.path("owner").asText())&&(jobId.isBlank()||jobId.equals(row.path("jobId").asText()))){var item=rows.addObject();for(String key:List.of("id","title","kind","jobId","sqlId","revision"))if(row.has(key))item.set(key,row.get(key));}out=page(rows,args);}
+      case "harness_turn_read" -> {var session=records.require("ai_harness_sessions",args.path("sessionId").asText());var turn=records.require("ai_harness_turns",args.path("turnId").asText());if(!access.actor().equals(session.path("owner").asText())||!access.actor().equals(turn.path("owner").asText())||!session.path("id").equals(turn.path("sessionId"))||!session.path("epoch").equals(turn.path("epoch")))throw new BusinessException(HttpStatus.FORBIDDEN,"FORBIDDEN","无权读取该私有轮次");if(session.path("kind").asText().equals("sql")){String sid=session.path("sqlId").asText();access.require("sql:"+sid,"edit");if(!sid.isBlank()&&!sql.get(sid).path("createdAt").equals(session.path("subjectCreatedAt")))fail("HARNESS_CONTEXT_CHANGED","SQL生命周期已变化");}else if(!session.path("jobId").asText().isBlank()){access.require(session.path("jobId").asText(),"read");if(!jobs.get(session.path("jobId").asText()).createdAt().toString().equals(session.path("subjectCreatedAt").asText()))fail("HARNESS_CONTEXT_CHANGED","作业生命周期已变化");}out=mapper.createObjectNode();for(String key:List.of("id","sessionId","sequence","state","content","reply","requirements"))if(turn.has(key))out.set(key,turn.get(key));}
       case "resources_list" -> out=resources();
       case "resource_read" -> out=resource(args.path("uri").asText(),allowLogs,sessionId);
       case "prompts_list" -> out=prompts();
@@ -154,6 +165,13 @@ public class AiHarnessCapabilities {
       default -> throw new IllegalStateException("工具缺少处理器");
     }
     out=(ObjectNode)guard.sanitize(protect(out));if(out.toString().length()>85000)fail("HARNESS_RESULT_TOO_LARGE","结果超过预算，请缩小查询范围");out.put("queriedAt",Instant.now().toString());return out;
+  }
+  /** 搜索不扩大权限，模型下一步才能使用按需发现的扩展工具。 */
+  private ObjectNode searchTools(String query){
+    if(query.isBlank())fail("HARNESS_INVALID_TOOL","请提供工具关键词");String expanded=query.toLowerCase(Locale.ROOT).replace("日志","logs log").replace("检查点","checkpoint").replace("背压","backpressure").replace("指标","metrics").replace("事件","events").replace("容器","pod").replace("历史","history turn");
+    var out=mapper.createObjectNode();var items=out.putArray("tools");var names=out.putArray("discoveredTools");
+    for(var spec:tools()){String hay=(spec.path("name").asText()+" "+spec.path("description").asText()).toLowerCase(Locale.ROOT);boolean match=false;for(String term:expanded.split("[\\s,，、]+"))if(!term.isBlank()&&hay.contains(term))match=true;if(match){items.add(spec);names.add(spec.path("name").asText());}}
+    out.put("total",items.size());return out;
   }
   /** 敏感字段按名称遮蔽，防止仅按字符串匹配遗漏未登记字面密钥。 */
   private JsonNode protect(JsonNode value){
@@ -182,6 +200,8 @@ public class AiHarnessCapabilities {
       case "flink_taskmanagers" -> path="taskmanagers";
       case "flink_log_read" -> {String tm=args.path("taskManagerId").asText();path=tm.isBlank()?"jobmanager/log":"taskmanagers/"+tm+"/log";}
       case "flink_exceptions_read" -> path=prefix+"exceptions?maxExceptions=20";
+      case "flink_job_plan" -> path=prefix+"plan";
+      case "flink_vertex_backpressure","flink_vertex_metrics" -> {String vertex=args.path("vertexId").asText();if(!vertex.matches("[a-f0-9]{32}"))fail("HARNESS_INVALID_TOOL","算子ID格式无效");path=prefix+"vertices/"+vertex+"/"+(name.equals("flink_vertex_backpressure")?"backpressure":"metrics");String metrics=args.path("metrics").asText();if(!metrics.isBlank()){if(!metrics.matches("[A-Za-z0-9.,_-]{1,2000}"))fail("HARNESS_INVALID_TOOL","指标ID格式无效");path+="?get="+metrics;}}
       case "checkpoint_configuration" -> path=prefix+"checkpoints/config";
       case "checkpoint_detail","checkpoint_operator_detail" -> {long cp=args.path("checkpointId").asLong();if(cp<0)fail("HARNESS_INVALID_TOOL","Checkpoint ID不能为负数");path=prefix+"checkpoints/details/"+cp;if(name.equals("checkpoint_operator_detail"))path+="/subtasks/"+args.path("vertexId").asText();}
       default -> path=prefix+"checkpoints";
@@ -195,13 +215,13 @@ public class AiHarnessCapabilities {
   }
   /** 大Checkpoint的算子/子任务及历史按需分页；每页标明采集一致性范围。 */
   private JsonNode pageRuntime(JsonNode value,ObjectNode args){
-    if(!value.isObject())return value;var out=(ObjectNode)value.deepCopy();int offset=args.path("offset").asInt();if(offset<0)fail("HARNESS_INVALID_TOOL","offset不能为负数");
-    for(String key:List.of("tasks","subtasks","history","taskmanagers")){
+    if(!value.isObject())return value;var out=(ObjectNode)value.deepCopy();if(out.path("plan").isObject())out.set("plan",pageRuntime(out.path("plan"),args));int offset=args.path("offset").asInt();if(offset<0)fail("HARNESS_INVALID_TOOL","offset不能为负数");
+    for(String key:List.of("tasks","subtasks","history","taskmanagers","nodes")){
       var rows=out.path(key);if(!rows.isArray()&&!rows.isObject())continue;int total=rows.size();
       JsonNode selected=rows.isArray()?mapper.createArrayNode():mapper.createObjectNode();int n=0;
       if(rows.isObject()){var fields=rows.fields();while(fields.hasNext()){var field=fields.next();if(n>=offset&&n<(long)offset+50)((ObjectNode)selected).set(field.getKey(),field.getValue());n++;}}
       else for(var row:rows){if(n>=offset&&n<(long)offset+50)((ArrayNode)selected).add(row);n++;}
-      out.set(key,selected);var meta=out.withObject("/page").put("field",key).put("total",total).put("offset",offset).put("hasMore",(long)offset+50<total).put("consistency","本页重新采集；进行中Checkpoint的统计可能继续变化");if((long)offset+50<total)meta.put("nextOffset",offset+50);
+      out.set(key,selected);var meta=out.withObject("/page").put("field",key).put("total",total).put("offset",offset).put("hasMore",(long)offset+50<total).put("consistency","本页重新采集；实时统计可能继续变化");if((long)offset+50<total)meta.put("nextOffset",offset+50);
     }return out;
   }
   /** 日志保存短期私有快照；分页读取同一内容，避免重新取尾部造成遗漏或重复。 */
@@ -221,7 +241,7 @@ public class AiHarnessCapabilities {
   /** 字符游标分页显式返回上游截断，不将快照尾部当完整历史。 */
   private ObjectNode logPage(ObjectNode row,int offset){String text=row.path("text").asText();if(offset<0||offset>text.length())fail("HARNESS_INVALID_TOOL","日志游标无效");int end=(int)Math.min(text.length(),(long)offset+12000);if(end<text.length()&&end>offset&&Character.isHighSurrogate(text.charAt(end-1)))end--;var out=row.deepCopy();out.remove(List.of("owner","text","id","revision"));out.put("logId",row.path("id").asText()).put("text",text.substring(offset,end)).put("offset",offset).put("hasMore",end<text.length()).put("scope","已读取尾部快照；不覆盖轮转或已删除的日志");if(end<text.length())out.put("nextOffset",end);return out;}
   /** 发现资源和参数化URI；不自动读取全部上下文。 */
-  public ObjectNode resources(){var out=mapper.createObjectNode();out.putArray("resources").addObject().put("uri","flink://users/me/preferences").put("name","我的偏好").put("mimeType","application/json");var templates=out.putArray("resourceTemplates");for(String path:List.of("jobs/{id}/configuration","jobs/{id}/checkpoints","jobs/{id}/snapshots","sql/{id}/draft","sessions/{id}/configuration","catalogs/{id}/databases/{database}/tables/{table}","logs/{id}"))templates.addObject().put("uriTemplate","flink://"+path).put("name",path).put("mimeType","application/json");return out;}
+  public ObjectNode resources(){var out=mapper.createObjectNode();out.putArray("resources").addObject().put("uri","flink://users/me/preferences").put("name","我的偏好").put("mimeType","application/json");var templates=out.putArray("resourceTemplates");for(String path:List.of("jobs/{id}/configuration","jobs/{id}/checkpoints","jobs/{id}/snapshots","jobs/{id}/pods","jobs/{id}/events","jobs/{id}/plan","sql/{id}/draft","sessions/{id}/configuration","catalogs/{id}/databases/{database}/tables/{table}","logs/{id}"))templates.addObject().put("uriTemplate","flink://"+path).put("name",path).put("mimeType","application/json");return out;}
   /** 资源URI只能映射到登记工具，不能作为URL访问。 */
   public ObjectNode resource(String uri,boolean allowLogs,String session){
     if(uri.equals("flink://users/me/preferences"))return preferences.get();
@@ -229,12 +249,12 @@ public class AiHarnessCapabilities {
       var parts=uri.substring(17).split("/",-1);if(parts.length!=5||!parts[1].equals("databases")||!parts[3].equals("tables"))fail("HARNESS_RESOURCE_UNSUPPORTED","Catalog资源URI无效");
       var args=mapper.createObjectNode().put("catalogId",parts[0]).put("database",decode(parts[2])).put("table",decode(parts[4]));return call("catalog_metadata",args,"",allowLogs,session);
     }
-    var match=java.util.regex.Pattern.compile("flink://(jobs|sql|logs|sessions)/([A-Za-z0-9_-]{1,200})(?:/(configuration|checkpoints|snapshots|draft))?").matcher(uri);if(!match.matches())fail("HARNESS_RESOURCE_UNSUPPORTED","未登记该资源URI");
+    var match=java.util.regex.Pattern.compile("flink://(jobs|sql|logs|sessions)/([A-Za-z0-9_-]{1,200})(?:/(configuration|checkpoints|snapshots|draft|pods|events|plan))?").matcher(uri);if(!match.matches())fail("HARNESS_RESOURCE_UNSUPPORTED","未登记该资源URI");
     var args=mapper.createObjectNode();String name;
     if(match.group(1).equals("logs")){if(match.group(3)!=null)fail("HARNESS_RESOURCE_UNSUPPORTED","资源URI无效");name="logs_page";args.put("logId",match.group(2));}
     else if(match.group(1).equals("sessions")&&"configuration".equals(match.group(3))){name="session_config_read";args.put("sessionId",match.group(2));}
     else if(match.group(1).equals("sql")&&"draft".equals(match.group(3))){name="sql_draft_read";args.put("sqlId",match.group(2));}
-    else if(match.group(1).equals("jobs")&&match.group(3)!=null){name=switch(match.group(3)){case "configuration"->"job_config_read";case "checkpoints"->"checkpoint_overview";case "snapshots"->"snapshot_list";default->"";};args.put("jobId",match.group(2));}
+    else if(match.group(1).equals("jobs")&&match.group(3)!=null){name=switch(match.group(3)){case "configuration"->"job_config_read";case "checkpoints"->"checkpoint_overview";case "snapshots"->"snapshot_list";case "pods"->"job_pods_read";case "events"->"job_events_read";case "plan"->"flink_job_plan";default->"";};args.put("jobId",match.group(2));}
     else{name="";}return call(name,args,"",allowLogs,session);
   }
   /** URI参数仅解码为服务参数，绝不拼接到网络地址。 */

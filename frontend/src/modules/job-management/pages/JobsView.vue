@@ -7,7 +7,6 @@ import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import PageHeader from '../../../shared/components/layout/PageHeader.vue'
 import JobWorkbench from '../components/JobWorkbench.vue'
 import PodStatusDrawer from '../components/PodStatusDrawer.vue'
-import AiJobAnalysis from '../../ai/components/AiJobAnalysis.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { snapshotOptions, snapshotTime } from '../utils/snapshots'
@@ -79,28 +78,6 @@ const loading = ref(true),
   acting = ref(false),
   selected = ref<JobDraft | null>(null)
 const podJob = ref<JobDraft | null>(null)
-const aiJob = ref<JobDraft | null>(null)
-async function aiRestarted() {
-  const id = aiJob.value?.id
-  aiJob.value = null
-  query.value = ''
-  statusFilter.value = ''
-  versionFilter.value = ''
-  message.value =
-    '修复已保存，启动 / 重启请求已受理；请手动刷新核对实际运行状态。再次打开助手将开始新一轮排障。'
-  try {
-    await load()
-  } catch (e) {
-    error.value = '请求已受理，列表暂时刷新失败：' + (e as Error).message
-    return
-  }
-  const index = filtered.value.findIndex((job) => job.id === id)
-  if (index >= 0) page.value = Math.floor(index / pageSize.value) + 1
-  await nextTick()
-  document
-    .querySelector<HTMLElement>('[data-job-id="' + id + '"]')
-    ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-}
 const snapshotNotice = ref('')
 const yamlDialog = ref<HTMLDialogElement>()
 const yamlName = ref('')
@@ -831,7 +808,11 @@ function resetFilters() {
               >
             </td>
             <td class="row-actions">
-              <button v-if="operator" class="text-button" @click="aiJob = job">
+              <button
+                v-if="operator || developer"
+                class="text-button"
+                @click="router.push({ path: '/ai', query: { job: job.id } })"
+              >
                 {{
                   state(job)?.error ||
                   state(job)?.healthState === 'ERROR' ||
@@ -1198,16 +1179,6 @@ function resetFilters() {
       </table>
     </div>
   </section>
-  <AiJobAnalysis
-    v-if="aiJob"
-    :key="aiJob.id"
-    :job="aiJob"
-    :error="state(aiJob)?.error"
-    :can-read-logs="mayOperate(aiJob)"
-    @changed="load"
-    @restarted="aiRestarted"
-    @close="aiJob = null"
-  />
   <PodStatusDrawer
     v-if="podJob"
     :key="podJob.id"

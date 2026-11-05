@@ -317,19 +317,55 @@ async function generate(page: Page) {
   return panel
 }
 
-test('作业报错按钮主动分析并展示解决步骤，不执行运行操作', async ({ page }) => {
+test('作业报错按钮使用统一Harness，不执行运行操作', async ({ page }) => {
   const f = await fixture(page)
+  const sent: any[] = []
+  let session: any
+  await page.route('**/api/ai/harness/**', async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname
+    let data: any
+    if (path === '/api/ai/harness/sessions') {
+      if (req.method() === 'POST') {
+        const input = req.postDataJSON()
+        session = {
+          id: input.requestId,
+          kind: 'diagnosis',
+          jobId: input.jobId,
+          title: '诊断 · orders',
+          revision: 1,
+          turns: [],
+          updatedAt: new Date().toISOString(),
+        }
+        data = session
+      } else data = session ? [session] : []
+    } else if (path.endsWith('/turns')) {
+      const input = req.postDataJSON()
+      sent.push(input)
+      data = {
+        id: input.requestId,
+        sessionId: session.id,
+        state: 'SUCCEEDED',
+        sequence: 1,
+        content: input.content,
+        reply: 'Metaspace：先检查源表网络，确认配置后重新检查 SQL',
+        plan: ['读取故障证据'],
+        events: [],
+        contextManifest: {},
+      }
+      session.turns.push(data)
+    } else data = session
+    await route.fulfill({ json: { data, error: null } })
+  })
   await page.goto('/#/jobs')
   await page.getByRole('button', { name: 'AI 分析', exact: true }).click()
-  const drawer = page.getByRole('dialog', { name: 'AI 作业助手：orders' })
-  await expect(drawer).toContainText('Metaspace')
-  await drawer.getByRole('button', { name: '开始 AI 分析' }).first().click()
-  await expect(drawer).toContainText('先检查源表网络')
-  await expect.poll(() => f.submissions.length).toBe(1)
-  expect(f.submissions[0]).toMatchObject({ kind: 'diagnosis', jobId: 'job-one', includeLogs: true })
+  await expect(page).toHaveURL(/#\/ai\?job=job-one$/)
+  await page.getByLabel('输入需求').fill('排查当前Metaspace错误')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.getByText(/Metaspace：先检查源表网络/)).toBeVisible()
+  expect(sent).toHaveLength(1)
+  expect(f.submissions).toEqual([])
   expect(f.operations).toEqual([])
-  await drawer.getByRole('button', { name: '关闭 AI 助手' }).click()
-  await expect(drawer).toBeHidden()
 })
 
 test('只读角色不能显示 SQL 助手或管理模型', async ({ page }) => {

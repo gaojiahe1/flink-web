@@ -21,7 +21,7 @@ public class AiFlinkEvidenceClient {
 
   /** GET端点按白名单固定，普通JSON最多64KiB、Checkpoint与TM列表最多2MiB；日志尾部4MiB、传输64MiB。 */
   public JsonNode read(String deployment,String path) {
-    if(!deployment.matches("[a-z0-9][a-z0-9.-]{0,252}") || !path.matches("(overview|jobmanager/(log|metrics(\\?get=[A-Za-z0-9.,_-]+)?)|taskmanagers|taskmanagers/[A-Za-z0-9_.:-]{1,200}/(?:log|metrics(\\?get=[A-Za-z0-9.,_-]+)?)|jobs/[a-f0-9]{32}/(exceptions\\?maxExceptions=20|checkpoints(?:/config|/details/[0-9]+(?:/subtasks/[a-f0-9]{32})?)?))"))throw new IllegalArgumentException("不允许的Flink取证端点");
+    if(!deployment.matches("[a-z0-9][a-z0-9.-]{0,252}") || !path.matches("(overview|jobmanager/(log|metrics(\\?get=[A-Za-z0-9.,_-]+)?)|taskmanagers|taskmanagers/[A-Za-z0-9_.:-]{1,200}/(?:log|metrics(\\?get=[A-Za-z0-9.,_-]+)?)|jobs/[a-f0-9]{32}/(exceptions\\?maxExceptions=20|plan|vertices/[a-f0-9]{32}/(?:backpressure|metrics(?:\\?get=[A-Za-z0-9.,_-]+)?)|checkpoints(?:/config|/details/[0-9]+(?:/subtasks/[a-f0-9]{32})?)?))"))throw new IllegalArgumentException("不允许的Flink取证端点");
     var request=HttpRequest.newBuilder(URI.create("http://"+deployment+"-rest."+namespace+".svc:8081/"+path)).timeout(Duration.ofSeconds(3)).GET().build();
     try {
       var response=client.send(request,HttpResponse.BodyHandlers.ofInputStream());
@@ -37,7 +37,7 @@ public class AiFlinkEvidenceClient {
           byte[] tail=new byte[size];for(int i=0;i<size;i++)tail[i]=ring[(start+i)%ring.length];
           return mapper.createObjectNode().put("text",new String(tail,StandardCharsets.UTF_8)).put("truncated",total>ring.length);
         }
-        int limit=path.contains("/checkpoints")||path.equals("taskmanagers")?2*1024*1024:65536;byte[] bytes=input.readNBytes(limit+1);if(bytes.length>limit)throw new IllegalStateException("Flink证据超过响应预算");return mapper.readTree(bytes);
+        int limit=path.contains("/checkpoints")||path.contains("/plan")||path.contains("/vertices/")||path.equals("taskmanagers")?2*1024*1024:65536;byte[] bytes=input.readNBytes(limit+1);if(bytes.length>limit)throw new IllegalStateException("Flink证据超过响应预算");return mapper.readTree(bytes);
       }
     } catch(InterruptedException error) {Thread.currentThread().interrupt();throw new IllegalStateException("Flink取证已取消",error);}
       catch(java.io.IOException error) {throw new IllegalStateException("Flink REST暂不可达",error);}

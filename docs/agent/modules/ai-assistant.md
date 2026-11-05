@@ -1,5 +1,7 @@
 # AI 助手与模型服务
 
+2026-11-05：作业列表AI助手/AI分析已统一进入[Harness工作台](agent-harness.md)，以`/ai?job=<id>`恢复本人该作业诊断会话或幂等新建；模型、工具、计划、交互、修复审阅和上下文策略与工作台一致，打开不自动调用模型。只读日志/Pod/事件无需额外对话授权，权限/脱敏及写操作批准保留。原AiJobAnalysis侧栏和旧作业AI接口保留兼容，旧私有历史不迁移、不删除；SQL编辑器原助手保持原流程。历史段落所述侧栏/逐轮日志授权不代表当前作业列表行为。
+
 2026-11-05正文观测：用户要求Langfuse显示Input/Output，补齐AiTelemetry输入/输出接口及统一脱敏策略，覆盖模型、工具、Harness/旧任务与交互event。FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT默认true，总观测仍默认关闭；结构化JSON及内嵌参数脱敏、内部推理排除、单项32768限长标记，错误只记分类，策略失败不影响业务。直连/Collector真实Langfuse三层正文入库已验证，[正文SDK/HTTP回归](../../../backend/src/test/java/com/flinkweb/AiTelemetryContentTest.java)覆盖开关、脱敏、预算和异常隔离；字段与开关见[接入说明](../../../deploy/observability/README.md)和[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)。
 
 2026-11-05：新增平台后端环境变量`LANGFUSE_TRACING_ENVIRONMENT`，默认default，映射OTel resource的langfuse.environment，直连和Collector共用；开启时校验Langfuse命名规则，重启后仅影响新轨迹。Compose显式透传，Kubernetes清单提供默认值但不启用观测。配置见[接入说明](../../../deploy/observability/README.md)，验证见[验收](../validation.md#对话偏好与langfuse环境2026-11-05)。
@@ -54,7 +56,7 @@
 ## 入口与代码
 
 - SQL 开发「AI 助手」：确认需求→查看 SQL→检查和保存，无选择数据步骤。首步约70%对话/30%当前SQL，可拖动或收起SQL；模型区紧凑、总结内嵌、输入区独立，窄屏上下布局。对话后保存完整会话总结，用户核对确认才生成完整SQL；审阅后显式应用，再检查/验证/保存。可随时补充，旧SQL可解释整理，报错可加入对话再确认修复。问号解释保存、授权和确认边界。
-- 作业列表：正常作业为「AI 助手」，错误/FAILED显示「AI 分析」；持续诊断和明确确认后的修复应用见上方新流程，替代原单次只读窗口。
+- 作业列表：正常作业为「AI 助手」，错误/FAILED显示「AI 分析」；2026-11-05起统一进入Harness工作台，恢复本人该作业诊断会话；旧侧栏仅保留兼容。
 - 系统设置 → 模型服务：仅管理员增删改、测试；按用途选模型，外部发送须每次明确允许。支持兼容 Chat Completions 的非流式 JSON 响应；Base URL 填到 `/v1` 等接口前缀，程序追加 `/chat/completions`。未配置真实模型时不能生成。
 - [模型客户端](../../../backend/src/main/java/com/flinkweb/client/ai/AiModelClient.java)、[模型服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiModelServiceImpl.java)、[任务服务](../../../backend/src/main/java/com/flinkweb/service/ai/impl/AiTaskServiceImpl.java)、[内容防护](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiContentGuard.java)。
 - [前端模块](../../../frontend/src/modules/ai/api/ai.ts)、[侧栏](../../../frontend/src/modules/ai/components/AiSqlAssistant.vue)、[字段表单](../../../frontend/src/modules/ai/components/AiDataDefinitionEditor.vue)、[模型页面](../../../frontend/src/modules/system/pages/ModelsView.vue)。

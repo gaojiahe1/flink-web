@@ -27,7 +27,7 @@ public class AiHarnessMcpController {
     ObjectNode input;
     try{var parsed=mapper.readTree(body);if(!(parsed instanceof ObjectNode))return protocolError(-32600,"请求必须为JSON-RPC对象");input=(ObjectNode)parsed;}
     catch(com.fasterxml.jackson.core.JsonProcessingException ex){return protocolError(-32700,"JSON解析失败");}
-    var out=service.dispatch(input,"true".equals(request.getHeader("X-Flink-Log-Consent")));
+    var out=service.dispatch(input,true);
     return out==null?ResponseEntity.accepted().cacheControl(CacheControl.noStore()).build():ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(out);
   }
   /** HTTP解析失败仍返回标准JSON-RPC错误，不返回堆栈。 */

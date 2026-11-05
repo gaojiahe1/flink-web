@@ -18,9 +18,9 @@ class AiFlinkEvidenceClientTest {
     org.springframework.test.util.ReflectionTestUtils.setField(client,"client",http);
     when(http.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenAnswer(inv->{var response=mock(HttpResponse.class);when(response.statusCode()).thenReturn(200);when(response.body()).thenReturn(new ByteArrayInputStream("{\"ok\":true}".getBytes(StandardCharsets.UTF_8)));return response;});
     String job="a".repeat(32),vertex="b".repeat(32);
-    for(String path:new String[]{"jobs/"+job+"/checkpoints/config","jobs/"+job+"/checkpoints/details/9999999999","jobs/"+job+"/checkpoints/details/12/subtasks/"+vertex,"taskmanagers/tm:6122/log"})assertThat(client.read("flink-job",path)).isNotNull();
+    for(String path:new String[]{"jobs/"+job+"/checkpoints/config","jobs/"+job+"/checkpoints/details/9999999999","jobs/"+job+"/checkpoints/details/12/subtasks/"+vertex,"taskmanagers/tm:6122/log","jobs/"+job+"/plan","jobs/"+job+"/vertices/"+vertex+"/backpressure","jobs/"+job+"/vertices/"+vertex+"/metrics?get=0.numRecordsInPerSecond"})assertThat(client.read("flink-job",path)).isNotNull();
     for(String path:new String[]{"https://evil.example/","jobs/"+job+"/savepoints","jobs/"+job+"/checkpoints/details/1/../../config","taskmanagers/tm/log?token=x","jobmanager/config","jars"})assertThatThrownBy(()->client.read("flink-job",path)).isInstanceOf(IllegalArgumentException.class);
-    verify(http,times(4)).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
+    verify(http,times(7)).send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class));
   }
   /** Flink文件日志保留更大尾部，普通JSON仍拒绝超限响应。 */
   @Test

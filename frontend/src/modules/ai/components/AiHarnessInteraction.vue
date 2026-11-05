@@ -26,7 +26,7 @@ const valid = computed(() => {
   if (props.card.kind === 'choice') return !!answers.value.choice
   return props.card.questions.every((_, index) => !!answers.value[`q${index}`]?.trim())
 })
-function submit(decision: 'submit' | 'cancel', grantLogs = false) {
+function submit(decision: 'submit' | 'cancel') {
   if (!available.value || props.working) return
   if (!pending.value)
     pending.value = {
@@ -34,7 +34,6 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
       interactionId: props.card.id,
       decision,
       answers: { ...answers.value },
-      grantLogs,
       confirmedVerification: props.card.kind === 'verification',
       confirmedPreferences: props.card.kind === 'preferences' && decision === 'submit',
     }
@@ -71,7 +70,7 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
       </dl>
     </template>
     <template v-if="available">
-      <form @submit.prevent="submit('submit', card.kind === 'logs')">
+      <form @submit.prevent="submit('submit')">
         <label
           v-for="(question, index) in card.questions"
           :key="index"
@@ -102,7 +101,7 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
               pending
                 ? '重试原提交'
                 : card.kind === 'logs'
-                  ? '读取脱敏日志并继续'
+                  ? '继续分析'
                   : card.kind === 'verification'
                     ? card.action === 'cancel'
                       ? '确认取消验证'
@@ -114,18 +113,10 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
                       : '提交并继续'
             }}
           </button>
-          <button
-            v-if="card.kind === 'logs' && answers.note?.trim()"
-            type="button"
-            :disabled="working || !!pending"
-            @click="submit('submit')"
-          >
-            仅提交补充，不读取日志
-          </button>
           <button type="button" :disabled="working || !!pending" @click="submit('cancel')">
             {{
               card.kind === 'logs'
-                ? '暂不读取'
+                ? '取消本次交互'
                 : card.kind === 'preferences'
                   ? '暂不保存'
                   : '取消本次交互'
@@ -137,7 +128,9 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
         >
         <small v-else
           >提交后会继续原任务。{{
-            card.kind === 'logs' ? '授权不会保存为用户偏好。' : '也可以在对话输入框中直接补充。'
+            card.kind === 'logs'
+              ? '当前只读日志可直接按需查询，无需额外授权。'
+              : '也可以在对话输入框中直接补充。'
           }}</small
         >
       </form>

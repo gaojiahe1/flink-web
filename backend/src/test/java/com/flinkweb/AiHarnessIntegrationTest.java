@@ -381,13 +381,11 @@ class AiHarnessIntegrationTest {
     assertThat(harness.get(id).path("turns")).hasSize(2);assertThat(resumed.path("content").asText()).contains("event_time","时间字段是什么");assertThat(records.require("ai_harness_turns",resumed.path("id").asText()).path("continuationGoal").asText()).isEqualTo(turn.path("content").asText());
     var changed=response.deepCopy().put("requestId",UUID.randomUUID().toString());assertThatThrownBy(()->harness.respond(id,turn.path("id").asText(),changed)).hasMessageContaining("已提交");
   }
-  /** 日志同意只来自本次显式动作，文字补充和用户偏好不能替代授权。 */
+  /** 只读日志不再等待单独授权，兼容模型的旧logs请求会提示直接取证。 */
   @Test
-  void logInteractionDoesNotTreatTextAsConsent()throws Exception{
+  void logInteractionContinuesWithoutSeparateConsent()throws Exception{
     var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(!once.getAndSet(true)){var args=mapper.createObjectNode().put("kind","logs").put("title","需要日志");args.putArray("questions");args.putArray("options");return call("interaction_request",args);}inv.getArgument(4,Consumer.class).accept("继续分析");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
-    var session=session();String id=session.path("id").asText();var turn=harness.start(id,input(session));var waiting=completed(id,turn.path("id").asText());
-    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit").put("grantLogs",false);response.putObject("answers").put("note","先看Checkpoint");
-    var resumed=harness.respond(id,turn.path("id").asText(),response);completed(id,resumed.path("id").asText());assertThat(records.require("ai_harness_turns",resumed.path("id").asText()).path("includeLogs").asBoolean()).isFalse();
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("includeLogs",false));var result=completed(id,turn.path("id").asText());assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");assertThat(result.has("interaction")).isFalse();assertThat(records.require("ai_harness_turns",turn.path("id").asText()).path("includeLogs").asBoolean()).isTrue();
   }
   /** 原资源修订变化和新轮次都使等待卡片失效。 */
   @Test
@@ -399,16 +397,15 @@ class AiHarnessIntegrationTest {
     assertThatThrownBy(()->harness.respond(id,turn.path("id").asText(),response)).hasMessageContaining("变化");
     assertThat(records.require("ai_harness_turns",turn.path("id").asText()).path("state").asText()).isEqualTo("WAITING_USER");harness.cancel(id,turn.path("id").asText());
   }
-  /** 日志快照可继续翻页、检索和清理；不允许用参数绕过本轮同意。 */
+  /** 日志按账号权限直接读取，快照仍可翻页、检索和清理。 */
   @Test
   void preciseLogReadPagesAndSearchesSamePrivateSnapshot(){
     var args=mapper.createObjectNode().put("pod","jm-1").put("container","flink-main-container").put("lines",10000).put("previous",true);
-    assertThatThrownBy(()->capabilities.call("logs_read",args,job.id(),false,"")).hasMessageContaining("授权");
     when(diagnostics.log(job.id(),"jm-1","flink-main-container",10000,true)).thenReturn(mapper.createObjectNode().put("text","x".repeat(15000)+"Checkpoint failed").put("previous",true).put("truncated",true));
-    var first=capabilities.call("logs_read",args,job.id(),true,"");assertThat(first.path("hasMore").asBoolean()).isTrue();assertThat(first.path("text").asText()).hasSize(12000);
+    var first=capabilities.call("logs_read",args,job.id(),false,"");assertThat(first.path("hasMore").asBoolean()).isTrue();assertThat(first.path("text").asText()).hasSize(12000);
     var next=capabilities.call("logs_page",mapper.createObjectNode().put("logId",first.path("logId").asText()).put("offset",12000),"",true,"");assertThat(next.path("text").asText()).endsWith("Checkpoint failed");assertThat(next.path("truncated").asBoolean()).isTrue();
     var found=capabilities.call("logs_search",mapper.createObjectNode().put("logId",first.path("logId").asText()).put("query","Checkpoint"),"",true,"");assertThat(found.path("matches")).hasSize(1);
-    assertThatThrownBy(()->capabilities.call("logs_page",mapper.createObjectNode().put("logId",first.path("logId").asText()),"",false,"")).hasMessageContaining("授权");
+    assertThat(capabilities.call("logs_page",mapper.createObjectNode().put("logId",first.path("logId").asText()),"",false,"").path("text").asText()).hasSize(12000);
     assertThat(capabilities.call("logs_release",mapper.createObjectNode().put("logId",first.path("logId").asText()),"",true,"").path("released").asBoolean()).isTrue();assertThat(records.find("ai_harness_log_snapshots",first.path("logId").asText())).isNull();
   }
   /** Checkpoint下钻端点绑定实际运行身份，读取期间重建会拒绝混合证据。 */
@@ -554,6 +551,34 @@ class AiHarnessIntegrationTest {
   void ignoredPreferenceRequestCannotReportSaved()throws Exception{
     var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("content","以后回答先给结论"));var result=completed(id,turn.path("id").asText());
     assertThat(result.path("state").asText()).isEqualTo("FAILED");assertThat(result.path("message").asText()).contains("未保存");assertThat(preferences.get().path("values").isEmpty()).isTrue();
+  }
+
+  /** 扩展Schema按需搜索后立即开放，不把全部工具及完整配置塞进首包。 */
+  @Test
+  void discoversBackpressureToolLazilyAndRunsIt()throws Exception{
+    String jid="a".repeat(32),vertex="b".repeat(32);live.withObject("/status/jobStatus").put("jobId",jid);
+    when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/vertices/"+vertex+"/backpressure")).thenReturn(mapper.createObjectNode().put("status","ok").put("backpressure-level","low"));
+    var step=new AtomicInteger();doAnswer(inv->{var planning=planning(inv);if(planning!=null){var messages=inv.getArgument(2,ArrayNode.class);var request=mapper.readTree(messages.get(messages.size()-1).path("content").asText());assertThat(request.at("/context/current").isMissingNode()).isTrue();assertThat(request.has("userRequirementsHistory")).isFalse();return planning;}int n=step.getAndIncrement();if(n==0){assertThat(inv.getArgument(3,ArrayNode.class).toString()).doesNotContain("\"name\":\"flink_vertex_backpressure\"");return call("tools_search",mapper.createObjectNode().put("query","背压"));}if(n==1){assertThat(inv.getArgument(3,ArrayNode.class).toString()).contains("flink_vertex_backpressure");return call("flink_vertex_backpressure",mapper.createObjectNode().put("vertexId",vertex));}inv.getArgument(4,Consumer.class).accept("已读取背压证据");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s));var result=completed(id,turn.path("id").asText());assertThat(result.path("state").asText()).isEqualTo("SUCCEEDED");assertThat(result.path("discoveredTools").toString()).contains("flink_vertex_backpressure");verify(evidenceClient).read(job.deploymentName(),"jobs/"+jid+"/vertices/"+vertex+"/backpressure");
+    assertThat(result.at("/contextManifest/modelInputCharacters").asInt()).isLessThan(50000);
+  }
+
+  /** Pod/事件/拓扑/算子指标共用权限与运行身份，MCP无额外日志授权请求头。 */
+  @Test
+  void newEvidenceToolsAndMcpLogsUseExistingPermissions()throws Exception{
+    var data=mapper.createObjectNode().put("error","PodFailed");data.putArray("pods").addObject().put("name","jm-one").put("phase","Pending");data.putArray("events").addObject().put("reason","FailedScheduling");when(diagnostics.inspect(job.id())).thenReturn(data);
+    assertThat(capabilities.call("job_pods_read",mapper.createObjectNode().put("pod","jm-one"),job.id(),false,"").at("/pods/0/phase").asText()).isEqualTo("Pending");assertThat(capabilities.call("job_pods_read",mapper.createObjectNode(),job.id(),false,"").has("error")).isFalse();assertThat(capabilities.call("log_sources_list",mapper.createObjectNode(),job.id(),false,"").path("deploymentError").asText()).isEqualTo("PodFailed");assertThat(capabilities.resource("flink://jobs/"+job.id()+"/events",false,"").at("/events/0/reason").asText()).isEqualTo("FailedScheduling");
+    String jid="a".repeat(32),vertex="b".repeat(32);live.withObject("/status/jobStatus").put("jobId",jid);var plan=mapper.createObjectNode();var nodes=plan.putObject("plan").putArray("nodes");for(int n=0;n<60;n++)nodes.addObject().put("id",n);when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/plan")).thenReturn(plan);
+    assertThat(capabilities.call("flink_job_plan",mapper.createObjectNode(),job.id(),false,"").at("/data/plan/nodes")).hasSize(50);
+    assertThatThrownBy(()->capabilities.call("flink_vertex_metrics",mapper.createObjectNode().put("vertexId","../config"),job.id(),false,"")).hasMessageContaining("算子ID");
+    when(diagnostics.log(job.id(),"jm-one","fw-download",10,false)).thenReturn(mapper.createObjectNode().put("text","init ready"));var rpc=mapper.createObjectNode().put("jsonrpc","2.0").put("id",9).put("method","tools/call");rpc.putObject("params").put("name","logs_read").putObject("arguments").put("jobId",job.id()).put("pod","jm-one").put("container","fw-download").put("lines",10);
+    mvc.perform(post("/api/ai/mcp").with(csrf()).contentType("application/json").content(rpc.toString())).andExpect(status().isOk()).andExpect(jsonPath("$.result.isError").value(false)).andExpect(jsonPath("$.result.structuredContent.text").value("init ready"));
+  }
+
+  /** 历史可按轮次读取原文，拒绝跨用户并不返回冻结上下文或幂等指纹。 */
+  @Test
+  void historyToolsOnlyReadOwnedTurns()throws Exception{
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s));completed(id,turn.path("id").asText());var args=mapper.createObjectNode().put("sessionId",id).put("turnId",turn.path("id").asText());var read=capabilities.call("harness_turn_read",args,"",false,"");assertThat(read.path("content").asText()).isEqualTo(turn.path("content").asText());assertThat(read.has("context")).isFalse();assertThat(read.has("fingerprint")).isFalse();var auth=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();try{org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("other","",List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_OPERATOR"))));assertThatThrownBy(()->capabilities.call("harness_turn_read",args,"",false,"")).hasMessageContaining("私有");}finally{org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);}
   }
 
 }

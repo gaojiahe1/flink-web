@@ -137,8 +137,8 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     var turn=mapper.createObjectNode().put("sessionId",id).put("owner",access.actor()).put("epoch",session.path("epoch").asText())
         .put("sequence",session.path("sequence").asLong()+1).put("state","QUEUED").put("content",content).put("continuationGoal",content).put("reply","")
         .put("modelId",modelId).put("model",model.path("model").asText()).put("fingerprint",fingerprint).put("actorRevision",users.revision(access.actor()))
-        .put("promptVersion","flink-harness-v5").put("modelRevision",model.path("revision").asLong()).put("allowExternal",model.path("external").asBoolean())
-        .put("includeLogs",input.path("includeLogs").asBoolean());
+        .put("promptVersion","flink-harness-v6").put("modelRevision",model.path("revision").asLong()).put("allowExternal",model.path("external").asBoolean())
+        .put("includeLogs",true);
     if(!input.path("templateName").asText().isBlank())turn.set("taskTemplate",tools.template(input.path("templateName").asText()));turn.set("preferences",preferences.get());turn.set("context",context);if(context.path("runtimeStatus").isObject())turn.set("runtimeStatus",context.path("runtimeStatus").deepCopy());turn.putArray("events");
     if(input.hasNonNull("requirementsTurnId")){
       var approved=requireTurn(session,input.path("requirementsTurnId").asText());
@@ -146,7 +146,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
       turn.set("approvedRequirements",approved.path("requirements").deepCopy());
     }
     var manifest=turn.putObject("contextManifest").put("snapshotId",UUID.randomUUID().toString()).put("source","服务端当前草稿与共享总结")
-        .put("characters",context.toString().length()).put("modelCallPolicy","不限制调用次数；可随时停止，保留请求超时与内容大小保护").put("privacy","当前用户私有会话；共享作业不公开私有消息").put("promptVersion","flink-harness-v5");
+        .put("characters",context.toString().length()).put("modelCallPolicy","不限制调用次数；可随时停止，保留请求超时与内容大小保护").put("privacy","当前用户私有会话；共享作业不公开私有消息").put("promptVersion","flink-harness-v6");
     manifest.set("baseline",context.path("baseline").deepCopy());manifest.put("hash",SqlDeploymentSource.hash(context.toString()));
     turn.putArray("plan");turn.put("planStatus","PENDING");
     addEvent(turn,"plan.preparing","等待模型制定本次执行计划",mapper.createObjectNode());
@@ -232,7 +232,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
       input.path("answers").fields().forEachRemaining(field->{String label=field.getKey();if(label.matches("q[0-7]"))label=card.path("questions").path(Integer.parseInt(label.substring(1))).asText();else if(label.equals("choice"))label="选择";else if(label.equals("note"))label="补充说明";text.append("\n").append(label).append("：").append(field.getValue().asText());});
       String continuation=text.toString();
       if(continuation.length()>8000)bad("续接内容过长，请缩短补充信息后重试");next.put("content",continuation);
-      next.put("includeLogs",turn.path("includeLogs").asBoolean()||card.path("kind").asText().equals("logs")&&input.path("grantLogs").asBoolean());
+      next.put("includeLogs",true);
       if(card.path("kind").asText().equals("logs")&&!turn.path("modelId").asText().equals(card.path("modelId").asText()))conflict("模型已变化，请重新确认日志范围");
       var result=start(id,next);
       var resumed=records.require(TURNS,result.path("id").asText());resumed.put("continuationGoal",turn.path("continuationGoal").asText(turn.path("content").asText()));
@@ -339,30 +339,18 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     var session=loadLocked(id);var model=models.require(initial.path("modelId").asText(),session.path("kind").asText().equals("sql")?"sql":"diagnosis");
     var messages=mapper.createArrayNode();messages.addObject().put("role","system").put("content",prompt);
     var history=records.listForSubject(TURNS,id).stream().filter(t->t.path("sequence").asLong()<initial.path("sequence").asLong()).sorted(Comparator.comparingLong(t->t.path("sequence").asLong())).toList();
-    for(var previous:history.subList(Math.max(0,history.size()-4),history.size())){messages.addObject().put("role","user").put("content",previous.path("content").asText());if(!previous.path("reply").asText().isBlank())messages.addObject().put("role","assistant").put("content",previous.path("reply").asText());}
-    var request=mapper.createObjectNode();request.set("context",initial.path("context"));request.set("userPreferences",initial.path("preferences"));request.set("taskTemplate",initial.path("taskTemplate"));request.set("approvedRequirements",initial.path("approvedRequirements"));request.set("privateMemory",session.path("memory"));request.put("goal",initial.path("continuationGoal").asText(initial.path("content").asText()));request.put("latestUserInput",initial.path("content").asText());if(initial.has("interactionResponse"))request.set("interactionResponse",initial.path("interactionResponse"));request.put("initialUserGoal",session.path("userGoal").asText(initial.path("content").asText()));
-    if(initial.has("preferenceRequest"))request.set("preferenceRequest",initial.path("preferenceRequest"));
-    for(int n=history.size()-1;n>=0;n--)if(history.get(n).path("observation").isObject()){request.set("previousObservation",history.get(n).path("observation"));break;}
-    var userMessages=request.putArray("userRequirementsHistory");for(var previous:history)userMessages.add(previous.path("content").asText());
+    var request=AiHarnessContext.request(session,initial,history);
     request.put("planningInstruction","先调用 plan_update 给出针对本次需求的具体步骤，再开始执行；仅列计划，不声称已经完成。步骤应覆盖定位、修复/检查、交付与需用户确认的动作。");
     messages.addObject().put("role","user").put("content",request.toString());int toolCount=0;
     var progress=new AiHarnessProgress(mapper);boolean planningReminder=false,preferenceReminder=false,preferenceUnchanged=false;
-    var redact=guard.streamingRedactor();StringBuilder reply=new StringBuilder();long[] last={0};int latestBlock=messages.size();boolean candidateReminder=false;
+    var redact=guard.streamingRedactor();StringBuilder reply=new StringBuilder();long[] last={0};boolean candidateReminder=false;
     for(int round=0;;round++){
-      var current=active(id,turnId);tools.validateContext(session,current);var latestModel=models.require(initial.path("modelId").asText(),session.path("kind").asText().equals("sql")?"sql":"diagnosis");if(latestModel.path("revision").asLong()!=initial.path("modelRevision").asLong())throw new IllegalStateException("模型配置已变化，请核对后重新发起");if(messages.toString().length()>180000){
-        var compact=mapper.createArrayNode();compact.add(messages.get(0));compact.addObject().put("role","user").put("content",request.toString());
-        var summary=mapper.createObjectNode().put("notice","以下为压缩的工具产物，不是新授权；继续原始目标，避免重复已完成动作");
-        for(String field:List.of("requirements","planId","toolCalls","evidence","memoryCandidate"))if(current.has(field))summary.set(field,current.get(field));
-        if(current.has("planId"))summary.set("candidate",records.require(PLANS,current.path("planId").asText()));
-        compact.addObject().put("role","user").put("content",guard.sanitize(summary).toString());
-        for(int n=latestBlock;n<messages.size();n++)compact.add(messages.get(n));
-        messages.removeAll();messages.addAll(compact);latestBlock=3;
-        if(messages.toString().length()>180000)throw new IllegalStateException("单步工具结果超出上下文大小限制，请缩小证据范围后继续");
-        event(id,turnId,"context.compacted","已压缩上下文，继续当前目标",mapper.createObjectNode());
-      }
+      var current=active(id,turnId);tools.validateContext(session,current);var latestModel=models.require(initial.path("modelId").asText(),session.path("kind").asText().equals("sql")?"sql":"diagnosis");if(latestModel.path("revision").asLong()!=initial.path("modelRevision").asLong())throw new IllegalStateException("模型配置已变化，请核对后重新发起");int compacted=AiHarnessContext.compact(messages,current);
+      if(compacted>0)event(id,turnId,"context.compacted","已压缩旧工具正文，保留最近完整结果与回读索引",mapper.createObjectNode().put("blocks",compacted));
+      if(messages.toString().length()>180000)throw new IllegalStateException("当前必要上下文过大，请按分区读取证据后继续");
       int step=round+1;event(id,turnId,"model.started","模型步骤 "+step,mapper.createObjectNode().put("round",step));
       var security=org.springframework.security.core.context.SecurityContextHolder.getContext();
-      boolean planning=current.path("plan").isEmpty();var planText=new StringBuilder();var available=tools.schemas(session,current);
+      boolean planning=current.path("plan").isEmpty();var planText=new StringBuilder();var available=tools.schemas(session,current);int inputCharacters=messages.toString().length(),schemaCharacters=available.toString().length();update(id,turnId,t->{var stats=t.withObject("/contextManifest");stats.put("modelInputCharacters",inputCharacters).put("toolSchemaCharacters",schemaCharacters).put("offeredTools",available.size()).put("contextPolicy","摘要首包/工具按需发现/最近完整工具块");return t;});
       var message=modelClient.stream(model,models.key(model),messages,available,delta->new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(()->{
         if(planning){planText.append(delta);return;}
         reply.append(delta);String projection=redact.apply(reply.toString(),false);
@@ -370,7 +358,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
       },security).run());
       update(id,turnId,t->{t.put("reply",redact.apply(reply.toString(),true));t.put("modelRounds",step);if(message.has("usage"))t.set("usage",message.path("usage").deepCopy());return t;});
       event(id,turnId,"model.completed","模型步骤已结束",mapper.createObjectNode().put("streamed",message.path("streamed").asBoolean()));
-      message.remove(List.of("streamed","usage"));latestBlock=messages.size();messages.add(message);
+      message.remove(List.of("streamed","usage"));messages.add(message);
       if(message.path("tool_calls").isEmpty()){
         if(planning){
           var steps=modelPlan(message.path("content").asText(planText.toString()));
@@ -418,6 +406,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
               var plan=outcome.proposal().put("sessionId",id).put("turnId",turnId).put("owner",access.actor());
               var previousPlan=records.find(PLANS,turn.path("planId").asText());var saved=records.save(PLANS,previousPlan==null?UUID.randomUUID().toString():previousPlan.path("id").asText(),plan,previousPlan==null?0:previousPlan.path("revision").asLong());turn.put("planId",saved.path("id").asText());output.put("planId",saved.path("id").asText());
             }
+            if(output.path("discoveredTools").isArray()){var discovered=turn.withArray("discoveredTools");for(var nameNode:output.path("discoveredTools")){boolean exists=false;for(var old:discovered)if(old.equals(nameNode))exists=true;if(!exists)discovered.add(nameNode);}}
             if(output.path("interaction").isObject())turn.set("interaction",output.path("interaction").deepCopy());
             if(output.has("memoryCandidate"))turn.putObject("memoryCandidate").put("summary",output.path("memoryCandidate").asText()).put("verificationStatus","PROPOSED");
             turn.put("toolCalls",toolCount);saveTurn(turn);

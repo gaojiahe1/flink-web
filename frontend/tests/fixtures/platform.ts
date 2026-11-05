@@ -141,7 +141,7 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
     if (path === '/api/auth/me') data = { username: 'admin', roles: [role] }
     else if (path === '/api/auth/csrf') data = { headerName: 'X-CSRF-TOKEN', token: 'test' }
     else if (path === '/api/system')
-      data = { namespace: 'team', version: '0.0.9', storageType: 'local' }
+      data = { namespace: 'team', version: '0.0.10', storageType: 'local' }
     else if (path === '/api/system/operator')
       data = {
         found: false,
@@ -151,7 +151,7 @@ export async function platformFixture(page: Page, role = 'ROLE_ADMIN') {
         compatibility: { known: false, supported: [] },
       }
     else if (path === '/api/system/downloader')
-      data = { image: 'registry/downloader:0.0.9', revision: 1 }
+      data = { image: 'registry/downloader:0.0.10', revision: 1 }
     else if (path === '/api/platform/network/test')
       data = { connected: true, message: '连接成功', elapsedMs: 1 }
     else if (path === '/api/users')

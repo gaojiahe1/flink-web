@@ -136,18 +136,18 @@ test('提交失败重试保留原请求号和回答', async ({ page }) => {
   await expect(page.getByText('已根据补充继续分析')).toBeVisible()
   expect(f.responses[0]).toEqual(f.responses[1])
 })
-test('日志授权按钮显式授权，普通补充不授权', async ({ page }) => {
+test('兼容旧日志等待记录时可直接提交补充继续', async ({ page }) => {
   const f = await setup(page, 'logs')
   await page.getByLabel('补充说明', { exact: true }).fill('先看Checkpoint')
-  await page.getByRole('button', { name: '仅提交补充，不读取日志' }).click()
+  await page.getByRole('button', { name: '继续分析' }).click()
   await expect(page.getByText('已根据补充继续分析')).toBeVisible()
-  expect(f.responses[0].grantLogs).toBe(false)
+  expect(f.responses[0].grantLogs).toBeUndefined()
 })
-test('日志授权与取消有明确动作', async ({ page }) => {
+test('兼容旧日志等待记录可直接继续分析', async ({ page }) => {
   const f = await setup(page, 'logs')
-  await page.getByRole('button', { name: '读取脱敏日志并继续' }).click()
+  await page.getByRole('button', { name: '继续分析' }).click()
   await expect(page.getByText('已根据补充继续分析')).toBeVisible()
-  expect(f.responses[0].grantLogs).toBe(true)
+  expect(f.responses[0].grantLogs).toBeUndefined()
 })
 test('对话输入框补充关联原卡片', async ({ page }) => {
   const f = await setup(page, 'choice')

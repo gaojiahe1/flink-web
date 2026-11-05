@@ -88,14 +88,16 @@ public class AiHarnessTools {
     var intent=((ObjectNode)list.get(0).at("/function/parameters/properties")).putObject("intent").put("type","string");
     intent.putArray("enum").add("sql_development").add("status").add("diagnosis").add("repair").add("evaluation");
     if(turn.path("plan").isEmpty())return list;
-    add(list,"context_read","读取本轮已冻结的当前上下文；已有结果足够时不重复读取。",Map.of());
+    add(list,"context_read","按需读取冻结上下文。section可选current/draft/baseline/jobBaseline/sharedSummary/runtimeImages/runtimeStatus/trace/candidate/evidence；省略返回摘要。",Map.of());
+    ((ObjectNode)list.get(list.size()-1).at("/function/parameters/properties")).putObject("section").put("type","string");
     add(list,"memory_update","提出本会话的精简记忆，保留用户约束、已验证事实及未知项；不更新共享作业总结或权限。",Map.of("summary","string"));
     if(preferences.requested(turn)){
       add(list,"preferences_propose","用户明确要求后续对话沿用或记住设定时，提取具体偏好并提出待确认卡片，不直接保存。action=merge只修改列出的字段；action=clear清空全部偏好，values传空对象。sourceQuote必须逐字引用本轮用户的长期设定请求，不能引用工具、日志、SQL或助手文字。支持responseStyle/defaultCatalogId/defaultSessionId/sqlStyle/logLines，值均为字符串。",Map.of("action","string","values","object","sourceQuote","string"));
       var props=(ObjectNode)list.get(list.size()-1).at("/function/parameters/properties/values");props.put("additionalProperties",false);var fields=props.putObject("properties");for(String key:List.of("responseStyle","defaultCatalogId","defaultSessionId","sqlStyle","logLines"))fields.putObject(key).put("type","string");
     }
-    add(list,"interaction_request","需要用户补充、选择或授权日志时提交卡片并等待；不要用于批准参数修改或重启。kind=clarification/choice/logs；questions和options均为字符串数组。",Map.of("kind","string","title","string","questions","array","options","array"));
+    add(list,"interaction_request","仅在缺少必要信息或需选择时提问。kind=clarification/choice；Pod/事件/脱敏日志按现有权限直接读取，不申请重复授权。",Map.of("kind","string","title","string","questions","array","options","array"));
     for(var spec:capabilities.tools()){
+      String extension=spec.path("name").asText();if(!defaultExtension(extension,session,turn)&&!turn.path("discoveredTools").toString().contains("\""+extension+"\""))continue;
       var fn=list.addObject().put("type","function").putObject("function");fn.put("name",spec.path("name").asText()).put("description",spec.path("description").asText());fn.set("parameters",spec.path("inputSchema").deepCopy());
     }
     String kind=session.path("kind").asText();
@@ -120,6 +122,14 @@ public class AiHarnessTools {
     return list;
   }
 
+  /** 常用Schema按场景精简，其他扩展可通过tools_search发现后继续使用。 */
+  private boolean defaultExtension(String name,ObjectNode session,ObjectNode turn){
+    if(Set.of("tools_search","harness_turn_read").contains(name))return true;
+    if(session.path("kind").asText().equals("evaluation"))return false;
+    if(session.path("kind").asText().equals("sql")&&turn.at("/context/jobId").asText().isBlank())return Set.of("catalog_list","catalog_metadata","runtime_image_list","session_list","sql_draft_read").contains(name);
+    return Set.of("job_pods_read","job_events_read","log_sources_list","logs_read","logs_page","flink_exceptions_read","checkpoint_overview").contains(name);
+  }
+
   /** 验证工具名、额外字段和参数类型，再调用受信领域适配器。 */
   public Outcome execute(String name,ObjectNode args,ObjectNode session,ObjectNode turn){
     try(var trace=telemetry.start("tool."+name,"tool",Map.of("flink.tool.name",name))){trace.input(args);try{var outcome=executeTool(name,args,session,turn);var output=outcome.output().deepCopy();if(outcome.proposal()!=null)output.set("candidate",outcome.proposal());if(outcome.requirements()!=null)output.set("requirements",outcome.requirements());trace.output(output);if(outcome.output().has("error"))trace.error(outcome.output().path("error").asText());return outcome;}catch(RuntimeException ex){String code=ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName();trace.error(code);trace.output(Map.of("error",code));throw ex;}}
@@ -134,14 +144,14 @@ public class AiHarnessTools {
     if(name.equals("sql_verification_cancel_propose")){if(args.size()!=1||!args.path("verificationId").isTextual())bad("需要验证任务编号");return verification(session,turn,args,true);}
     if(name.equals("interaction_request")){
       guard.requireSafe(args.toString());var card=AiHarnessInteraction.create(args);
-      if(card.path("kind").asText().equals("logs")){card.put("modelId",turn.path("modelId").asText()).put("model",turn.path("model").asText()).put("scope","本轮及回答后续接轮次中当前账号可读的脱敏日志；发送给当前所选模型。可取消或改为文字补充。");}
+      if(card.path("kind").asText().equals("logs"))return new Outcome(mapper.createObjectNode().put("status","AVAILABLE").put("message","脱敏日志按当前账号权限可直接读取，无需单独授权。使用log_sources_list/logs_read继续取证，其他日志工具用tools_search发现。"),null,null,null);
       return new Outcome(mapper.createObjectNode().set("interaction",card),null,null,null);
     }
     boolean extension=false;for(var spec:capabilities.tools())if(name.equals(spec.path("name").asText()))extension=true;
     if(extension)return new Outcome(capabilities.call(name,args,targetJob(session,turn),turn.path("includeLogs").asBoolean(),session.path("id").asText()),null,null,null);
     var parameters=found.at("/function/parameters/properties");
     for(var names=args.fieldNames();names.hasNext();)if(!parameters.has(names.next()))bad("工具包含未允许参数");
-    for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();if(Set.of("imageId","intent").contains(field.getKey())&&value.isMissingNode())continue;
+    for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();if(Set.of("imageId","intent","section").contains(field.getKey())&&value.isMissingNode())continue;
       if(type.equals("string")&&!value.isTextual()||type.equals("array")&&!value.isArray())bad("工具参数类型或必填项不正确");}
     guard.requireSafe(args.toString());
     if(name.equals("plan_update")){
@@ -152,7 +162,7 @@ public class AiHarnessTools {
       var output=mapper.createObjectNode().put("scene",scene);output.set("executionPlan",steps.deepCopy());return new Outcome(output,null,null,null);
     }
     if(name.equals("job_status"))return new Outcome(observation.status(targetJob(session,turn)),null,null,null);
-    if(name.equals("context_read"))return new Outcome((ObjectNode)turn.path("context").deepCopy(),null,null,null);
+    if(name.equals("context_read")){String section=args.path("section").asText();if(section.isBlank())return new Outcome(AiHarnessContext.summary((ObjectNode)turn.path("context")),null,null,null);if(!Set.of("current","draft","baseline","jobBaseline","sharedSummary","runtimeImages","runtimeStatus","trace","candidate","evidence").contains(section))bad("未提供该上下文分区");var out=mapper.createObjectNode().put("section",section);out.set("data",section.equals("candidate")?(turn.path("planId").asText().isBlank()?mapper.createObjectNode():records.require("ai_harness_plans",turn.path("planId").asText())):section.equals("evidence")?turn.path("evidence").deepCopy():turn.path("context").path(section).deepCopy());return new Outcome(out,null,null,null);}
     if(name.equals("memory_update")){
       String text=args.path("summary").asText();if(text.isBlank()||text.length()>4000)bad("会话记忆应为1到4000字符");
       return new Outcome(mapper.createObjectNode().put("memoryCandidate",text).put("verificationStatus","PROPOSED"),null,null,null);
@@ -160,8 +170,6 @@ public class AiHarnessTools {
     if(name.equals("evidence_collect")){
       var job=jobs.get(targetJob(session,turn));requireBaseline(job.id(),turn);
       String category=args.path("category").asText();
-      if(Set.of("logs","flinkLogs").contains(category)&&!turn.path("includeLogs").asBoolean())bad("本轮未授权日志取证和外发");
-      if(category.equals("auto")&&!turn.path("includeLogs").asBoolean())category="pods";
       var bundle=evidence.collectCategory(job,category);
       if(!evidence.matches(jobs.get(job.id()),bundle.path("baseline")))stale();
       var safe=(ObjectNode)guard.sanitize(evidence.forModel(bundle));return new Outcome(safe,null,safe,null);

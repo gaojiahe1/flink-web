@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -11,6 +11,7 @@ import {
   MessageSquare,
 } from '@lucide/vue'
 import { aiApi, type AiModel } from '../api/ai'
+import { useRoute } from 'vue-router'
 import {
   harnessApi,
   activeHarnessTurn,
@@ -24,6 +25,10 @@ import { requestId } from '../../../shared/utils/requestId'
 import { confirmDialog } from '../../../shared/utils/confirmDialog'
 import '../styles/harness.css'
 
+const route = useRoute()
+const ready = ref(false)
+const requestedJobId = computed(() => (typeof route.query.job === 'string' ? route.query.job : ''))
+let jobEntryRequest: { jobId: string; requestId: string } | undefined
 const sessions = ref<HarnessSession[]>([]),
   session = ref<HarnessSession>()
 const models = ref<AiModel[]>([]),
@@ -46,8 +51,7 @@ const taskTemplates = [
   ['compare_sql_versions', 'SQL 版本比较'],
   ['diagnose_backpressure', '反压排查'],
 ]
-const includeLogs = ref(false),
-  transcript = ref<HTMLElement>()
+const transcript = ref<HTMLElement>()
 const creating = ref(false),
   kind = ref<HarnessSession['kind']>('diagnosis'),
   target = ref('')
@@ -267,7 +271,6 @@ async function send(requirementTurn?: HarnessTurn) {
         content: text,
         modelId: modelId.value,
         allowExternal: Boolean(selectedModel.value.external),
-        includeLogs: includeLogs.value,
         templateName: templateName.value,
         ...(requirementTurn ? { requirementsTurnId: requirementTurn.id, confirmed: true } : {}),
       },
@@ -391,12 +394,49 @@ function composerKey(event: KeyboardEvent) {
     submit()
   }
 }
+async function openJobSession(jobId: string) {
+  const token = ++selection
+  stopStream()
+  session.value = undefined
+  pending = undefined
+  error.value = ''
+  busy.value = true
+  try {
+    const list = await harnessApi.list()
+    if (disposed || token !== selection) return
+    sessions.value = list
+    let current = list.find((item) => item.kind === 'diagnosis' && item.jobId === jobId)
+    if (!current) {
+      if (jobEntryRequest?.jobId !== jobId) jobEntryRequest = { jobId, requestId: requestId() }
+      current = await harnessApi.create({
+        requestId: jobEntryRequest.requestId,
+        kind: 'diagnosis',
+        jobId,
+      })
+    }
+    if (disposed || token !== selection) return
+    if (!sessions.value.some((item) => item.id === current.id))
+      sessions.value = [current, ...sessions.value]
+    jobEntryRequest = undefined
+    busy.value = false
+    await select(current.id)
+  } catch (e) {
+    if (token === selection) error.value = '打开作业 AI 会话失败：' + (e as Error).message
+  } finally {
+    if (token === selection) busy.value = false
+  }
+}
+watch(requestedJobId, (jobId) => {
+  if (ready.value && jobId) void openJobSession(jobId)
+})
 onMounted(async () => {
   try {
     const [list, configured] = await Promise.all([harnessApi.list(), aiApi.models()])
     sessions.value = list
     models.value = configured
-    if (list[0]) await select(list[0].id)
+    ready.value = true
+    if (requestedJobId.value) await openJobSession(requestedJobId.value)
+    else if (list[0]) await select(list[0].id)
   } catch (e) {
     error.value = (e as Error).message
   }
@@ -482,6 +522,13 @@ onBeforeUnmount(() => {
       <p v-if="error" class="harness-error" role="alert">
         {{ error }}<button class="harness-icon" aria-label="关闭提示" @click="error = ''">×</button>
       </p>
+      <button
+        v-if="requestedJobId && !session"
+        :disabled="busy"
+        @click="openJobSession(requestedJobId)"
+      >
+        重试打开作业会话
+      </button>
       <p v-if="connection" class="harness-connection" role="status">{{ connection }}</p>
       <div ref="transcript" class="harness-transcript">
         <div v-if="!session || !turns.length" class="harness-welcome">
@@ -507,17 +554,6 @@ onBeforeUnmount(() => {
           />
         </div>
       </div>
-      <div v-if="session" class="harness-personalization">
-        <label
-          >任务模板
-          <select v-model="templateName" :disabled="busy || !!active">
-            <option value="">自动选择</option>
-            <option v-for="item in taskTemplates" :key="item[0]" :value="item[0]">
-              {{ item[1] }}
-            </option>
-          </select></label
-        >
-      </div>
       <form v-if="session" class="harness-composer" @submit.prevent="submit">
         <textarea
           v-model="content"
@@ -534,16 +570,18 @@ onBeforeUnmount(() => {
             <option value="" disabled>请选择模型</option>
             <option v-for="model in availableModels" :key="model.id" :value="model.id">
               {{ model.name }}
-            </option></select
-          ><label
-            v-if="session.kind === 'diagnosis' || (session.kind === 'sql' && session.jobId)"
-            class="harness-check"
-            ><input
-              v-model="includeLogs"
-              type="checkbox"
-              :disabled="busy || !!active || !!pending"
-            />允许取脱敏日志</label
-          ><span class="harness-composer-hint">Enter 发送 · Shift + Enter 换行</span
+            </option>
+          </select>
+          <label class="harness-template"
+            >任务模板
+            <select v-model="templateName" :disabled="busy || !!active || !!pending">
+              <option value="">自动选择</option>
+              <option v-for="item in taskTemplates" :key="item[0]" :value="item[0]">
+                {{ item[1] }}
+              </option>
+            </select>
+          </label>
+          <span class="harness-composer-hint">Enter 发送 · Shift + Enter 换行</span
           ><button
             v-if="active"
             type="button"
