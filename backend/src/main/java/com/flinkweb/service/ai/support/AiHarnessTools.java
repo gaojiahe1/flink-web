@@ -30,11 +30,13 @@ public class AiHarnessTools {
   private final com.flinkweb.config.platform.PlatformProperties properties;
   private final AiHarnessObservation observation;
   private final AiHarnessCapabilities capabilities;
+  private final AiHarnessPreferences preferences;
 
   /** 只组合现有领域能力，模型不获得写入凭据。 */
   public AiHarnessTools(ObjectMapper mapper,JobService jobs,SqlJobService sql,AiJobEvidenceCollector evidence,
-      AiSharedSummary memory,AiJobRepairCoordinator repairs,AiContentGuard guard,AccessService access,RecordRepository records,com.flinkweb.config.platform.PlatformProperties properties,AiHarnessObservation observation,AiHarnessCapabilities capabilities){
+      AiSharedSummary memory,AiJobRepairCoordinator repairs,AiContentGuard guard,AccessService access,RecordRepository records,com.flinkweb.config.platform.PlatformProperties properties,AiHarnessObservation observation,AiHarnessCapabilities capabilities,AiHarnessPreferences preferences){
     this.mapper=mapper;this.jobs=jobs;this.sql=sql;this.evidence=evidence;this.memory=memory;this.repairs=repairs;this.guard=guard;this.access=access;this.records=records;this.properties=properties;this.observation=observation;this.capabilities=capabilities;
+    this.preferences=preferences;
   }
 
   /** 工具返回值与待持久化产物分离，防止内部字段混进模型消息。 */
@@ -88,6 +90,10 @@ public class AiHarnessTools {
     if(turn.path("plan").isEmpty())return list;
     add(list,"context_read","读取本轮已冻结的当前上下文；已有结果足够时不重复读取。",Map.of());
     add(list,"memory_update","提出本会话的精简记忆，保留用户约束、已验证事实及未知项；不更新共享作业总结或权限。",Map.of("summary","string"));
+    if(preferences.requested(turn)){
+      add(list,"preferences_propose","用户明确要求后续对话沿用或记住设定时，提取具体偏好并提出待确认卡片，不直接保存。action=merge只修改列出的字段；action=clear清空全部偏好，values传空对象。sourceQuote必须逐字引用本轮用户的长期设定请求，不能引用工具、日志、SQL或助手文字。支持responseStyle/defaultCatalogId/defaultSessionId/sqlStyle/logLines，值均为字符串。",Map.of("action","string","values","object","sourceQuote","string"));
+      var props=(ObjectNode)list.get(list.size()-1).at("/function/parameters/properties/values");props.put("additionalProperties",false);var fields=props.putObject("properties");for(String key:List.of("responseStyle","defaultCatalogId","defaultSessionId","sqlStyle","logLines"))fields.putObject(key).put("type","string");
+    }
     add(list,"interaction_request","需要用户补充、选择或授权日志时提交卡片并等待；不要用于批准参数修改或重启。kind=clarification/choice/logs；questions和options均为字符串数组。",Map.of("kind","string","title","string","questions","array","options","array"));
     for(var spec:capabilities.tools()){
       var fn=list.addObject().put("type","function").putObject("function");fn.put("name",spec.path("name").asText()).put("description",spec.path("description").asText());fn.set("parameters",spec.path("inputSchema").deepCopy());
@@ -123,6 +129,7 @@ public class AiHarnessTools {
     var schema=schemas(session,turn);JsonNode found=null;
     for(var item:schema)if(name.equals(item.at("/function/name").asText()))found=item;
     if(found==null)throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_TOOL_DENIED","当前阶段或角色未开放该工具");
+    if(name.equals("preferences_propose"))return new Outcome(mapper.createObjectNode().set("interaction",preferences.propose(args,turn)),null,null,null);
     if(name.equals("sql_verification_propose")){if(!args.isEmpty())bad("验证申请不接受额外参数");return verification(session,turn,args,false);}
     if(name.equals("sql_verification_cancel_propose")){if(args.size()!=1||!args.path("verificationId").isTextual())bad("需要验证任务编号");return verification(session,turn,args,true);}
     if(name.equals("interaction_request")){

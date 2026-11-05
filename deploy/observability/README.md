@@ -12,11 +12,14 @@
 | --- | --- | --- |
 | FLINK_WEB_AI_TELEMETRY_ENABLED | true | true |
 | FLINK_WEB_AI_TELEMETRY_MODE | direct | collector |
+| LANGFUSE_TRACING_ENVIRONMENT | default（可设production/test/dev等） | 同左；在平台后端设置 |
 | LANGFUSE_BASE_URL | http://127.0.0.1:3000（Langfuse根地址） | 后端无需设置 |
 | LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY | 设置在后端进程环境 | 只设置在Collector环境 |
 | FLINK_WEB_OTEL_TRACES_ENDPOINT | 忽略 | http://127.0.0.1:14318/v1/traces（完整信号端点） |
 
 直连后端自动拼接/api/public/otel/v1/traces，计算Basic认证并添加x-langfuse-ingestion-version: 4。Collector模式后端不携带Langfuse认证；Collector负责认证和转发。
+
+2026-11-05：Langfuse列表的Environment由平台后端环境变量`LANGFUSE_TRACING_ENVIRONMENT`控制，默认`default`。例如设为`production`并重启后端，之后的新轨迹及其子观测都携带OTel resource属性`langfuse.environment=production`；直连和Collector使用同一值，已有轨迹不回填。名称需1–40个小写字母、数字、连字符或下划线，不能以`langfuse`开头；开启观测时非法值拒绝启动。此字段是环境标识，不是性能指标。参见[Langfuse环境规范](https://langfuse.com/docs/observability/features/environments)。程序独立构建SDK，不自动消费任意`OTEL_RESOURCE_ATTRIBUTES`，请使用上述显式变量。Collector若自行覆盖环境属性，以其实际导出为准。
 
 localhost示例适用于本机Java进程。后端在容器/Kubernetes内时改成Collector或Langfuse实际可达的服务DNS/网络地址，不能把localhost当宿主机。Langfuse接收OTLP HTTP，不直接发送gRPC到Langfuse。
 

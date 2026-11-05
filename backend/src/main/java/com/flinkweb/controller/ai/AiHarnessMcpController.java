@@ -35,7 +35,4 @@ public class AiHarnessMcpController {
   /** 获取本账号明确维护的偏好。 */
   @GetMapping("/harness/preferences")
   public ApiResponse<ObjectNode> preferences(){return ApiResponse.ok(service.preferences());}
-  /** 乐观锁保存或清空偏好；空values表示遗忘。 */
-  @PutMapping("/harness/preferences")
-  public ApiResponse<ObjectNode> savePreferences(@RequestBody ObjectNode input){return ApiResponse.ok(service.savePreferences(input));}
 }

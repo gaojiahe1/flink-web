@@ -1,5 +1,7 @@
 # 当前状态
 
+2026-11-05：对话偏好确认保存及Langfuse Environment环境变量完成。已移除手工偏好表单，具体卡片确认后才保存；旧偏好保留，原PUT写接口撤下，核心提示词v5。平台后端LANGFUSE_TRACING_ENVIRONMENT默认default，直连/Collector共用，重启影响新轨迹。后端376通过/2条件跳过，最终web镜像42项相关页面及真实app/web闭环、4类代理通过；app/web:0.0.10已发布并逐层核验，downloader/latest/实际工作负载不变。见[验收](validation.md#对话偏好与langfuse环境2026-11-05)、[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。提交及合并结果收尾续记。
+
 功能提交 `b5ed4b3` 已在完整回归、镜像发布及逐层核验后，由codex/regression-release-010快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 
 2026-11-04最新：整体回归及结构/逻辑优化完成，0.0.10 app/web/downloader已发布并从指定仓库核对manifest/config及全部层摘要。后端完整套件及MinIO条件补验370通过/1显式Langfuse条件跳过；前端192项fixture、最终只读非root镜像26项live、自动页面服务2项、Runner/下载器各12项、Parser32协议输入通过。修复两项模型分片/错误边界，拆分传输职责，统一交互观测；回归入口可重复。最新要求已解除本轮暂不发布约定，仍未更新latest、实际工作负载或下载器持久化绑定。独占测试容器/网络/别名和两条私有缓存已清理，用户服务保留。见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)、[镜像摘要](../deployment.md#整体回归与0010发布2026-11-04)、[回归指南](../testing.md)。

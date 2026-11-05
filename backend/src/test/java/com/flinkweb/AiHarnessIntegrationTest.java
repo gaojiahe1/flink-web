@@ -78,6 +78,7 @@ class AiHarnessIntegrationTest {
   @BeforeEach
   void setup()throws Exception{
     for(var row:harness.list())harness.delete(row.path("id").asText(),row.path("revision").asLong());
+    var prefs=preferences.get();preferences.save(mapper.createObjectNode().put("revision",prefs.path("revision").asLong()).set("values",mapper.createObjectNode()));
     when(storage.jobPrefix(anyString())).thenAnswer(call->"artifacts/jobs/"+call.getArgument(0)+"/");
     String name="harness-"+UUID.randomUUID().toString().substring(0,8);
     String source="apiVersion: flink.apache.org/v1beta1\nkind: FlinkDeployment\nmetadata:\n  name: "+name+"\nspec:\n  image: flink:1.20.5\n  flinkVersion: v1_20\n  serviceAccount: flink-jobs-flink\n  taskManager:\n    resource:\n      memory: 1024m\n      cpu: 1\n  job:\n    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar\n    parallelism: 1\n    upgradeMode: stateless\n";
@@ -476,6 +477,83 @@ class AiHarnessIntegrationTest {
     when(evidenceClient.read(job.deploymentName(),"jobs/"+jid+"/checkpoints/details/9999999999/subtasks/"+"b".repeat(32))).thenReturn(data);
     var args=mapper.createObjectNode().put("checkpointId",9999999999L).put("vertexId","b".repeat(32)).put("offset",50);
     var out=capabilities.call("checkpoint_operator_detail",args,job.id(),false,"");assertThat(out.at("/data/subtasks")).hasSize(50);assertThat(out.at("/data/subtasks/0/index").asInt()).isEqualTo(50);assertThat(out.at("/data/page/nextOffset").asInt()).isEqualTo(100);
+  }
+
+  /** 真实运行环先提出卡片，原子确认后才保存并在后续轮次及会话使用。 */
+  @Test
+  void conversationPreferencesRequireConfirmationAndRetryOnlyOnce()throws Exception{
+    var old=preferences.get();preferences.save(mapper.createObjectNode().put("revision",old.path("revision").asLong()).set("values",mapper.createObjectNode().put("logLines","800")));
+    String text="以后回答先给结论，后续对话都使用当前设定";var session=session();String id=session.path("id").asText();
+    var args=mapper.createObjectNode().put("action","merge").put("sourceQuote",text);args.putObject("values").put("responseStyle","先给结论");
+    var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(!once.getAndSet(true))return call("preferences_propose",args);inv.getArgument(4,Consumer.class).accept("继续原任务");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var turn=harness.start(id,input(session).put("content",text));String turnId=turn.path("id").asText();var waiting=completed(id,turnId);
+    assertThat(waiting.path("state").asText()).isEqualTo("WAITING_USER");assertThat(waiting.at("/interaction/changes/responseStyle").asText()).isEqualTo("先给结论");
+    assertThat(preferences.get().at("/values/responseStyle").isMissingNode()).isTrue();assertThat(harness.get(id).at("/turns/0/interaction/state").asText()).isEqualTo("PENDING");
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit");response.putObject("answers");
+    assertThatThrownBy(()->harness.respond(id,turnId,response)).hasMessageContaining("交互");
+    response.put("confirmedPreferences",true);var note=response.deepCopy();note.withObject("/answers").put("note","修改为详细回答");assertThatThrownBy(()->harness.respond(id,turnId,note)).hasMessageContaining("交互");
+    var next=harness.respond(id,turnId,response);completed(id,next.path("id").asText());long revision=preferences.get().path("revision").asLong();
+    assertThat(preferences.get().at("/values/responseStyle").asText()).isEqualTo("先给结论");assertThat(preferences.get().at("/values/logLines").asText()).isEqualTo("800");
+    assertThat(harness.respond(id,turnId,response).path("id").asText()).isEqualTo(next.path("id").asText());assertThat(preferences.get().path("revision").asLong()).isEqualTo(revision);
+    assertThat(records.require("ai_harness_turns",next.path("id").asText()).at("/preferences/values/responseStyle").asText()).isEqualTo("先给结论");
+    var another=session();var later=harness.start(another.path("id").asText(),input(another));completed(another.path("id").asText(),later.path("id").asText());assertThat(records.require("ai_harness_turns",later.path("id").asText()).at("/preferences/values/responseStyle").asText()).isEqualTo("先给结论");
+    mvc.perform(put("/api/ai/harness/preferences").with(csrf()).contentType("application/json").content("{\"values\":{\"responseStyle\":\"bypass\"}}")).andExpect(status().isMethodNotAllowed());
+  }
+
+  /** 拒绝、过期及新一轮使旧候选无法被保存，修订冲突不覆盖其他会话。 */
+  @Test
+  void preferenceCancellationExpiryAndRevisionConflictDoNotWrite()throws Exception{
+    String text="后续对话使用简洁回答";var args=mapper.createObjectNode().put("action","merge").put("sourceQuote",text);args.putObject("values").put("responseStyle","简洁回答");
+    doAnswer(inv->{var plan=planning(inv);return plan!=null?plan:call("preferences_propose",args);}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("content",text));var waiting=completed(id,turn.path("id").asText());
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","cancel");response.putObject("answers");harness.respond(id,turn.path("id").asText(),response);assertThat(preferences.get().path("values").isEmpty()).isTrue();
+    var second=harness.start(id,input(harness.get(id)).put("content",text));waiting=completed(id,second.path("id").asText());var submit=response.deepCopy().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit").put("confirmedPreferences",true);
+    var old=preferences.get();preferences.save(mapper.createObjectNode().put("revision",old.path("revision").asLong()).set("values",mapper.createObjectNode().put("sqlStyle","大写关键字")));
+    assertThatThrownBy(()->harness.respond(id,second.path("id").asText(),submit)).hasMessageContaining("修改");assertThat(harness.get(id).at("/turns/1/interaction/state").asText()).isEqualTo("PENDING");assertThat(preferences.get().at("/values/responseStyle").isMissingNode()).isTrue();
+    var stored=records.require("ai_harness_turns",second.path("id").asText());stored.withObject("/interaction").put("expiresAt","2000-01-01T00:00:00Z");records.save("ai_harness_turns",second.path("id").asText(),stored,stored.path("revision").asLong());
+    assertThatThrownBy(()->harness.respond(id,second.path("id").asText(),submit)).hasMessageContaining("过期");
+    var third=harness.start(id,input(harness.get(id)).put("content","只检查状态"));completed(id,third.path("id").asText());assertThatThrownBy(()->harness.respond(id,second.path("id").asText(),submit)).hasMessageContaining("失效");
+  }
+
+  /** 清空同样经具体卡片确认，未确认前保留原有偏好。 */
+  @Test
+  void forgettingPreferencesAlsoRequiresConfirmation()throws Exception{
+    var old=preferences.get();preferences.save(mapper.createObjectNode().put("revision",old.path("revision").asLong()).set("values",mapper.createObjectNode().put("responseStyle","简洁")));
+    String text="清空我的偏好";var args=mapper.createObjectNode().put("action","clear").put("sourceQuote",text);args.putObject("values");
+    var once=new AtomicBoolean();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(!once.getAndSet(true))return call("preferences_propose",args);inv.getArgument(4,Consumer.class).accept("已清空");return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("content",text));var waiting=completed(id,turn.path("id").asText());assertThat(preferences.get().path("values").isEmpty()).isFalse();assertThat(waiting.at("/interaction/previousValues/responseStyle").asText()).isEqualTo("简洁");
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit").put("confirmedPreferences",true);response.putObject("answers");var next=harness.respond(id,turn.path("id").asText(),response);completed(id,next.path("id").asText());assertThat(preferences.get().path("values").isEmpty()).isTrue();
+  }
+
+  /** 提案必须来源于用户本轮明确意图，普通要求、伪造原话、授权字段不能进入偏好。 */
+  @Test
+  void preferenceProposalsAreGroundedAndNeverIncludePermissions(){
+    var turn=mapper.createObjectNode().put("content","本轮回答简洁一些");turn.putArray("plan").add("回答问题");var s=session();
+    assertThat(tools.schemas(s,turn).toString()).doesNotContain("preferences_propose");
+    for(String text:List.of("后续对话使用当前设定","以后回答先给结论","以后都这样回答","后面都这样","记住我喜欢简洁回答","清空我的偏好","From now on use concise answers"))assertThat(preferences.requested(turn.deepCopy().put("content",text))).as(text).isTrue();
+    for(String text:List.of("默认使用datagen生成SQL","先看日志，之后使用Checkpoint工具","清空当前SQL设置","保存当前SQL设置","后续执行使用print输出"))assertThat(preferences.requested(turn.deepCopy().put("content",text))).as(text).isFalse();
+    assertThat(preferences.requested(turn.deepCopy().put("content","不要保存我的偏好"))).isFalse();
+    var args=mapper.createObjectNode().put("action","merge").put("sourceQuote","以后回答先给结论");args.putObject("values").put("responseStyle","先给结论");
+    assertThatThrownBy(()->preferences.propose(args,turn)).hasMessageContaining("无效");turn.put("content","以后回答详细一些");assertThatThrownBy(()->preferences.propose(args,turn)).hasMessageContaining("无效");
+    args.put("sourceQuote","以后回答详细一些");args.withObject("/values").put("grantLogs","true");assertThatThrownBy(()->preferences.propose(args,turn)).hasMessageContaining("无效");
+    var continuation=mapper.createObjectNode().put("content","补充：以后回答先给结论");continuation.putObject("interactionResponse").putObject("answers").put("note","只查状态");assertThat(preferences.requested(continuation)).isFalse();
+  }
+
+  /** 未说明具体设定时先澄清，补充答案仍可提出原始长期意图的确认卡片。 */
+  @Test
+  void preferenceClarificationKeepsOriginalUserIntent()throws Exception{
+    String text="后续对话使用当前设定";var step=new AtomicInteger();
+    doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;if(step.getAndIncrement()==0){var args=mapper.createObjectNode().put("kind","clarification").put("title","需要沿用哪些设定？");args.putArray("questions").add("回答方式是什么？");args.putArray("options");return call("interaction_request",args);}var args=mapper.createObjectNode().put("action","merge").put("sourceQuote",text);args.putObject("values").put("responseStyle","先给结论");return call("preferences_propose",args);}).when(model).stream(any(),anyString(),any(),any(),any());
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("content",text));var waiting=completed(id,turn.path("id").asText());
+    var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit");response.putObject("answers").put("q0","先给结论");var next=harness.respond(id,turn.path("id").asText(),response);var proposed=completed(id,next.path("id").asText());
+    assertThat(proposed.at("/interaction/kind").asText()).isEqualTo("preferences");assertThat(proposed.at("/interaction/sourceQuote").asText()).isEqualTo(text);assertThat(preferences.get().path("values").isEmpty()).isTrue();
+  }
+
+  /** 模型不能仅通过回复文字声称记住；忽略提案时明确未保存。 */
+  @Test
+  void ignoredPreferenceRequestCannotReportSaved()throws Exception{
+    var s=session();String id=s.path("id").asText();var turn=harness.start(id,input(s).put("content","以后回答先给结论"));var result=completed(id,turn.path("id").asText());
+    assertThat(result.path("state").asText()).isEqualTo("FAILED");assertThat(result.path("message").asText()).contains("未保存");assertThat(preferences.get().path("values").isEmpty()).isTrue();
   }
 
 }

@@ -6,6 +6,13 @@ const props = defineProps<{ card: HarnessInteraction; enabled: boolean; working:
 const emit = defineEmits<{ respond: [input: Record<string, unknown>] }>()
 const answers = ref<Record<string, string>>({})
 const pending = ref<Record<string, unknown>>()
+const preferenceLabels: Record<string, string> = {
+  responseStyle: '回答方式',
+  defaultCatalogId: '常用 Catalog 编号',
+  defaultSessionId: '常用 Session 编号',
+  sqlStyle: 'SQL 编写习惯',
+  logLines: '常用日志行数',
+}
 watch(
   () => props.card.id,
   () => {
@@ -29,17 +36,40 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
       answers: { ...answers.value },
       grantLogs,
       confirmedVerification: props.card.kind === 'verification',
+      confirmedPreferences: props.card.kind === 'preferences' && decision === 'submit',
     }
   emit('respond', pending.value)
 }
 </script>
 
 <template>
-  <section class="harness-interaction" aria-label="需要你的补充" :aria-busy="working">
+  <section
+    class="harness-interaction"
+    :aria-label="card.kind === 'preferences' ? '确认对话偏好' : '需要你的补充'"
+    :aria-busy="working"
+  >
     <strong>{{ card.title }}</strong>
     <p v-if="card.scope">
       {{ card.scope }} <span v-if="card.model">当前模型：{{ card.model }}。</span>
     </p>
+    <template v-if="card.kind === 'preferences'">
+      <p v-if="card.sourceQuote">你的要求：{{ card.sourceQuote }}</p>
+      <p v-if="card.action === 'clear'">将清空以下已保存的设定：</p>
+      <dl class="harness-preference-summary">
+        <template
+          v-for="(value, key) in card.action === 'clear' ? card.previousValues : card.changes"
+          :key="key"
+        >
+          <dt>{{ preferenceLabels[key] || key }}</dt>
+          <dd>
+            {{ value
+            }}<small v-if="card.action !== 'clear' && card.previousValues?.[key]"
+              >原设定：{{ card.previousValues[key] }}</small
+            >
+          </dd>
+        </template>
+      </dl>
+    </template>
     <template v-if="available">
       <form @submit.prevent="submit('submit', card.kind === 'logs')">
         <label
@@ -56,7 +86,7 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
             <input v-model="answers.choice" type="radio" :value="option" />{{ option }}
           </label>
         </fieldset>
-        <label class="harness-interaction-field"
+        <label v-if="card.kind !== 'preferences'" class="harness-interaction-field"
           >补充说明
           <textarea
             v-model="answers.note"
@@ -77,7 +107,11 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
                     ? card.action === 'cancel'
                       ? '确认取消验证'
                       : '确认运行验证'
-                    : '提交并继续'
+                    : card.kind === 'preferences'
+                      ? card.action === 'clear'
+                        ? '确认清空'
+                        : '确认保存'
+                      : '提交并继续'
             }}
           </button>
           <button
@@ -89,10 +123,19 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
             仅提交补充，不读取日志
           </button>
           <button type="button" :disabled="working || !!pending" @click="submit('cancel')">
-            {{ card.kind === 'logs' ? '暂不读取' : '取消本次交互' }}
+            {{
+              card.kind === 'logs'
+                ? '暂不读取'
+                : card.kind === 'preferences'
+                  ? '暂不保存'
+                  : '取消本次交互'
+            }}
           </button>
         </div>
-        <small
+        <small v-if="card.kind === 'preferences'"
+          >点击确认后才会保存；直接发送消息可调整本次设定。</small
+        >
+        <small v-else
           >提交后会继续原任务。{{
             card.kind === 'logs' ? '授权不会保存为用户偏好。' : '也可以在对话输入框中直接补充。'
           }}</small
@@ -103,9 +146,15 @@ function submit(decision: 'submit' | 'cancel', grantLogs = false) {
       <p>
         {{
           card.state === 'ANSWERED'
-            ? '已提交，已继续原任务'
+            ? card.kind === 'preferences'
+              ? card.action === 'clear'
+                ? '偏好已清空'
+                : '偏好已保存，将用于后续对话'
+              : '已提交，已继续原任务'
             : card.state === 'CANCELED'
-              ? '已取消'
+              ? card.kind === 'preferences'
+                ? '未保存本次设定'
+                : '已取消'
               : '此交互已失效，请查看最新对话'
         }}
       </p>

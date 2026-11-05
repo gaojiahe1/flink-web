@@ -1,5 +1,11 @@
 # REQ-003 SQL 草稿、发布与 Session 验证
 
+## 2026-11-05 对话偏好与环境标识
+
+用户要求移除“我的偏好”表单；用户在对话中明确要求“后续对话使用当前设定”等时提取具体设定，保存前在对话中确认，不让用户自行填写偏好表。确认后仅当前账号后续轮次生效，本轮要求优先，授权和凭据不进入偏好。修改和清空均通过对话及确认完成，普通补充不等于保存。实现与边界见[Harness模块](../modules/agent-harness.md)。
+
+用户询问Langfuse Environment能否通过平台环境变量设定；新增后端`LANGFUSE_TRACING_ENVIRONMENT`，默认default，直连/Collector一致，重启后影响新轨迹。规范和注入示例见[接入说明](../../../deploy/observability/README.md)。
+
 ## 2026-11-04 Spring AI与Langfuse
 
 用户明确将整个项目AI模型调用迁移Spring AI并接入Langfuse，支持后端直连和OpenTelemetry Collector两条路线。实际实例4.70.1、Collector0.164.0；需要保留现有Harness、旧助手、动态模型、交互/审批/幂等和恢复能力。观测不取代运行状态或业务验收，凭据不进入代码/知识库，默认仅元数据。本轮沿用0.0.10及暂不发布镜像。见[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)、[接入说明](../../../deploy/observability/README.md)。

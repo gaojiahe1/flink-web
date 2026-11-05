@@ -23,7 +23,7 @@ export interface HarnessPlan {
 }
 export interface HarnessInteraction {
   id: string
-  kind: 'clarification' | 'choice' | 'logs' | 'verification'
+  kind: 'clarification' | 'choice' | 'logs' | 'verification' | 'preferences'
   title: string
   questions: string[]
   options: string[]
@@ -34,6 +34,10 @@ export interface HarnessInteraction {
   action?: string
   verificationResult?: { state: string; message?: string }
   answers?: Record<string, string>
+  changes?: Record<string, string>
+  previousValues?: Record<string, string>
+  sourceQuote?: string
+  savedPreferenceRevision?: number
 }
 export interface HarnessTurn {
   interaction?: HarnessInteraction
@@ -105,13 +109,6 @@ const base = '/api/ai/harness/sessions'
 const path = (id: string) => base + '/' + encodeURIComponent(id)
 const turnPath = (id: string, turn: string) => path(id) + '/turns/' + encodeURIComponent(turn)
 export const harnessApi = {
-  preferences: () =>
-    request<{ revision: number; values: Record<string, string> }>('/api/ai/harness/preferences'),
-  savePreferences: (input: unknown) =>
-    request<{ revision: number; values: Record<string, string> }>('/api/ai/harness/preferences', {
-      method: 'PUT',
-      ...jsonBody(input),
-    }),
   respond: (id: string, turn: string, input: unknown) =>
     request<HarnessTurn>(turnPath(id, turn) + '/respond', { method: 'POST', ...jsonBody(input) }),
   list: () => request<HarnessSession[]>(base),

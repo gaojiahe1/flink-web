@@ -545,22 +545,21 @@
   gap: 10px;
   border-top: 1px solid var(--border);
 }
-.harness-preferences {
-  width: 100%;
-  max-height: 240px;
-  overflow: auto;
+.harness-preference-summary {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+  gap: 8px 16px;
+  overflow-wrap: anywhere;
 }
-.harness-preferences label {
-  display: inline-grid;
-  gap: 4px;
-  margin: 0 12px 8px 0;
+.harness-preference-summary dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.harness-preference-summary small {
+  display: block;
 }
 @media (max-width: 700px) {
   .harness-interaction-actions button {
     flex: 1 1 auto;
-  }
-  .harness-preferences label {
-    display: grid;
-    margin-right: 0;
   }
 }

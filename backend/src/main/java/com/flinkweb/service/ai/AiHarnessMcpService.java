@@ -6,6 +6,4 @@ public interface AiHarnessMcpService {
   ObjectNode dispatch(ObjectNode request,boolean allowLogs);
   /** 读取当前账号偏好。 */
   ObjectNode preferences();
-  /** 显式保存或清空当前账号偏好。 */
-  ObjectNode savePreferences(ObjectNode input);
 }

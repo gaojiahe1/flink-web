@@ -137,7 +137,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     var turn=mapper.createObjectNode().put("sessionId",id).put("owner",access.actor()).put("epoch",session.path("epoch").asText())
         .put("sequence",session.path("sequence").asLong()+1).put("state","QUEUED").put("content",content).put("continuationGoal",content).put("reply","")
         .put("modelId",modelId).put("model",model.path("model").asText()).put("fingerprint",fingerprint).put("actorRevision",users.revision(access.actor()))
-        .put("promptVersion","flink-harness-v4").put("modelRevision",model.path("revision").asLong()).put("allowExternal",model.path("external").asBoolean())
+        .put("promptVersion","flink-harness-v5").put("modelRevision",model.path("revision").asLong()).put("allowExternal",model.path("external").asBoolean())
         .put("includeLogs",input.path("includeLogs").asBoolean());
     if(!input.path("templateName").asText().isBlank())turn.set("taskTemplate",tools.template(input.path("templateName").asText()));turn.set("preferences",preferences.get());turn.set("context",context);if(context.path("runtimeStatus").isObject())turn.set("runtimeStatus",context.path("runtimeStatus").deepCopy());turn.putArray("events");
     if(input.hasNonNull("requirementsTurnId")){
@@ -146,7 +146,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
       turn.set("approvedRequirements",approved.path("requirements").deepCopy());
     }
     var manifest=turn.putObject("contextManifest").put("snapshotId",UUID.randomUUID().toString()).put("source","服务端当前草稿与共享总结")
-        .put("characters",context.toString().length()).put("modelCallPolicy","不限制调用次数；可随时停止，保留请求超时与内容大小保护").put("privacy","当前用户私有会话；共享作业不公开私有消息").put("promptVersion","flink-harness-v4");
+        .put("characters",context.toString().length()).put("modelCallPolicy","不限制调用次数；可随时停止，保留请求超时与内容大小保护").put("privacy","当前用户私有会话；共享作业不公开私有消息").put("promptVersion","flink-harness-v5");
     manifest.set("baseline",context.path("baseline").deepCopy());manifest.put("hash",SqlDeploymentSource.hash(context.toString()));
     turn.putArray("plan");turn.put("planStatus","PENDING");
     addEvent(turn,"plan.preparing","等待模型制定本次执行计划",mapper.createObjectNode());
@@ -220,10 +220,13 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     boolean cancel=input.path("decision").asText().equals("cancel");if(card.has("verificationRequest")&&!card.has("verificationResult"))conflict("验证结果待核对，请继续原验证请求");if(!cancel)tools.validateContext(session,turn);
     var answer=(ObjectNode)card.deepCopy();answer.put("state",cancel?"CANCELED":"ANSWERED").put("responseRequestId",requestId).put("responseFingerprint",fingerprint);answer.set("answers",input.path("answers").deepCopy());
     return transaction.execute(status->{
+      if(!cancel&&card.path("kind").asText().equals("preferences")){
+        var saved=preferences.confirm((ObjectNode)card);answer.put("savedPreferenceRevision",saved.path("revision").asLong());audit.record("AI_HARNESS_PREFERENCES",turnId,"SAVED");
+      }
       turn.set("interaction",answer);turn.put("state",cancel?"CANCELED":"ANSWERED");saveTurn(turn);
       if(cancel){addEvent(turn,"interaction.canceled","用户取消本次交互",mapper.createObjectNode());saveTurn(turn);return turnView(turn);}
       var next=mapper.createObjectNode().put("requestId",requestId).put("revision",session.path("revision").asLong()).put("modelId",turn.path("modelId").asText());
-      StringBuilder text=new StringBuilder("补充：").append(card.path("title").asText());
+      StringBuilder text=new StringBuilder(card.path("kind").asText().equals("preferences")?"用户已确认，偏好已保存，将用于后续对话。继续原任务。":"补充：").append(card.path("kind").asText().equals("preferences")?"":card.path("title").asText());
       input.path("answers").fields().forEachRemaining(field->{String label=field.getKey();if(label.matches("q[0-7]"))label=card.path("questions").path(Integer.parseInt(label.substring(1))).asText();else if(label.equals("choice"))label="选择";else if(label.equals("note"))label="补充说明";text.append("\n").append(label).append("：").append(field.getValue().asText());});
       String continuation=text.toString();
       if(continuation.length()>8000)bad("续接内容过长，请缩短补充信息后重试");next.put("content",continuation);
@@ -231,7 +234,8 @@ public class AiHarnessServiceImpl implements AiHarnessService {
       if(card.path("kind").asText().equals("logs")&&!turn.path("modelId").asText().equals(card.path("modelId").asText()))conflict("模型已变化，请重新确认日志范围");
       var result=start(id,next);
       var resumed=records.require(TURNS,result.path("id").asText());resumed.put("continuationGoal",turn.path("continuationGoal").asText(turn.path("content").asText()));
-      var responseContext=mapper.createObjectNode();for(String field:List.of("title","kind","questions","options","answers","verificationResult"))if(answer.has(field))responseContext.set(field,answer.get(field));resumed.set("interactionResponse",responseContext);saveTurn(resumed);result=turnView(resumed);
+      if(!card.path("kind").asText().equals("preferences")){String preferenceRequest=preferences.continuationRequest(turn);if(!preferenceRequest.isBlank())resumed.put("preferenceRequest",preferenceRequest);}
+      var responseContext=mapper.createObjectNode();for(String field:List.of("title","kind","questions","options","answers","verificationResult","savedPreferenceRevision"))if(answer.has(field))responseContext.set(field,answer.get(field));resumed.set("interactionResponse",responseContext);saveTurn(resumed);result=turnView(resumed);
       var original=records.require(TURNS,turnId);((ObjectNode)original.path("interaction")).put("nextTurnId",result.path("id").asText());saveTurn(original);audit.record("AI_HARNESS_RESPOND",turnId,"ANSWERED");return result;
     });
   }}
@@ -330,11 +334,12 @@ public class AiHarnessServiceImpl implements AiHarnessService {
     var history=records.listForSubject(TURNS,id).stream().filter(t->t.path("sequence").asLong()<initial.path("sequence").asLong()).sorted(Comparator.comparingLong(t->t.path("sequence").asLong())).toList();
     for(var previous:history.subList(Math.max(0,history.size()-4),history.size())){messages.addObject().put("role","user").put("content",previous.path("content").asText());if(!previous.path("reply").asText().isBlank())messages.addObject().put("role","assistant").put("content",previous.path("reply").asText());}
     var request=mapper.createObjectNode();request.set("context",initial.path("context"));request.set("userPreferences",initial.path("preferences"));request.set("taskTemplate",initial.path("taskTemplate"));request.set("approvedRequirements",initial.path("approvedRequirements"));request.set("privateMemory",session.path("memory"));request.put("goal",initial.path("continuationGoal").asText(initial.path("content").asText()));request.put("latestUserInput",initial.path("content").asText());if(initial.has("interactionResponse"))request.set("interactionResponse",initial.path("interactionResponse"));request.put("initialUserGoal",session.path("userGoal").asText(initial.path("content").asText()));
+    if(initial.has("preferenceRequest"))request.set("preferenceRequest",initial.path("preferenceRequest"));
     for(int n=history.size()-1;n>=0;n--)if(history.get(n).path("observation").isObject()){request.set("previousObservation",history.get(n).path("observation"));break;}
     var userMessages=request.putArray("userRequirementsHistory");for(var previous:history)userMessages.add(previous.path("content").asText());
     request.put("planningInstruction","先调用 plan_update 给出针对本次需求的具体步骤，再开始执行；仅列计划，不声称已经完成。步骤应覆盖定位、修复/检查、交付与需用户确认的动作。");
     messages.addObject().put("role","user").put("content",request.toString());int toolCount=0;
-    var progress=new AiHarnessProgress(mapper);boolean planningReminder=false;
+    var progress=new AiHarnessProgress(mapper);boolean planningReminder=false,preferenceReminder=false,preferenceUnchanged=false;
     var redact=guard.streamingRedactor();StringBuilder reply=new StringBuilder();long[] last={0};int latestBlock=messages.size();boolean candidateReminder=false;
     for(int round=0;;round++){
       var current=active(id,turnId);tools.validateContext(session,current);var latestModel=models.require(initial.path("modelId").asText(),session.path("kind").asText().equals("sql")?"sql":"diagnosis");if(latestModel.path("revision").asLong()!=initial.path("modelRevision").asLong())throw new IllegalStateException("模型配置已变化，请核对后重新发起");if(messages.toString().length()>180000){
@@ -371,6 +376,10 @@ public class AiHarnessServiceImpl implements AiHarnessService {
         }
         if(reply.toString().isBlank())throw new IllegalStateException("模型未返回有效回复");
         var finished=active(id,turnId);tools.validateContext(session,finished);
+        if(!preferenceUnchanged&&preferences.requested(initial)){
+          if(preferenceReminder){finish(id,turnId,"FAILED","尚未生成可确认的偏好设定，本次未保存；请明确需要沿用的具体设定后重试。");return;}
+          preferenceReminder=true;messages.addObject().put("role","user").put("content","平台检查：用户明确要求记住或在后续对话沿用设定，但尚未提出待确认卡片。请使用 preferences_propose；当前设定确有必要缺口时，用 interaction_request 一次澄清。若工具返回 HARNESS_PREFERENCE_UNCHANGED，说明已保存且无需重复确认，不再提案。不能仅用文字声称已保存。");continue;
+        }
         if(session.path("kind").asText().equals("sql")&&!Set.of("status","diagnosis").contains(finished.path("scene").asText())&&!finished.has("planId")&&!candidateReminder&&(reply.toString().contains("```sql")||finished.path("sqlChecked").asBoolean())){
           candidateReminder=true;messages.addObject().put("role","user").put("content","平台检查：尚无已登记的 SQL 候选，当前文字和 sql_check 不能创建草稿，也不会出现创建并运行入口。请调用 sql_propose 交付完整 SQL 候选；若确有必要缺口，只说明具体阻塞，勿重复已回答问题或声称已创建。");continue;
         }
@@ -410,7 +419,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
           event(id,turnId,"tool.completed",toolTitle(name)+"完成",mapper.createObjectNode().put("tool",name).set("output",guard.sanitize(visible)));
         }catch(BusinessException error){
           if(Set.of("HARNESS_CONTEXT_CHANGED","AI_PLAN_STALE").contains(error.code()))throw error;
-          output=mapper.createObjectNode().put("error",error.code()).put("message",error.getMessage());event(id,turnId,"tool.failed",safeError(error),mapper.createObjectNode().put("tool",name));
+          output=mapper.createObjectNode().put("error",error.code()).put("message",error.getMessage());if(error.code().equals("HARNESS_PREFERENCE_UNCHANGED"))preferenceUnchanged=true;event(id,turnId,"tool.failed",safeError(error),mapper.createObjectNode().put("tool",name));
         }
         if(output.path("interaction").isObject()){finish(id,turnId,"WAITING_USER","请在下方选择或补充，提交后继续原任务");return;}
         var recovery=progress.record(name,arguments,output);
@@ -497,7 +506,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   /** 页面不读取内部生命周期令牌、原始上下文或幂等指纹。 */
   private ObjectNode sessionView(ObjectNode value){return value.deepCopy().without(List.of("epoch","memory"));}
   /** 每次读取重新脱敏；仅返回自己的产物和应用投影。 */
-  private ObjectNode turnView(ObjectNode value){ObjectNode out=value.deepCopy();out.remove(List.of("context","evidence","fingerprint","epoch","actorRevision","memoryCandidate","applicationInput","preferences"));
+  private ObjectNode turnView(ObjectNode value){ObjectNode out=value.deepCopy();out.remove(List.of("context","evidence","fingerprint","epoch","actorRevision","memoryCandidate","applicationInput","preferences","preferenceRequest"));
     var plan=records.find(PLANS,value.path("planId").asText());if(plan!=null)out.set("candidate",plan.deepCopy());
     var app=records.find(APPLICATIONS,value.path("applicationId").asText());if(app!=null&&value.path("sessionId").asText().equals(app.path("sessionId").asText())&&value.path("id").asText().equals(app.path("turnId").asText())){if(!out.path("application").isObject())out.set("application",app.deepCopy());else if(app.has("request"))((ObjectNode)out.path("application")).set("request",app.path("request").deepCopy());}
     if(value.has("applicationInput")){if(!out.path("application").isObject())out.putObject("application").put("state","UNKNOWN").put("message","原申请已登记，待核对");((ObjectNode)out.path("application")).set("request",value.path("applicationInput").deepCopy());}

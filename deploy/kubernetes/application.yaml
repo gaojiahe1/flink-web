@@ -53,6 +53,8 @@ spec:
           env:
             # 同一 Pod 共用网络空间，后端端口与 Nginx 的 8080 分开。
             - {name: SERVER_PORT, value: "8081"}
+            # Langfuse新轨迹的Environment；观测开关及模式按需配置，默认仍关闭。
+            - {name: LANGFUSE_TRACING_ENVIRONMENT, value: "default"}
             - {name: FLINK_WEB_NAMESPACE, value: flink-kubernetes-operator}
             # 改为运维实际部署 Operator 的 namespace / Deployment；跨 namespace RBAC 见 operator-rbac.yaml。
             - {name: FLINK_WEB_OPERATOR_NAMESPACE, value: flink-kubernetes-operator}

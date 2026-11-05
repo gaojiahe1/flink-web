@@ -1,5 +1,7 @@
 # AI 助手与模型服务
 
+2026-11-05：新增平台后端环境变量`LANGFUSE_TRACING_ENVIRONMENT`，默认default，映射OTel resource的langfuse.environment，直连和Collector共用；开启时校验Langfuse命名规则，重启后仅影响新轨迹。Compose显式透传，Kubernetes清单提供默认值但不启用观测。配置见[接入说明](../../../deploy/observability/README.md)，验证见[验收](../validation.md#对话偏好与langfuse环境2026-11-05)。
+
 2026-11-04整体回归：新增[SpringAiTransport](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiTransport.java)集中HTTP响应预算、严格编码、JSON/SSE兼容和错误分类；Gateway只负责模型/消息及结果适配。修复前导空白跨片误判和残缺错误JSON掩盖HTTP鉴权分类；新增慢响应截止及坏UTF-8真实HTTP回归。0.0.10镜像已正式发布，替代下方迁移阶段暂不发布约定，见[验收](../validation.md#整体回归结构优化与0010发布2026-11-04)。
 
 2026-11-04：全项目AI模型请求迁移Spring AI1.1.7（Boot3.5.16/Java17），旧助手、模型连接测试和Harness共用[SpringAiModelGateway](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiModelGateway.java)。框架负责ChatModel消息与流式工具分片，平台保留网络/超时/字节/UTF-8/完整终止验证、ModelScope参数和链内推理回传；旧适配入口保持契约。框架不自动执行工具、不自动重试。

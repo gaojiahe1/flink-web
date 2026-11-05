@@ -1,5 +1,21 @@
 # Flink Web 部署指南
 
+## 对话偏好与Langfuse环境（2026-11-05）
+
+app/web:0.0.10已按既有约定覆盖发布并从指定仓库逐层核对，替代11-04同标签的当前内容；downloader:0.0.10保持原manifest `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0`。不更新latest或实际Kubernetes，已有Pod需按授权更新并重新拉取才会生效。
+
+| 镜像 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.10 | `sha256:a7140956ca87dc1f53a92d062b95a53e306e81308bea037223ceb6d84e90345e` | `sha256:c51378ddfdc550d497d59208d1f0856372156de88c091d90f2e20ea11a4bafb1` | 296229387 | 11 |
+| web:0.0.10 | `sha256:93b99c0595a597070031fbb266e8da5d0ad42212d0af7ff394a723365b1bf627` | `sha256:31aedc51ddc196e028c9bdec45824566f7eb570bffeeda04d63871a950d03e4f` | 116645734 | 8 |
+
+两者均从正式Dockerfile及干净Kylin底座构建，未继承旧业务镜像；linux/amd64、UID/GID10001:10001、只读根验证通过。逻辑字节600075684/318510814。经现有localhost:15000仓库映射推送，再从192.168.68.1:5000核对manifest正文/响应摘要、config和全部11/8层大小、压缩SHA-256及解压diff_id，与测试镜像完全一致。
+
+移除“我的偏好”表单，改为对话明确长期意图→具体设定卡片→确认后保存；原已保存偏好保留，PUT preferences手工写接口移除，读接口/MCP资源保留，无迁移。新增平台后端`LANGFUSE_TRACING_ENVIRONMENT=production`等配置，默认default，直连/Collector一致，重启后影响新轨迹。Compose已透传，Kubernetes清单仅增加默认环境示例，观测默认关闭。完整配置、名称限制见[接入说明](../deploy/observability/README.md)。数据库/PVC/主密钥/共享Runner/下载器绑定均保留。
+
+后端376通过/2外部条件跳过，最终web镜像42项相关页面、真实app/web偏好确认闭环、4类代理验证、实际OTLP环境导出通过；协议替身不代表生产集群、真实厂商自然语言效果或本次Langfuse新环境入库已认证，见[验收](agent/validation.md#对话偏好与langfuse环境2026-11-05)。
+
+
 ## 整体回归与0.0.10发布（2026-11-04）
 
 功能提交 `b5ed4b3` 已在完整回归、镜像发布及逐层核验后，由codex/regression-release-010快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
@@ -985,3 +1001,5 @@ app/web沿用0.0.8，平台API/前端版本同步；从正式Dockerfile、干净
 前端最终只读镜像88项页面回归、4类代理验证通过；后端平台专项38项通过。独立临时数据库实际加密登录、JDBC连接/Catalog保存、SQL历史、TCP与中文审计通过。现场仅做只读页面验收；原SQL修订未变，未启动或重启Flink作业，PVC/数据库/主密钥未替换、不做PVC备份。入口与权限见 [功能说明](features.md#5-flink-catalog-与连接管理)。
 
 本轮验证资源收尾：两独占容器（tmpfs数据库）、网络、推送别名、1份无标签中间镜像及预览进程已清理；末次新增缓存1条为正式镜像共享层，保留，未全局prune。独占临时文件删除，截图保留聊天可视化目录；原registry、正式标签和未知/既有缓存保留。
+
+2026-11-05收尾：触发条件进一步排除“默认使用datagen”“之后使用Checkpoint”“保存/清空当前SQL设置”等普通任务指令，补充同一集成测试后再次42项专项通过/1条件跳过，重打包与最终app/web闭环、OTLP环境及仓库全部层核验通过。表中app摘要为最终修正制品。

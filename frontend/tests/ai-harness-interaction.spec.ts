@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 async function setup(page: Page, kind = 'clarification', failOnce = false) {
   const responses: any[] = []
+  const starts: any[] = []
+  const preferenceRequests: string[] = []
   const card: any = {
     id: 'interaction-1',
     kind,
@@ -9,13 +11,19 @@ async function setup(page: Page, kind = 'clarification', failOnce = false) {
         ? '需要读取日志继续分析'
         : kind === 'choice'
           ? '选择排查方向'
-          : '补充时间字段',
+          : kind === 'preferences'
+            ? '将这些设定用于后续对话？'
+            : '补充时间字段',
     questions: kind === 'clarification' ? ['时间字段是什么？'] : [],
     options: kind === 'choice' ? ['Checkpoint', '容器日志'] : [],
     state: 'PENDING',
     expiresAt: '2099-01-01T00:00:00Z',
     model: '测试模型',
     scope: kind === 'logs' ? '读取当前作业的脱敏日志并发送给当前模型' : undefined,
+    action: kind === 'preferences' ? 'merge' : undefined,
+    changes: kind === 'preferences' ? { responseStyle: '先给结论' } : undefined,
+    previousValues: {},
+    sourceQuote: kind === 'preferences' ? '以后回答先给结论' : undefined,
   }
   const turn: any = {
     id: 'turn-1',
@@ -50,9 +58,7 @@ async function setup(page: Page, kind = 'clarification', failOnce = false) {
     else if (path === '/api/ai/models')
       data = [{ id: 'model', name: '测试模型', enabled: true, purposes: ['sql', 'diagnosis'] }]
     else if (path === '/api/ai/harness/preferences') {
-      if (req.method() === 'PUT') {
-        preferences = { revision: preferences.revision + 1, values: req.postDataJSON().values }
-      }
+      preferenceRequests.push(req.method())
       data = preferences
     } else if (path === '/api/ai/harness/sessions') data = [session]
     else if (path.endsWith('/respond')) {
@@ -69,6 +75,11 @@ async function setup(page: Page, kind = 'clarification', failOnce = false) {
         })
       card.state = input.decision === 'cancel' ? 'CANCELED' : 'ANSWERED'
       card.answers = input.answers
+      if (kind === 'preferences' && input.decision === 'submit' && input.confirmedPreferences)
+        preferences = {
+          revision: preferences.revision + 1,
+          values: card.action === 'clear' ? {} : card.changes,
+        }
       turn.state = input.decision === 'cancel' ? 'CANCELED' : 'ANSWERED'
       data =
         input.decision === 'cancel'
@@ -83,6 +94,20 @@ async function setup(page: Page, kind = 'clarification', failOnce = false) {
               interaction: undefined,
             }
       if (data !== turn) session.turns.push(data)
+    } else if (path.endsWith('/turns') && req.method() === 'POST') {
+      starts.push(req.postDataJSON())
+      card.state = 'EXPIRED'
+      turn.state = 'SUPERSEDED'
+      data = {
+        ...turn,
+        id: 'turn-2',
+        sequence: 2,
+        content: req.postDataJSON().content,
+        state: 'SUCCEEDED',
+        reply: '已收到调整要求',
+        interaction: undefined,
+      }
+      session.turns.push(data)
     } else if (path === '/api/ai/harness/sessions/session-1') data = session
     await route.fulfill({
       contentType: 'application/json',
@@ -90,7 +115,7 @@ async function setup(page: Page, kind = 'clarification', failOnce = false) {
     })
   })
   await page.goto('/#/ai')
-  return { responses, session, getPreferences: () => preferences }
+  return { responses, starts, preferenceRequests, card, session, getPreferences: () => preferences }
 }
 test('填写卡片后自动继续，刷新保留已提交记录', async ({ page }) => {
   const f = await setup(page)
@@ -132,16 +157,75 @@ test('对话输入框补充关联原卡片', async ({ page }) => {
   expect(f.responses[0].interactionId).toBe('interaction-1')
   expect(f.responses[0].answers.note).toContain('Checkpoint')
 })
-test('偏好可以显式保存和遗忘', async ({ page }) => {
+test('输入框下方只保留任务模板，不再提供偏好填写入口', async ({ page }) => {
   const f = await setup(page)
-  await page.getByRole('button', { name: '我的偏好', exact: true }).click()
-  await page.getByLabel('回答方式', { exact: true }).fill('先给结论')
-  await page.getByRole('button', { name: '保存偏好' }).click()
-  await expect(page.getByText('偏好已保存，将用于后续轮次')).toBeVisible()
-  expect(f.getPreferences().values.responseStyle).toBe('先给结论')
-  await page.getByRole('button', { name: '清空偏好' }).click()
-  await expect(page.getByText('已清空偏好')).toBeVisible()
+  await expect(page.getByLabel('任务模板')).toBeVisible()
+  await expect(page.getByRole('button', { name: '我的偏好', exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('回答方式', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '保存偏好', exact: true })).toHaveCount(0)
+  expect(f.preferenceRequests).toEqual([])
+})
+test('对话偏好先展示具体内容，点击确认后才保存且刷新保留结果', async ({ page }) => {
+  const f = await setup(page, 'preferences')
+  await expect(page.getByRole('region', { name: '确认对话偏好' })).toContainText('先给结论')
+  await expect(page.getByLabel('补充说明', { exact: true })).toHaveCount(0)
   expect(f.getPreferences().values).toEqual({})
+  await page.getByRole('button', { name: '确认保存', exact: true }).click()
+  await expect(page.getByText('偏好已保存，将用于后续对话', { exact: true })).toBeVisible()
+  expect(f.getPreferences().values.responseStyle).toBe('先给结论')
+  expect(f.responses[0].confirmedPreferences).toBe(true)
+  expect(f.responses[0].answers).toEqual({})
+  await page.reload()
+  await expect(page.getByText('偏好已保存，将用于后续对话', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认保存', exact: true })).toHaveCount(0)
+  expect(f.preferenceRequests).toEqual([])
+})
+test('暂不保存不写入，保留明确拒绝记录', async ({ page }) => {
+  const f = await setup(page, 'preferences')
+  await page.getByRole('button', { name: '暂不保存', exact: true }).click()
+  await expect(page.getByText('未保存本次设定', { exact: true })).toBeVisible()
+  expect(f.getPreferences().values).toEqual({})
+  expect(f.responses[0].decision).toBe('cancel')
+  expect(f.responses[0].confirmedPreferences).toBe(false)
+})
+test('对话请求清空时展示原设定，再明确确认清空', async ({ page }) => {
+  const f = await setup(page, 'preferences')
+  f.card.action = 'clear'
+  f.card.title = '清空已保存的对话偏好？'
+  f.card.previousValues = { responseStyle: '先给结论' }
+  f.card.changes = {}
+  await page.reload()
+  await expect(page.getByRole('region', { name: '确认对话偏好' })).toContainText('先给结论')
+  await page.getByRole('button', { name: '确认清空', exact: true }).click()
+  await expect(page.getByText('偏好已清空', { exact: true })).toBeVisible()
+  expect(f.responses[0].confirmedPreferences).toBe(true)
+})
+test('失效的偏好卡片不再提供保存操作', async ({ page }) => {
+  const f = await setup(page, 'preferences')
+  f.card.state = 'EXPIRED'
+  await page.reload()
+  await expect(page.getByText('此交互已失效，请查看最新对话')).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认保存', exact: true })).toHaveCount(0)
+  expect(f.responses).toHaveLength(0)
+})
+test('偏好确认失败可重试同一请求', async ({ page }) => {
+  const f = await setup(page, 'preferences', true)
+  await page.getByRole('button', { name: '确认保存', exact: true }).click()
+  await expect(page.getByText('暂时不可用，请重试')).toBeVisible()
+  expect(f.getPreferences().values).toEqual({})
+  await page.getByRole('button', { name: '重试原提交', exact: true }).click()
+  await expect(page.getByText('偏好已保存，将用于后续对话', { exact: true })).toBeVisible()
+  expect(f.responses[0]).toEqual(f.responses[1])
+})
+test('直接补充偏好调整会开启新消息，不构成保存确认', async ({ page }) => {
+  const f = await setup(page, 'preferences')
+  await page.getByLabel('输入需求').fill('改成先解释原因，后续都按这个回答')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.getByText('已收到调整要求', { exact: true })).toBeVisible()
+  expect(f.responses).toHaveLength(0)
+  expect(f.starts[0].content).toBe('改成先解释原因，后续都按这个回答')
+  expect(f.getPreferences().values).toEqual({})
+  await expect(page.getByRole('button', { name: '确认保存', exact: true })).toHaveCount(0)
 })
 
 test('取消交互后保留取消记录', async ({ page }) => {
@@ -167,17 +251,18 @@ test('窄屏卡片选择可操作且没有横向溢出', async ({ page }) => {
   await expect(page.getByText('已根据补充继续分析')).toBeVisible()
   expect(f.responses[0].answers.choice).toBe('Checkpoint')
 })
-test('三主题下卡片和偏好保持可读', async ({ page }) => {
-  await setup(page, 'logs')
+test('三主题及窄屏下对话偏好可读，不存在手动填写表单', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await setup(page, 'preferences')
   for (const theme of ['mist', 'pearl', 'dark']) {
     await page.getByLabel('界面主题').selectOption(theme)
-    await expect(page.getByRole('button', { name: '读取脱敏日志并继续' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认保存', exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
       true,
     )
   }
   await page.getByLabel('界面主题').selectOption('mist')
   await page.screenshot({
-    path: 'C:/Users/11526/.codex/visualizations/2026/11/02/01a19b77-e871-76f2-b6d9-5117cbdea06e/harness-010-interaction.png',
+    path: 'test-results/conversation-preferences-mobile.png',
   })
 })

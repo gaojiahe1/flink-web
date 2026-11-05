@@ -22,9 +22,11 @@ public class AiTelemetryConfiguration {
       @Value("${flink-web.ai.telemetry.mode:collector}") String mode,
       @Value("${flink-web.ai.telemetry.langfuse-base-url:http://127.0.0.1:3000}") String langfuseUrl,
       @Value("${flink-web.ai.telemetry.public-key:}") String publicKey,
-      @Value("${flink-web.ai.telemetry.secret-key:}") String secretKey){
+      @Value("${flink-web.ai.telemetry.secret-key:}") String secretKey,
+      @Value("${flink-web.ai.telemetry.environment:default}") String environment){
     var provider=SdkTracerProvider.builder();
     if(enabled){
+      if(environment==null||!environment.matches("^(?!langfuse)[a-z0-9_-]{1,40}$"))throw new IllegalArgumentException("Langfuse环境名需为1到40个小写字母、数字、下划线或连字符，且不能以langfuse开头");
       if(!java.util.Set.of("collector","direct").contains(mode))throw new IllegalArgumentException("AI观测mode只支持collector/direct");
       if(mode.equals("direct")){if(publicKey.isBlank()||secretKey.isBlank())throw new IllegalArgumentException("直连Langfuse需要项目Public/Secret Key");endpoint=langfuseUrl.replaceAll("/+$","")+"/api/public/otel/v1/traces";}
       var uri=URI.create(endpoint);if(!java.util.Set.of("http","https").contains(uri.getScheme())||uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null)throw new IllegalArgumentException("OTLP Collector地址无效");
@@ -33,7 +35,7 @@ public class AiTelemetryConfiguration {
       var exporter=builder.build();
       provider.addSpanProcessor(BatchSpanProcessor.builder(exporter).setMaxQueueSize(2048).setMaxExportBatchSize(128).setScheduleDelay(Duration.ofSeconds(1)).build());
     }else provider.setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff());
-    provider.setResource(Resource.create(Attributes.of(AttributeKey.stringKey("service.name"),"flink-web",AttributeKey.stringKey("service.version"),"0.0.10")));
+    provider.setResource(Resource.create(Attributes.of(AttributeKey.stringKey("service.name"),"flink-web",AttributeKey.stringKey("service.version"),"0.0.10",AttributeKey.stringKey("langfuse.environment"),enabled?environment:"default")));
     return OpenTelemetrySdk.builder().setTracerProvider(provider.build()).build();
   }
 }

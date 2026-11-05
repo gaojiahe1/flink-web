@@ -59,6 +59,7 @@ flink-web:
     telemetry:
       enabled: ${FLINK_WEB_AI_TELEMETRY_ENABLED:false}
       mode: ${FLINK_WEB_AI_TELEMETRY_MODE:collector}
+      environment: ${LANGFUSE_TRACING_ENVIRONMENT:default}
       langfuse-base-url: ${LANGFUSE_BASE_URL:http://127.0.0.1:3000}
       public-key: ${LANGFUSE_PUBLIC_KEY:}
       secret-key: ${LANGFUSE_SECRET_KEY:}

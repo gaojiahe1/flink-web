@@ -709,3 +709,23 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 新版 Runner 已作为独立共享文件 `artifacts/shared/sql-runner/flink-web-sql-runner-0.0.8-5fca445b.jar` 发布，SHA-256 `5fca445b1cf2272cf6e59ea6ec618322e2c2f054fe36b490750e2ad5d38bb301`，下载接口及 S3 下载哈希一致。使用新增 SET/DROP/UDF 前在“部署配置 → SQL Runner”明确选择 `flink-web-sql-runner-0.0.8-5fca445b.jar`；原默认共享 Runner 和已有选择保留，不静默覆盖。该文件是正式可选制品，清理临时资源时保留。
 
 清理本任务3个Docker验证容器（含临时数据库卷）、独占网络、推送别名及3份未标记中间镜像；新增13项构建缓存中4项清除，9项正式镜像共享记录保留，原187项缓存均保留。仅删除本任务被取代的两份中间manifest，保留当前标签和共享blob，未对registry做全局GC。
+
+
+## 对话偏好与Langfuse环境（2026-11-05）
+
+用户要求从明确的对话长期意图提取偏好，保存前确认，取消手工填写；另补充Langfuse Environment环境变量配置。开始时master 783fabf、工作区干净，工作分支codex/conversation-preferences。保持0.0.10，沿用发布约定，仅app/web受影响，不更新latest或实际工作负载。
+
+- 偏好：移除页面“我的偏好”按钮及五项输入；保留任务模板。内部preferences_propose提出有真实用户原话的候选，卡片展示具体变更/原设定/来源，确认按钮才携带confirmedPreferences，普通输入改为新轮次；澄清可续接原意图。确认与保存同事务、冻结修订、原号幂等，拒绝/过期/旧轮次/修订冲突不写。原PUT preferences入口返回405，GET/MCP只读及已保存偏好保留；核心提示词v5，无数据库迁移。
+- Langfuse：LANGFUSE_TRACING_ENVIRONMENT默认default；直连与Collector实际OTLP HTTP测试均含langfuse.environment及配置值，校验命名规则；关闭观测不因无效环境阻断启动。Compose透传及Kubernetes默认环境示例已补。程序不自动读取任意OTEL_RESOURCE_ATTRIBUTES。
+- 后端全套378项，临时目录权限造成的4项Parser清理错误使用独占JVM临时目录复测通过，并补启用原版1.20.3/1.20.5 Parser条件测试；最终报告376通过、2条件跳过（独立MinIO、真实Langfuse）。最后提示词版本调整后Harness/Telemetry专项42通过、1条件跳过，重新打包通过。
+- 前端类型/生产构建、全源格式通过。初轮24项及相关40项通过；最终只读非root web镜像42项通过，含保存/拒绝/同号重试/修改消息/清空/失效/三主题/窄屏及原Harness/作业AI。首次扩展浏览器进程在启动阶段被系统终止，复跑完成；其自建Vite由后续测试复用，收尾只精确关闭该任务进程。
+- 最终app/web真实浏览器加密登录、实际Spring AI HTTP工具链、确认前未写入、刷新恢复、具体确认保存、重发同号、v5及持久化结果闭环通过。app使用独占tmpfs数据库和随机测试凭据，模型/Kubernetes/OTLP为隔离协议替身，不连接真实供应商或用户作业。最终app的Collector模式OTLP替身收到2批数据并验证qa-preferences环境值；本轮没有向真实Langfuse发送新轨迹，不把协议导出验证写为实际UI入库验收。
+- web代理参数、无后端启动、请求路径/方法/正文/登录CSRF头、后端DNS重建恢复4类通过。app/web均linux/amd64、UID/GID10001:10001、只读根运行。Parser/Runner未改，从原已验证镜像提取；从正式Dockerfile、干净Kylin底座及命名context构建。Nginx运行文件及原许可证保留，未继承旧业务镜像。镜像推送及摘要核对结果续记于[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。
+
+本轮没有替换数据库、主密钥、共享Runner或下载器绑定，不新增后台刷新。真实模型自然语言理解效果、生产Kubernetes/Operator/MySQL及本次新环境值的真实Langfuse入库未认证。
+
+发布完成：指定仓库manifest/config/全部11与8层已逐项核对通过；Compose实际解析确认环境透传，默认观测仍关闭。最终镜像摘要见本节部署链接。
+
+收尾边界：普通“默认使用datagen”“之后使用Checkpoint”“保存/清空当前SQL设置”等不视为长期意图；“以后都这样回答”“后面都这样”可触发。补入同一集成用例，专项42通过/1条件跳过后重新打包、从干净底座重建app，再次真实浏览器闭环和OTLP环境导出通过，最终app/web全部层复核一致；采用部署最新表摘要。
+
+临时资源已清理：两轮独占验证容器/网络、推送别名、遗留本任务Vite、4条新增私有构建缓存及被替代的本次无标签app中间镜像；保留最终正式镜像、原registry/Langfuse、基线旧镜像与共享/未知缓存。独占任务目录在提交/合并核对后删除，截图与测试报告保留。

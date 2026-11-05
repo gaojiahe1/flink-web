@@ -45,6 +45,4 @@ public class AiHarnessMcpServiceImpl implements AiHarnessMcpService {
   private ObjectNode error(ObjectNode response,int code,String message){response.putObject("error").put("code",code).put("message",message);return response;}
   /** 当前账号读取自己的偏好。 */
   public ObjectNode preferences(){return prefs.get();}
-  /** 偏好由用户设置入口显式维护，不提供给模型写入。 */
-  public ObjectNode savePreferences(ObjectNode input){return prefs.save(input);}
 }
