@@ -1,5 +1,7 @@
 # Flink Web 部署指南
 
+功能提交 `4fb438a` 已在回归、真实Langfuse双链路验证、镜像发布及逐层核验后，由codex/langfuse-content快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 ## 观测正文输出（2026-11-05）
 
 仅app:0.0.10覆盖发布，补齐Langfuse各层Input/Output；web/downloader保持此前摘要，不更新latest和实际工作负载。正式Dockerfile/干净Kylin底座/已验证当前JAR及原版Parser/Runner构建，linux/amd64、UID/GID10001:10001，最终只读根验证通过。

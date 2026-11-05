@@ -748,3 +748,5 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 真实Langfuse合成证据：direct traceId 9efa42b388abc451672cb7dd798f6397, collector traceId 71738169ae1690f4b258c229a23764ba。两条各3项均通过正文入库、脱敏及层级/用量断言。
 
 收尾：最终仓库manifest/config/全部11层已核对通过；Compose正文开关true/false透传通过。两轮独占镜像验证容器/网络、临时Collector、推送别名、4条新私有缓存及本任务中间app镜像已清理；正式镜像、用户Langfuse/registry与共享/未知缓存保留。独占任务目录在提交合并核对后删除。
+
+功能提交 `4fb438a` 已在回归、真实Langfuse双链路验证、镜像发布及逐层核验后，由codex/langfuse-content快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
