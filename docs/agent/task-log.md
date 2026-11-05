@@ -1,5 +1,7 @@
 # 重要任务摘要
 
+功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 ## 2026-11-05 对话偏好与Langfuse环境
 
 取消“我的偏好”表单，通过用户明确长期意图提案、具体卡片确认、原子保存及同号恢复；撤下手工PUT接口，保留现有偏好。新增LANGFUSE_TRACING_ENVIRONMENT并校验命名，默认default，双接入模式共用。后端376通过/2条件跳过，最终web镜像42项、真实app/web确认闭环、代理及OTLP环境导出通过；app/web0.0.10发布并逐层核验，无迁移，不改下载器/latest/实际集群。见[验收](validation.md#对话偏好与langfuse环境2026-11-05)、[发布](../deployment.md#对话偏好与langfuse环境2026-11-05)。

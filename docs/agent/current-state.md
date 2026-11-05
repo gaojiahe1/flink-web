@@ -1,6 +1,8 @@
 # 当前状态
 
-2026-11-05：对话偏好确认保存及Langfuse Environment环境变量完成。已移除手工偏好表单，具体卡片确认后才保存；旧偏好保留，原PUT写接口撤下，核心提示词v5。平台后端LANGFUSE_TRACING_ENVIRONMENT默认default，直连/Collector共用，重启影响新轨迹。后端376通过/2条件跳过，最终web镜像42项相关页面及真实app/web闭环、4类代理通过；app/web:0.0.10已发布并逐层核验，downloader/latest/实际工作负载不变。见[验收](validation.md#对话偏好与langfuse环境2026-11-05)、[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。提交及合并结果收尾续记。
+功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
+2026-11-05：对话偏好确认保存及Langfuse Environment环境变量完成。已移除手工偏好表单，具体卡片确认后才保存；旧偏好保留，原PUT写接口撤下，核心提示词v5。平台后端LANGFUSE_TRACING_ENVIRONMENT默认default，直连/Collector共用，重启影响新轨迹。后端376通过/2条件跳过，最终web镜像42项相关页面及真实app/web闭环、4类代理通过；app/web:0.0.10已发布并逐层核验，downloader/latest/实际工作负载不变。见[验收](validation.md#对话偏好与langfuse环境2026-11-05)、[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。独占测试资源、推送别名、4条新增私有缓存及本次中间镜像已清理；用户服务、正式镜像和共享缓存保留。
 
 功能提交 `b5ed4b3` 已在完整回归、镜像发布及逐层核验后，由codex/regression-release-010快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 

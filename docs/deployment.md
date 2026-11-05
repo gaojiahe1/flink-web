@@ -1,5 +1,7 @@
 # Flink Web 部署指南
 
+功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 ## 对话偏好与Langfuse环境（2026-11-05）
 
 app/web:0.0.10已按既有约定覆盖发布并从指定仓库逐层核对，替代11-04同标签的当前内容；downloader:0.0.10保持原manifest `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0`。不更新latest或实际Kubernetes，已有Pod需按授权更新并重新拉取才会生效。
