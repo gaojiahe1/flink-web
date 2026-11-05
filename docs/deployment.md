@@ -1,5 +1,7 @@
 # Flink Web 部署指南
 
+功能提交 `e697d77` 已在回归、最终镜像发布及逐层核验后，由codex/harness-unification快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 ## Harness入口统一与上下文优化（2026-11-05）
 
 本节为app/web:0.0.10最新发布，替代下方同标签历史摘要。正式Dockerfile、干净Kylin底座及验证制品构建，linux/amd64、UID/GID10001:10001，最终只读根验证通过。通过既有localhost:15000映射推送，再从192.168.68.1:5000核验manifest响应/正文、config及全部层大小、压缩SHA-256和解压diff_id，与最终测试镜像一致。
