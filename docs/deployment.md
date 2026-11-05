@@ -1,5 +1,18 @@
 # Flink Web 部署指南
 
+## 观测正文输出（2026-11-05）
+
+仅app:0.0.10覆盖发布，补齐Langfuse各层Input/Output；web/downloader保持此前摘要，不更新latest和实际工作负载。正式Dockerfile/干净Kylin底座/已验证当前JAR及原版Parser/Runner构建，linux/amd64、UID/GID10001:10001，最终只读根验证通过。
+
+| 镜像 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.10 | `sha256:33c1d84e7847eb794e7c62fc2ab240d46c32e6656c8682006adc3c146ef76404` | `sha256:73f2341c1e9118ae6b80b7450e2542f039b51c04ad592275292d5ade129c26fc` | 296234040 | 11 |
+
+逻辑大小600080400字节；通过现有localhost:15000仓库映射发布，再从指定192.168.68.1:5000核对manifest正文/响应摘要、config、全部11层大小/SHA-256及解压diff_id，与最终测试镜像完全一致。正文环境开关`FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT`默认true，总观测`FLINK_WEB_AI_TELEMETRY_ENABLED`仍默认false；可设正文false仅保留元数据，需后端重启。启用正文会导出已脱敏的消息/SQL/YAML/已授权模型上下文中的日志等，凭据与供应商内部推理不导出，单项限长32768并标记截断，旧记录不回填。配置见[接入说明](../deploy/observability/README.md)。
+
+完整后端382通过/2外部条件跳过，最后脱敏文本补强后专项复测并重打包通过；真实Langfuse直连及Collector各3层输入输出入库通过，最终镜像实际10项chain/generation/tool/event正文及加密登录/交互续接通过，详见[验收](agent/validation.md#观测正文输出2026-11-05)。无数据库迁移，原数据库/主密钥/下载器绑定和用户服务保留。实际平台拉取本节镜像并重启后，新业务轨迹才会显示正文。
+
+
 功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 
 ## 对话偏好与Langfuse环境（2026-11-05）

@@ -1,8 +1,8 @@
 # 项目知识索引
 
-整体回归、测试入口、镜像内容核验：先读[回归指南](../testing.md)，本轮结果见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)，最新镜像摘要见[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。
+整体回归、测试入口、镜像内容核验：先读[回归指南](../testing.md)，本轮结果见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)，最新镜像摘要见[部署](../deployment.md#观测正文输出2026-11-05)。
 
-Spring AI、Langfuse、OpenTelemetry/Collector、模型调用迁移与观测配置：先读[AI模块](modules/ai-assistant.md)和[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，部署见[双模式说明](../../deploy/observability/README.md)。
+Spring AI、Langfuse、Input/Output正文、OpenTelemetry/Collector、模型调用迁移与观测配置：先读[AI模块](modules/ai-assistant.md)和[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，部署见[双模式说明](../../deploy/observability/README.md)。
 
 Harness、MCP、工具/资源/提示模板、用户偏好/对话确认保存、对话交互卡片、日志与Checkpoint下钻、原生工具、SSE流式对话、执行计划、六层能力、会话删除与批准实施：先读 [Flink AI Harness](modules/agent-harness.md) 及 [ADR-008](decisions/ADR-008-agent-harness.md)，关联 REQ-003。
 

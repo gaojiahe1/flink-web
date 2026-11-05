@@ -33,7 +33,7 @@ try:
         trace=match.group(1);observations=[]
         for attempt in range(40):
             try:
-                payload=get("/api/public/v2/observations?traceId="+trace+"&limit=100&fields=core,basic,model,usage")
+                payload=get("/api/public/v2/observations?traceId="+trace+"&limit=100&fields=core,basic,model,usage,io")
                 observations=[row for row in payload.get("data",[]) if row.get("traceId")==trace]
                 if len(observations)>=3:break
             except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError):pass
@@ -46,7 +46,10 @@ try:
         if any(row.get("parentObservationId")!=root_span["id"] for row in observations if row["id"]!=root_span["id"]):raise RuntimeError("父子关系不正确，模式="+mode)
         usage=generation.get("usageDetails",{})
         if generation.get("model")!="test-model" or usage.get("input")!=12 or usage.get("output")!=3:raise RuntimeError("模型或Token用量不正确，模式="+mode)
-        results.append({"usage":usage,"mode":mode,"traceId":trace,"observations":len(observations),"types":sorted(types)})
+        if any(row.get("input") is None or row.get("output") is None for row in observations):raise RuntimeError("Input/Output缺失，模式="+mode)
+        content=json.dumps([{k:row.get(k) for k in ("input","output")} for row in observations],ensure_ascii=False)
+        if "synthetic-input" not in content or "synthetic-output" not in content or any(value in content for value in ("synthetic-secret","synthetic-private-reasoning")):raise RuntimeError("Input/Output内容或脱敏不正确，模式="+mode)
+        results.append({"usage":usage,"mode":mode,"traceId":trace,"observations":len(observations),"types":sorted(types),"inputOutputVerified":True})
     print(json.dumps(results,ensure_ascii=False))
 finally:
     subprocess.run(["docker","rm","-f",name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

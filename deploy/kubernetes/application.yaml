@@ -55,6 +55,8 @@ spec:
             - {name: SERVER_PORT, value: "8081"}
             # Langfuse新轨迹的Environment；观测开关及模式按需配置，默认仍关闭。
             - {name: LANGFUSE_TRACING_ENVIRONMENT, value: "default"}
+            # 启用观测后导出脱敏Input/Output；改false可仅保留元数据。
+            - {name: FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT, value: "true"}
             - {name: FLINK_WEB_NAMESPACE, value: flink-kubernetes-operator}
             # 改为运维实际部署 Operator 的 namespace / Deployment；跨 namespace RBAC 见 operator-rbac.yaml。
             - {name: FLINK_WEB_OPERATOR_NAMESPACE, value: flink-kubernetes-operator}

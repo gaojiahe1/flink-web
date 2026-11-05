@@ -1,5 +1,7 @@
 # AI 助手与模型服务
 
+2026-11-05正文观测：用户要求Langfuse显示Input/Output，补齐AiTelemetry输入/输出接口及统一脱敏策略，覆盖模型、工具、Harness/旧任务与交互event。FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT默认true，总观测仍默认关闭；结构化JSON及内嵌参数脱敏、内部推理排除、单项32768限长标记，错误只记分类，策略失败不影响业务。直连/Collector真实Langfuse三层正文入库已验证，[正文SDK/HTTP回归](../../../backend/src/test/java/com/flinkweb/AiTelemetryContentTest.java)覆盖开关、脱敏、预算和异常隔离；字段与开关见[接入说明](../../../deploy/observability/README.md)和[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)。
+
 2026-11-05：新增平台后端环境变量`LANGFUSE_TRACING_ENVIRONMENT`，默认default，映射OTel resource的langfuse.environment，直连和Collector共用；开启时校验Langfuse命名规则，重启后仅影响新轨迹。Compose显式透传，Kubernetes清单提供默认值但不启用观测。配置见[接入说明](../../../deploy/observability/README.md)，验证见[验收](../validation.md#对话偏好与langfuse环境2026-11-05)。
 
 2026-11-04整体回归：新增[SpringAiTransport](../../../backend/src/main/java/com/flinkweb/client/ai/SpringAiTransport.java)集中HTTP响应预算、严格编码、JSON/SSE兼容和错误分类；Gateway只负责模型/消息及结果适配。修复前导空白跨片误判和残缺错误JSON掩盖HTTP鉴权分类；新增慢响应截止及坏UTF-8真实HTTP回归。0.0.10镜像已正式发布，替代下方迁移阶段暂不发布约定，见[验收](../validation.md#整体回归结构优化与0010发布2026-11-04)。

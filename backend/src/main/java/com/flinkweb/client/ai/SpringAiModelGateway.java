@@ -28,9 +28,10 @@ public class SpringAiModelGateway {
   /** 每次请求独立配置模型，支持数据库中的多模型和密钥修订，无自动重试或工具执行。 */
   public ObjectNode call(ObjectNode model,String key,URI endpoint,ArrayNode history,ArrayNode tools,Consumer<String> consumer)throws Exception {
     try(var trace=telemetry.start("ai.generation","generation",Map.of("gen_ai.request.model",model.path("model").asText(),"gen_ai.system","openai","gen_ai.operation.name","chat"))){
+      var input=mapper.createObjectNode();input.set("messages",history);input.set("tools",tools);input.putObject("parameters").put("model",model.path("model").asText()).put("maxTokens",model.path("maxTokens").asInt(4096));trace.input(input);
       var first=new AtomicBoolean();Consumer<String> observed=consumer==null?null:value->{if(first.compareAndSet(false,true))trace.attribute("langfuse.observation.completion_start_time",java.time.Instant.now().toString());consumer.accept(value);};
-      try{var out=invoke(model,key,endpoint,history,tools,observed);for(String field:List.of("prompt_tokens","completion_tokens","total_tokens"))if(out.path("usage").has(field))trace.usage("gen_ai.usage."+switch(field){case "prompt_tokens"->"input_tokens";case "completion_tokens"->"output_tokens";default->"total_tokens";},out.path("usage").path(field).asLong());return out;}
-      catch(Exception ex){trace.error(ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName());throw ex;}
+      try{var out=invoke(model,key,endpoint,history,tools,observed);trace.output(out.deepCopy().without("reasoning_content"));for(String field:List.of("prompt_tokens","completion_tokens","total_tokens"))if(out.path("usage").has(field))trace.usage("gen_ai.usage."+switch(field){case "prompt_tokens"->"input_tokens";case "completion_tokens"->"output_tokens";default->"total_tokens";},out.path("usage").path(field).asLong());return out;}
+      catch(Exception ex){String code=ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName();trace.error(code);trace.output(Map.of("error",code));throw ex;}
     }
   }
   /** 框架负责序列化和流式合并，保留平台自己的超时与网络限制。 */

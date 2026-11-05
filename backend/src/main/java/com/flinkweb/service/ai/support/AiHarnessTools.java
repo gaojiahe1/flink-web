@@ -122,7 +122,7 @@ public class AiHarnessTools {
 
   /** 验证工具名、额外字段和参数类型，再调用受信领域适配器。 */
   public Outcome execute(String name,ObjectNode args,ObjectNode session,ObjectNode turn){
-    try(var trace=telemetry.start("tool."+name,"tool",Map.of("flink.tool.name",name))){try{var outcome=executeTool(name,args,session,turn);if(outcome.output().has("error"))trace.error(outcome.output().path("error").asText());return outcome;}catch(RuntimeException ex){trace.error(ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName());throw ex;}}
+    try(var trace=telemetry.start("tool."+name,"tool",Map.of("flink.tool.name",name))){trace.input(args);try{var outcome=executeTool(name,args,session,turn);var output=outcome.output().deepCopy();if(outcome.proposal()!=null)output.set("candidate",outcome.proposal());if(outcome.requirements()!=null)output.set("requirements",outcome.requirements());trace.output(output);if(outcome.output().has("error"))trace.error(outcome.output().path("error").asText());return outcome;}catch(RuntimeException ex){String code=ex instanceof BusinessException business?business.code():ex.getClass().getSimpleName();trace.error(code);trace.output(Map.of("error",code));throw ex;}}
   }
   /** 工具权限和阶段每次重新验证，观测不会扩大能力。 */
   private Outcome executeTool(String name,ObjectNode args,ObjectNode session,ObjectNode turn){

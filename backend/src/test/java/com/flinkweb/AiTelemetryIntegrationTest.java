@@ -40,7 +40,7 @@ class AiTelemetryIntegrationTest {
     var server=com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);server.createContext("/",exchange->{paths.add(exchange.getRequestURI().getPath());auth.add(exchange.getRequestHeaders().getFirst("Authorization")==null?"":exchange.getRequestHeaders().getFirst("Authorization"));content.add(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.ISO_8859_1));exchange.sendResponseHeaders(200,0);exchange.close();});server.start();
     try{String base="http://127.0.0.1:"+server.getAddress().getPort();var config=new AiTelemetryConfiguration();
       for(String mode:List.of("direct","collector"))try(var sdk=config.aiOpenTelemetry(true,base+"/v1/traces",mode,base,"public-test","secret-test","qa-regression")){emit(sdk,"transport-"+mode);assertThat(sdk.getSdkTracerProvider().forceFlush().join(10,TimeUnit.SECONDS).isSuccess()).isTrue();}
-      assertThat(paths).containsExactly("/api/public/otel/v1/traces","/v1/traces");assertThat(auth.get(0)).startsWith("Basic ");assertThat(auth.get(1)).isEmpty();assertThat(content).allSatisfy(body->assertThat(body).contains("harness.turn","langfuse.session.id","langfuse.environment","qa-regression").doesNotContain("secret-test","Authorization"));
+      assertThat(paths).containsExactly("/api/public/otel/v1/traces","/v1/traces");assertThat(auth.get(0)).startsWith("Basic ");assertThat(auth.get(1)).isEmpty();assertThat(content).allSatisfy(body->assertThat(body).contains("harness.turn","langfuse.session.id","langfuse.environment","qa-regression","langfuse.observation.input","langfuse.observation.output","synthetic-input","synthetic-output").doesNotContain("secret-test","Authorization","synthetic-private-reasoning","synthetic-secret"));
     }finally{server.stop(0);}
   }
   /** 关闭时不要求凭据；开启直连必须提供有效配置。 */
@@ -57,5 +57,14 @@ class AiTelemetryIntegrationTest {
   @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named="FLINK_TEST_LIVE_LANGFUSE",matches="true")
   void liveLangfuse()throws Exception{String mode=System.getenv().getOrDefault("FLINK_WEB_AI_TELEMETRY_MODE","direct");try(var sdk=new AiTelemetryConfiguration().aiOpenTelemetry(true,System.getenv().getOrDefault("FLINK_WEB_OTEL_TRACES_ENDPOINT","http://127.0.0.1:14318/v1/traces"),mode,System.getenv().getOrDefault("LANGFUSE_BASE_URL","http://127.0.0.1:3000"),System.getenv("LANGFUSE_PUBLIC_KEY"),System.getenv("LANGFUSE_SECRET_KEY"),System.getenv().getOrDefault("LANGFUSE_TRACING_ENVIRONMENT","default"))){String id=emit(sdk,"flink-web-integration-"+mode);assertThat(sdk.getSdkTracerProvider().forceFlush().join(15,TimeUnit.SECONDS).isSuccess()).isTrue();System.out.println("LANGFUSE_QA_TRACE "+mode+" "+id);}}
   /** 生成可核对的模型/工具层级及真实usage字段。 */
-  private String emit(OpenTelemetrySdk sdk,String session){var telemetry=new AiTelemetry(sdk);try(var root=telemetry.start("harness.turn","chain",Map.of("langfuse.session.id",session,"langfuse.user.id","integration-test"))){try(var model=telemetry.start("ai.generation","generation",Map.of("gen_ai.request.model","test-model"))){model.usage("gen_ai.usage.input_tokens",12);model.usage("gen_ai.usage.output_tokens",3);}try(var tool=telemetry.start("tool.sql_check","tool",Map.of())){tool.attribute("flink.tool.name","sql_check");}return root.id();}}
+  private String emit(OpenTelemetrySdk sdk,String session){
+    var mapper=new com.fasterxml.jackson.databind.ObjectMapper();var guard=new com.flinkweb.service.ai.support.AiContentGuard(org.mockito.Mockito.mock(com.flinkweb.repository.metadata.RecordRepository.class),org.mockito.Mockito.mock(com.flinkweb.security.permission.SecretCipher.class));
+    var telemetry=new AiTelemetry(sdk,mapper,guard::sanitizeTelemetry,true);
+    try(var root=telemetry.start("harness.turn","chain",Map.of("langfuse.session.id",session,"langfuse.user.id","integration-test"))){
+      root.input(Map.of("message","synthetic-input","password","synthetic-secret"));
+      try(var model=telemetry.start("ai.generation","generation",Map.of("gen_ai.request.model","test-model"))){model.input(Map.of("message","synthetic-input"));model.output(Map.of("content","synthetic-output","reasoning_content","synthetic-private-reasoning"));model.usage("gen_ai.usage.input_tokens",12);model.usage("gen_ai.usage.output_tokens",3);}
+      try(var tool=telemetry.start("tool.sql_check","tool",Map.of())){tool.input(Map.of("sql","SELECT 1"));tool.output(Map.of("valid",true));tool.attribute("flink.tool.name","sql_check");}
+      root.output(Map.of("reply","synthetic-output"));return root.id();
+    }
+  }
 }

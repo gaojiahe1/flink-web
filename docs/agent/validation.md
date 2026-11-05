@@ -731,3 +731,20 @@ AGENTS保存原文强制规则；INDEX关键词→REQ/模块/ADR→真实代码�
 临时资源已清理：两轮独占验证容器/网络、推送别名、遗留本任务Vite、4条新增私有构建缓存及被替代的本次无标签app中间镜像；保留最终正式镜像、原registry/Langfuse、基线旧镜像与共享/未知缓存。独占任务目录在提交/合并核对后删除，截图与测试报告保留。
 
 功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
+
+## 观测正文输出（2026-11-05）
+
+用户反馈Langfuse Input/Output为空，明确要求导出。基线master cfea5a9且工作区干净，分支codex/langfuse-content，保持0.0.10。原仅元数据策略由本次要求替代：总观测仍默认关闭，FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT默认true，可false恢复仅元数据。
+
+- AiTelemetry统一提供input/output与ContentSanitizer桥接，client不依赖service/repository。模型输入为消息/工具/基本参数，输出为完整回复/工具调用；Harness/旧助手记录需求和结果；工具记录参数/结果及候选；回答、应用、取消、观察event记录请求和结果。每个span自身正文，不继承父span正文。失败只输出分类，流式分片不逐段采集。
+- 复用当前密钥快照并增加逐字段/环境变量对、内嵌JSON字符串、Basic/Cookie/Bearer、私钥及引号密码（含空格）的脱敏；排除reasoning_content及think块，保留合法平台引用。引用正则闭合修正随原脱敏回归通过。先完整脱敏再限长32768，超出保留有效JSON及截断标记；策略失败仅标记unavailable、不外发原文、不打断业务，关闭或未采样不读取凭据。
+- 完整后端384项：382通过、2外部条件跳过（MinIO、真实Langfuse）；启用原版1.20.3/1.20.5 Parser条件测试，使用独占JVM临时目录。新增6项真实SDK/HTTP回归覆盖结构/JSON参数/认证头/推理、正文开关、关闭SDK、限长、策略失败和实际Spring AI调用。后续引号密码/主密钥文本补强后，受影响正文/原Guard与协议专项复测、重新打包通过。架构/中文Javadoc263类1674方法通过；前端/Runner/Parser源码未改。
+- scripts/check_ai_observability.py扩展Observations API v2 io字段检查。复用原Collector已配置认证（仅进程内读取），对本机当前Langfuse分别完成Java直连与新建临时Collector转发；两条各3项chain/generation/tool的Input/Output、父子、模型和12/3真实用量入库，测试密钥和内部推理未入库。原用户Collector不修改，临时Collector已自动清理；合成轨迹保留。
+- 最终只读非root app与原web，在独占tmpfs数据库/随机凭据/模型及OTLP协议替身下完成真实浏览器加密登录、工具计划、等待交互和回答续接。解析实际OTLP protobuf逐条验证10项观测：4 generation、2 chain、2 plan_update tool、1 interaction_request tool、1 interaction.response event，全部有有效JSON输入输出、每项不超预算、无供应商推理。收尾脱敏修正后重建最终镜像，再次完整闭环及10项导出验证通过。
+
+使用正式backend/Dockerfile、干净Kylin底座、当前已验证JAR和原版未改Parser/Runner构建，仅更新app:0.0.10；web/downloader/latest不改，不更新实际Kubernetes、用户作业、数据库或主密钥。指定仓库核验与提交结果收尾续记于[部署](../deployment.md#观测正文输出2026-11-05)。真实供应商效果、生产集群及旧历史正文回填未认证；新观测功能需实际工作负载拉取新app并重启才生效。
+
+真实Langfuse合成证据：direct traceId 9efa42b388abc451672cb7dd798f6397, collector traceId 71738169ae1690f4b258c229a23764ba。两条各3项均通过正文入库、脱敏及层级/用量断言。
+
+收尾：最终仓库manifest/config/全部11层已核对通过；Compose正文开关true/false透传通过。两轮独占镜像验证容器/网络、临时Collector、推送别名、4条新私有缓存及本任务中间app镜像已清理；正式镜像、用户Langfuse/registry与共享/未知缓存保留。独占任务目录在提交合并核对后删除。

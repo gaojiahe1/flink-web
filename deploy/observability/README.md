@@ -12,6 +12,7 @@
 | --- | --- | --- |
 | FLINK_WEB_AI_TELEMETRY_ENABLED | true | true |
 | FLINK_WEB_AI_TELEMETRY_MODE | direct | collector |
+| FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT | true（导出脱敏Input/Output） | 同左 |
 | LANGFUSE_TRACING_ENVIRONMENT | default（可设production/test/dev等） | 同左；在平台后端设置 |
 | LANGFUSE_BASE_URL | http://127.0.0.1:3000（Langfuse根地址） | 后端无需设置 |
 | LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY | 设置在后端进程环境 | 只设置在Collector环境 |
@@ -42,7 +43,9 @@ docker compose --project-name flink-web-observability --env-file <私有环境�
 - 新Harness：每轮chain，模型请求generation，工具tool；用户回答、批准、取消与手动核验为独立event。等待用户时结束当前执行span，后续轮次通过同一Langfuse session关联，不把人的等待计入模型耗时。
 - 旧SQL/作业助手和模型连接测试也通过Spring AI；任务与模型generation进入观测。
 - 会话、用户、任务、release属性复制到子span。记录状态、模型、真实usage；缺失usage不补造，不自行计算费用。平台启用时保存traceId用于关联。
-- 当前仅采集元数据，不上传提示词、用户消息、SQL/YAML、工具输入输出正文、日志、供应商内部推理或凭据。库的正文日志关闭，业务错误只记机器分类。
+- 2026-11-05用户明确要求展示Input/Output，正文开关FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT默认true；总观测开关仍默认false。启用观测后，对话轮次/旧助手任务、模型generation、工具及确认/应用/取消/观察event通过langfuse.observation.input/output导出脱敏JSON。可设false恢复仅元数据，重启后生效。旧记录不回填。
+- 模型输入包含消息、工具定义和基础生成参数，输出为完整最终回复/工具调用；业务轮次和工具保留需求及可见结果，事件保留请求和结果。已授权进入模型上下文的SQL/YAML、日志等也可能出现在正文中。密钥/认证头/环境凭据逐字段遮蔽，JSON字符串中的工具参数同样处理；合法平台引用保留。供应商内部推理不导出，流式分片不逐段采集，失败只输出机器分类。
+- 每项正文最多32768个UTF-16计数单位；先完整脱敏，再截断为含truncated/originalCharacters/preview的有效JSON，并添加flink.telemetry.input.truncated或output.truncated。脱敏依赖失败时省略该项并标记unavailable，不输出未脱敏正文或异常详情，不中断业务。正文开关关闭或span未采样时不读取解密凭据。库的正文日志仍关闭。
 - 后端异步有界批量导出，Collector不可用不阻断业务；崩溃前未发送的内存队列可能丢失，不能替代平台持久化审计和应用记录。关闭时flush/shutdown。
 
 ## 验证
@@ -54,6 +57,8 @@ docker compose --project-name flink-web-observability --env-file <私有环境�
 python scripts/check_ai_observability.py
 ```
 
-该脚本面向当前本地Docker命名：Langfuse Web为langfuse-langfuse-web-1；创建独立临时Collector，顺序验证Java直连和Java→Collector两条链路，并通过Observations API v2核对chain/generation/tool、父子关系、模型和12输入/3输出Token。结束自动删除测试Collector，保留合成测试轨迹；不修改现有Collector配置、Langfuse数据卷或业务作业。其他部署可使用liveLangfuse条件测试配合实际端点。
+该脚本面向当前本地Docker命名：Langfuse Web为langfuse-langfuse-web-1；创建独立临时Collector，顺序验证Java直连和Java→Collector两条链路，并通过Observations API v2核对chain/generation/tool、父子关系、模型、12输入/3输出Token及各层Input/Output实际入库/敏感内容未入库。结束自动删除测试Collector，保留合成测试轨迹；不修改现有Collector配置、Langfuse数据卷或业务作业。其他部署可使用liveLangfuse条件测试配合实际端点。
 
 Spring AI迁移阶段未发布镜像；2026-11-04整体回归后0.0.10已发布，摘要见[部署指南](../../docs/deployment.md#整体回归与0010发布2026-11-04)。未更新实际Flink/Kubernetes工作负载。验收记录见[项目验收](../../docs/agent/validation.md#spring-ai与langfuse双模式2026-11-04)。
+
+Input/Output字段依据[Langfuse官方OTel映射](https://langfuse.com/integrations/native/opentelemetry#attribute-mapping)；v4使用每个observation自身的正文，根observation同时表示整轮对话，不用子步骤正文覆盖全链路输入输出。

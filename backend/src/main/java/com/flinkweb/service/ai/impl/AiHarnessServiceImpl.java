@@ -167,17 +167,19 @@ public class AiHarnessServiceImpl implements AiHarnessService {
 
   /** 回答卡片不占用等待线程；原请求重试返回同一个续接轮次。 */
   public ObjectNode respond(String id,String turnId,ObjectNode input){
-    return traceEvent("interaction.response",id,turnId,()->respondInternal(id,turnId,input));
+    return traceEvent("interaction.response",id,turnId,input,()->respondInternal(id,turnId,input));
   }
   /** 统一用户交互的观测生命周期，具体权限与状态校验仍由对应领域方法执行。 */
-  private ObjectNode traceEvent(String name,String id,String turnId,java.util.function.Supplier<ObjectNode> action){
+  private ObjectNode traceEvent(String name,String id,String turnId,ObjectNode input,java.util.function.Supplier<ObjectNode> action){
     try(var trace=telemetry.start(name,"event",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){
+      trace.input(mapper.createObjectNode().put("sessionId",id).put("turnId",turnId).set("request",input));
       try{
         var result=action.get();
         trace.attribute("flink.harness.state",result.path("state").asText());
+        trace.output(telemetryView(result));
         return result;
       }catch(RuntimeException error){
-        trace.error(error instanceof BusinessException business?business.code():error.getClass().getSimpleName());
+        String code=error instanceof BusinessException business?business.code():error.getClass().getSimpleName();trace.error(code);trace.output(Map.of("error",code));
         throw error;
       }
     }
@@ -242,7 +244,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
 
   /** 显式取消先持久化，后中断请求；迟到响应不能复活任务。 */
   public ObjectNode cancel(String id,String turnId){
-    return traceEvent("turn.cancel",id,turnId,()->cancelInternal(id,turnId));
+    return traceEvent("turn.cancel",id,turnId,mapper.createObjectNode().put("action","cancel"),()->cancelInternal(id,turnId));
   }
   /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
   private ObjectNode cancelInternal(String id,String turnId){ObjectNode out;
@@ -265,7 +267,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
 
   /** 用户批准后只使用本轮最新候选；原运行服务负责恢复模式、身份与 dry-run。 */
   public ObjectNode apply(String id,String turnId,ObjectNode input,Principal actor){
-    return traceEvent("approval.apply",id,turnId,()->applyInternal(id,turnId,input,actor));
+    return traceEvent("approval.apply",id,turnId,input,()->applyInternal(id,turnId,input,actor));
   }
   /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
   private ObjectNode applyInternal(String id,String turnId,ObjectNode input,Principal actor){synchronized(state.monitor()){
@@ -292,7 +294,7 @@ public class AiHarnessServiceImpl implements AiHarnessService {
 
   /** 三秒手动核对只观察原操作对应的目标，不推进模型或重复提交。 */
   public ObjectNode observe(String id,String turnId){
-    return traceEvent("operation.observe",id,turnId,()->observeInternal(id,turnId));
+    return traceEvent("operation.observe",id,turnId,mapper.createObjectNode().put("action","observe"),()->observeInternal(id,turnId));
   }
   /** 原领域逻辑独立于观测，失败不会被记录为已批准或已运行。 */
   private ObjectNode observeInternal(String id,String turnId){synchronized(state.monitor()){
@@ -322,9 +324,14 @@ public class AiHarnessServiceImpl implements AiHarnessService {
   /** 模型与工具按目标持续推进，取消和内容大小保护独立于调用次数。 */
   private void execute(String id,String turnId){
     try(var trace=telemetry.start("harness.turn","chain",Map.of("langfuse.session.id",id,"langfuse.user.id",access.actor(),"langfuse.trace.metadata.turnId",turnId))){
+      var initial=records.find(TURNS,turnId);if(initial!=null)trace.input(telemetryView(initial));
       if(!trace.id().isBlank())update(id,turnId,t->t.put("traceId",trace.id()));
-      executeRun(id,turnId);var turn=records.find(TURNS,turnId);if(turn!=null){String status=turn.path("state").asText();trace.attribute("flink.harness.state",status);if(Set.of("FAILED","STALLED","CANCELED","INTERRUPTED").contains(status))trace.error(status);}
+      executeRun(id,turnId);var turn=records.find(TURNS,turnId);if(turn!=null){trace.output(telemetryView(turn));String status=turn.path("state").asText();trace.attribute("flink.harness.state",status);if(Set.of("FAILED","STALLED","CANCELED","INTERRUPTED").contains(status))trace.error(status);}else trace.output(Map.of("state","DELETED"));
     }
+  }
+  /** 只导出用户需求及可见结果，排除冻结上下文、指纹、原始证据与供应商推理。 */
+  private ObjectNode telemetryView(ObjectNode turn){
+    var out=mapper.createObjectNode();for(String key:List.of("content","model","state","reply","message","plan","scene","candidate","requirements","interaction","observation","application"))if(turn.has(key))out.set(key,turn.get(key));return out;
   }
   /** 原有编排、审批和恢复继续由平台控制，不交给框架自动执行。 */
   private void executeRun(String id,String turnId){try{

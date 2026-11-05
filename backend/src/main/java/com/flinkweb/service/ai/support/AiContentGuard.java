@@ -15,11 +15,13 @@ import org.springframework.stereotype.Component;
 /** 模型上下文和返回值的独立脱敏边界，不信任 SQL、注释、错误和日志中的指令。 */
 @Component
 public class AiContentGuard {
+  private static final com.fasterxml.jackson.databind.ObjectMapper TELEMETRY_JSON=new com.fasterxml.jackson.databind.ObjectMapper();
+  private static final Pattern QUOTED_CREDENTIAL=Pattern.compile("(?is)(['\"]?(?:password|passwd|secret(?:[_-]?key)?|api[_-]?key|access[_-]?key|master[_-]?key|token)['\"]?\\s*[:=]\\s*)(['\"])(.*?)\\2");
   private static final Pattern CREDENTIAL =
       Pattern.compile(
           "(?i)(['\"]?(?:password|passwd|secret(?:[_-]?key)?|api[_-]?key|access[_-]?key|authorization|token)['\"]?\\s*[:=]\\s*)(['\"]?)([^\\s,;\\n"
               + "]+)");
-  private static final Pattern PLATFORM_REFERENCE=Pattern.compile("\\{\\{(?:secret|config):[a-z0-9][a-z0-9_.-]{0,100}}" );
+  private static final Pattern PLATFORM_REFERENCE=Pattern.compile("\\{\\{(?:secret|config):[a-z0-9][a-z0-9_.-]{0,100}\\}\\}" );
   private final RecordRepository records;
   private final SecretCipher cipher;
 
@@ -110,6 +112,41 @@ public class AiContentGuard {
   /** 按叶子字符串脱敏，避免改变 JSON 引号而破坏诊断上下文结构。 */
   public JsonNode sanitize(JsonNode value) {
     return sanitize(value, secretSnapshot());
+  }
+
+  /** 观测正文额外按字段遮蔽认证信息并移除供应商推理，包含消息/工具参数内的JSON字符串。 */
+  public JsonNode sanitizeTelemetry(JsonNode value){return telemetry(value,secretSnapshot(),0);}
+
+  /** 每次导出共用一次密钥快照；解析嵌套JSON，不能通过转成字符串绕过字段检查。 */
+  private JsonNode telemetry(JsonNode value,List<String> keys,int depth){
+    if(depth>40)return TextNode.valueOf("[OMITTED: nesting limit]");
+    if(value.isTextual()){
+      String text=value.asText(),trim=text.strip();
+      if(PLATFORM_REFERENCE.matcher(text).matches())return TextNode.valueOf(text);
+      if(trim.startsWith("{")||trim.startsWith("["))try{var parsed=TELEMETRY_JSON.readTree(trim);if(parsed.isContainerNode())return TextNode.valueOf(telemetry(parsed,keys,depth+1).toString());}catch(com.fasterxml.jackson.core.JsonProcessingException ignored){}
+      text=text.replaceAll("(?im)(authorization|proxy-authorization|cookie|set-cookie)\\s*[:=]\\s*[^\\r\\n]+","$1: [REDACTED]")
+          .replaceAll("(?is)<think>.*?(?:</think>|$)","[OMITTED: internal reasoning]");
+      var quoted=QUOTED_CREDENTIAL.matcher(text);var buffer=new StringBuffer();
+      while(quoted.find())quoted.appendReplacement(buffer,java.util.regex.Matcher.quoteReplacement(PLATFORM_REFERENCE.matcher(quoted.group(3)).matches()?quoted.group():quoted.group(1)+"[REDACTED]"));quoted.appendTail(buffer);
+      return TextNode.valueOf(redact(buffer.toString().replaceAll("(?i)(master[_-]?key\\s*[:=]\\s*)[^\\s,;]+","$1[REDACTED]"),keys));
+    }
+    JsonNode copy=value.deepCopy();
+    if(copy instanceof ObjectNode object){
+      if(object.has("value")&&telemetrySecretField(object.path("name").asText()))object.put("value","[REDACTED]");
+      var names=new ArrayList<String>();object.fieldNames().forEachRemaining(names::add);
+      for(String name:names){String normalized=name.replaceAll("[-_]","").toLowerCase(Locale.ROOT);
+        if(Set.of("reasoning","reasoningcontent","reasoningdetails","thinking","chainofthought","internalreasoning").contains(normalized)){object.remove(name);continue;}
+        boolean sensitive=telemetrySecretField(name);
+        var item=object.get(name);if(sensitive&&!(item.isTextual()&&PLATFORM_REFERENCE.matcher(item.asText()).matches()))object.put(name,"[REDACTED]");else object.set(name,telemetry(item,keys,depth+1));
+      }
+    }else if(copy instanceof ArrayNode array)for(int index=0;index<array.size();index++)array.set(index,telemetry(array.get(index),keys,depth+1));
+    return copy;
+  }
+  /** 保留passwordRef等引用名；遮蔽嵌套认证字段和环境变量的真实值。 */
+  private boolean telemetrySecretField(String name){
+    String key=name.replaceAll("[-_]","").toLowerCase(Locale.ROOT);
+    return Set.of("password","passwd","secret","secretkey","apikey","accesskey","authorization","proxyauthorization","auth","token","cookie","setcookie","encryptedkey","encryptedvalue","masterkey","credential","credentials").contains(key)
+        ||key.matches(".*(?:secretaccesskey|privatekey|clientsecret|accesstoken|refreshtoken|masterkey|apikey)$");
   }
 
   /** 单次遍历使用请求局部快照，不对每个叶子重新读取或解密。 */

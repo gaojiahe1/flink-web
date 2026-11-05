@@ -15,6 +15,9 @@ import java.time.Duration;
 /** AI观测支持直连Langfuse或经Collector转发；关闭时使用无网络的空实现。 */
 @Configuration
 public class AiTelemetryConfiguration {
+  /** 将现有密钥脱敏能力桥接给观测客户端，保持分层且不建立长期明文缓存。 */
+  @Bean
+  public com.flinkweb.client.ai.AiTelemetry.ContentSanitizer aiTelemetryContentSanitizer(com.flinkweb.service.ai.support.AiContentGuard guard){return guard::sanitizeTelemetry;}
   /** 独立SDK不污染全局代理；队列有界，失败不阻断模型或业务提交。 */
   @Bean(destroyMethod="close")
   public OpenTelemetrySdk aiOpenTelemetry(@Value("${flink-web.ai.telemetry.enabled:false}") boolean enabled,

@@ -1,5 +1,7 @@
 # Flink AI Harness 工作台
 
+2026-11-05正文观测补充：按用户新要求，启用总观测后默认导出脱敏Input/Output，覆盖每轮chain、模型generation、工具tool、回答/应用/取消/观察event；正文不通过上下文属性继承到子span。业务权限、日志授权、候选确认和幂等保持。可用FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT=false关闭正文；错误分类及32768单项预算见[AI模块](ai-assistant.md)和[接入说明](../../../deploy/observability/README.md)，替代此前仅元数据的描述。
+
 2026-11-05：偏好改为对话提案与具体卡片确认，取消“我的偏好”填写入口，任务模板保留。只有用户明确提出后续沿用/记住设定时才开放内部`preferences_propose`；逐字绑定本轮真实用户原话，必要澄清可携带原意图，工具输出和卡片标题不能充当意图。卡片展示具体新增/覆盖值，`/respond`的`confirmedPreferences=true`且空answers才确认；浏览器不回传保存内容。保存与回答在同一事务内，采用提案时修订，重复请求只保存一次；拒绝、过期、旧轮次或修订冲突均不写入。对话输入框直接调整会开启新轮并使旧卡片失效。清空也通过对话请求及确认，未修改字段保留；现有偏好仍按账号读取并每轮冻结。撤掉PUT preferences手工写接口，保留GET及MCP只读资源；不提供MCP写工具、不新增迁移。核心提示词升级flink-harness-v5。验证和镜像结果见[验收](../validation.md#对话偏好与langfuse环境2026-11-05)。
 
 2026-11-04：用户回答、批准、取消和手动核验的event观测集中到traceEvent，保留各自领域校验和机器错误分类。最终0.0.10镜像的模型连接及MCP工具/资源/模板发现已通过真实HTTP验证；发布与边界见[验收](../validation.md#整体回归结构优化与0010发布2026-11-04)。

@@ -1,5 +1,7 @@
 # 当前状态
 
+2026-11-05最新：Langfuse Input/Output已补齐到模型、工具、Harness/旧助手及用户事件；统一结构/内嵌JSON脱敏、排除推理、32768限长与失败隔离。正文开关默认true，总观测仍默认关闭。后端382通过/2条件跳过及收尾专项通过，真实Langfuse两模式各3层正文入库和最终只读镜像10项观测通过。仅app:0.0.10发布并逐层核验，web/downloader/latest/实际集群不变。见[验收](validation.md#观测正文输出2026-11-05)、[部署](../deployment.md#观测正文输出2026-11-05)。提交合并结果收尾续记。
+
 功能提交 `42c5617` 已在回归、镜像发布及逐层核验后，由codex/conversation-preferences快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 
 2026-11-05：对话偏好确认保存及Langfuse Environment环境变量完成。已移除手工偏好表单，具体卡片确认后才保存；旧偏好保留，原PUT写接口撤下，核心提示词v5。平台后端LANGFUSE_TRACING_ENVIRONMENT默认default，直连/Collector共用，重启影响新轨迹。后端376通过/2条件跳过，最终web镜像42项相关页面及真实app/web闭环、4类代理通过；app/web:0.0.10已发布并逐层核验，downloader/latest/实际工作负载不变。见[验收](validation.md#对话偏好与langfuse环境2026-11-05)、[部署](../deployment.md#对话偏好与langfuse环境2026-11-05)。独占测试资源、推送别名、4条新增私有缓存及本次中间镜像已清理；用户服务、正式镜像和共享缓存保留。
