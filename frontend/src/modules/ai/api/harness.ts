@@ -23,7 +23,7 @@ export interface HarnessPlan {
 }
 export interface HarnessInteraction {
   id: string
-  kind: 'clarification' | 'choice' | 'logs' | 'verification' | 'preferences'
+  kind: 'clarification' | 'choice' | 'logs' | 'verification' | 'preferences' | 'api'
   title: string
   questions: string[]
   options: string[]

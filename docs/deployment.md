@@ -1,5 +1,20 @@
 # Flink Web 部署指南
 
+## MCP业务接口与SQL技能（2026-11-09）
+
+本节为app/web:0.0.10当前发布，覆盖此前同标签内容。正式Dockerfile、干净Kylin底座、已验证JAR/dist及未改Parser/Runner/Nginx构建；linux/amd64、UID/GID10001:10001，只读根验证通过。经原localhost:15000映射推送，再从192.168.68.1:5000逐层核对manifest响应/正文、config、全部层大小/压缩SHA-256与解压diff_id，等于最终验证镜像。
+
+| 镜像 | Manifest | Config | 压缩字节 | 层数 |
+| --- | --- | --- | ---: | ---: |
+| app:0.0.10 | `sha256:07bafaba5c5a9aad31ff9d2dabfa827506d25c45e45e1057d8586eb359b9b593` | `sha256:aacab7b2d9764f9daca8dd1ad6892c4806aab9cacda33f36325dd82c56ff95f9` | 296270985 | 11 |
+| web:0.0.10 | `sha256:65bad8b3796a57dbbd003eebee37753cc89831ae6a79da2cbfc712df03137e6f` | `sha256:5029058a2d48f5b10fde83ddd7c82882a15b8605717a5f159444474a0ac32f61` | 116632445 | 8 |
+
+逻辑字节600118895/318469571；downloader:0.0.10保持原manifest `sha256:ee210b7e3e0e3d3afb42febe34dd78da52ee997c2819a845ff761dc487ae8dc0`。不更新latest或实际Kubernetes，现有Pod需按授权重新拉取/重启才生效。
+
+平台MCP当前管理员135工具（81业务路由），原Cookie/CSRF保持；新增仅回环一次性委托复用业务路由完整安全链，非GET先审阅冻结提案，确认入口不注册MCP，UNKNOWN不自动重试。上传/二进制下载交原页面，密钥不交模型填写。新ai_api_proposals使用既有通用记录存储，无结构迁移或新增必填环境变量；原数据库/PVC/主密钥/下载器持久化绑定保留。仍限单后端，内部HTTP使用实际监听端口及回环HTTP，不能将委托头配置到代理或外部客户端。
+
+后端累计397通过/2外部条件跳过、最终页面38项、代理4类、真实BES/Nginx/MCP读及确认写入/重复保护和双版Parser示例通过。K8s九类安全投影以协议替身测试；本轮未验证真实集群、MySQL、全部版本或厂商生成质量，详见[验收](agent/validation.md#mcp业务接口与sql技能2026-11-09)。本轮独占容器/网络/推送别名、4条私有缓存及2个中间镜像已清理，正式制品和用户服务保留。
+
 功能提交 `e697d77` 已在回归、最终镜像发布及逐层核验后，由codex/harness-unification快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 
 ## Harness入口统一与上下文优化（2026-11-05）

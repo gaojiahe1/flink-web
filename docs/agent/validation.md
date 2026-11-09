@@ -1,5 +1,15 @@
 # 治理与记忆系统验收
 
+## MCP业务接口与SQL技能（2026-11-09）
+
+- 当前管理员发现135工具：原50、4个新增K8s/SQL工具、81个实际业务MVC路由；排除permission控制器及递归AI编排，模型配置接口保留。工具列表按当前角色过滤，实际接口仍经过原安全链、Bean Validation、领域权限和修订保护。非GET生成私有冻结提案，审阅确认入口不作为工具；文件上传/二进制下载已登记但返回BROWSER_REQUIRED交原页面，模型不能填写明文密钥。
+- K8s仅管理员、固定namespace九类资源白名单安全投影，无Secret/RBAC/exec/任意URL或集群写操作。SQL按需技能、真实Catalog/schema/函数、登记版本、静态检查和错误修正，保留sql_propose/应用确认；SQL指南示例由实际1.20.3和1.20.5 Parser JAR各通过一次，不执行SQL、不证明Planner或Connector运行。
+- 后端全量397项首次无断言失败，4项Parser测试在系统TempDir关闭时AccessDenied；使用本轮独占java.io.tmpdir后，新增LLM确认用例、真实Parser条件补验及相关套件全部通过。累计399项覆盖，397通过/2条件跳过（真实Langfuse、独立MinIO）；最终审阅显示专项1项及HTTP/密钥边界8项复测、重新打包通过。真实HTTP测试覆盖原路由读取/确认写入/重复不写、角色变化、跨用户/路径穿越、伪造内部令牌、取消轮次拒绝、K8s投影与SQL技能；Harness模型替身证明未确认不调用执行器，confirmedApi才执行。架构/Javadoc273类1728方法、知识链接、前端类型/生产构建及格式通过。
+- 最终Web镜像38项相关页面用例通过，含旧工作台/交互/作业入口、具体接口确认、外部MCP审阅链接/跨用户拒绝及三主题/390px无溢出。新增链接用例曾因初始异步路由尚未完成即跳转而失败，等待页面就绪后复测通过，未修改产品路由。最终Web代理4类通过。
+- 最终app/web使用只读根、UID/GID10001:10001、临时独立DB/主密钥/登录密码，真实BES/Nginx加密登录→MCP135工具/81路由发现→业务HTTP读→写请求仅提案→工作台审阅具体请求→确认成功→重试不重复写；伪造委托拒绝、K8s Secret拒绝、SQL技能读取及桌面/手机截图通过。JSON列表按50项分页，结果超过50000字符明确缩小范围，不向模型堆积全量接口schema。截图保留于frontend/test-results/mcp-api-review-desktop.png、mcp-api-review-mobile.png。
+- app/web:0.0.10从正式Dockerfile/干净Kylin底座/验证制品构建，经localhost:15000发布，再从192.168.68.1:5000逐层验证manifest/config及全部11/8层大小、压缩SHA-256和解压diff_id。见[部署](../deployment.md#mcp业务接口与sql技能2026-11-09)。不改downloader/latest/实际Kubernetes；无结构迁移或新增必填变量，原DB/主密钥保留。
+- 本次独占2容器/网络、推送别名、4条新增私有缓存、2个中间镜像已清理；正式制品、原registry/Langfuse及共享/旧缓存保留。真实K8s、MySQL、全部Flink版本、厂商自然语言质量和真实Langfuse链路本轮未认证。官方参考为[Apache Flink Agents Tool Use](https://nightlies.apache.org/flink/flink-agents-docs-main/docs/development/tool_use/)、[Flink1.20 DataGen](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/connectors/table/datagen/)、[Window TVF](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/table/sql/queries/window-tvf/)，仅借鉴工具/上下文编排，未引入其流式运行时或将其称为现成SQL生成器。
+
 功能提交 `e697d77` 已在回归、最终镜像发布及逐层核验后，由codex/harness-unification快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
 
 ## Harness入口统一与上下文优化（2026-11-05）

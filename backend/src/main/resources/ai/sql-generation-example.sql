@@ -1,0 +1,1 @@
+CREATE TABLE src (id BIGINT, ts TIMESTAMP(3), WATERMARK FOR ts AS ts - INTERVAL '5' SECOND) WITH ('connector'='datagen'); CREATE TABLE sink (id BIGINT, ts TIMESTAMP(3)) WITH ('connector'='print'); INSERT INTO sink SELECT id, ts FROM src;

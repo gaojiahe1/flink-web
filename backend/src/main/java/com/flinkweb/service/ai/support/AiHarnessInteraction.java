@@ -23,10 +23,11 @@ public final class AiHarnessInteraction {
   }
   /** 用户答案只允许声明的字段和选项，补充文字仍视为用户输入。 */
   public static void validateAnswer(ObjectNode card,ObjectNode input) {
-    for(String flag:Set.of("grantLogs","confirmedVerification","confirmedPreferences"))if(input.has(flag)&&!input.path(flag).isBoolean())invalid();
+    for(String flag:Set.of("grantLogs","confirmedVerification","confirmedPreferences","confirmedApi"))if(input.has(flag)&&!input.path(flag).isBoolean())invalid();
     if(!input.path("decision").isTextual()||!Set.of("submit","cancel").contains(input.path("decision").asText()))invalid();
     if(input.path("decision").asText().equals("cancel"))return;
     if(card.path("kind").asText().equals("preferences")&&(!input.path("confirmedPreferences").asBoolean()||!input.path("answers").isObject()||!input.path("answers").isEmpty()))invalid();
+    if(card.path("kind").asText().equals("api")&&(!input.path("confirmedApi").asBoolean()||!input.path("answers").isObject()||!input.path("answers").isEmpty()))invalid();
     var answers=input.path("answers");if(!answers.isObject()||answers.size()>9)invalid();
     answers.fields().forEachRemaining(f->{
       if(!f.getValue().isTextual()||f.getValue().asText().length()>2000)invalid();

@@ -1,5 +1,13 @@
 # Flink AI Harness 工作台
 
+2026-11-09业务API扩展：以实际Spring MVC映射注册页面业务工具，排除permission控制器及递归AI编排（模型配置接口保留）。名称稳定、带HTTP方法/路径和参数/DTO记录字段；发现按当前账号过滤，调用、确认和真实HTTP方法安全链再次验证账号启用/角色/修订。api_工具按需搜索，不把全量schema灌入LLM；GET直接读，非GET冻结私有ai_api_proposals请求，返回REVIEW_REQUIRED及审阅链接。工作台生成api交互卡，只有用户confirmedApi确认才执行；外部MCP通过`/#/ai?operation=<id>`进入同一审阅入口，确认接口不注册为工具。原路由的业务权限、校验、修订、审计继续生效，POST探测/验证也保守确认。二进制下载/Multipart上传登记可发现但交回页面，密钥值禁止由模型写入。
+
+本机调用使用十秒一次性随机委托，绑定账号修订、HTTP方法/完整路径，原子消费、仅回环地址；校验通过的服务端属性才豁免该次内部CSRF，外部原CSRF保持。委托不进数据库/LLM/日志，不创建可复用登录会话，禁重定向。写入先落UNKNOWN再发送，重复确认不重复提交；未知需业务页面及原操作号核对。Harness提案绑定原会话/轮次，取消/替换后不能用旧链接执行；HTTP完成不代表Flink运行或业务成功。JSON列表每页50，单响应读取2MiB、模型结果50000字符，超限明确返回缺口。当前单后端约束保持。
+
+Kubernetes新增k8s_list/k8s_get，仅管理员、固定namespace及九类白名单资源（Pods/Services/Events/ResourceQuotas/LimitRanges/Deployments/ReplicaSets/StatefulSets/FlinkDeployments）；安全字段投影不导出环境、卷、任意注解或Secret/RBAC，不提供exec/任意代理/集群写操作。SQL新增sql_generation_guide及sql_validate_candidate(imageId可选)，按需技能→真实Catalog/schema/函数→登记版本→候选→实际级别静态检查→按错误修正→原sql_propose/批准流程。1.20资料不声称其他版本已认证。提示词v7，借鉴[Apache Flink Agents Tool Use](https://nightlies.apache.org/flink/flink-agents-docs-main/docs/development/tool_use/)的工具驱动编排，未引入新Agent运行时或声称上游自带本平台Text-to-SQL模型。
+
+代码入口：[路由目录](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiPlatformApiCatalog.java)、[安全调用与提案](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiApiTransport.java)、[K8s](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiKubernetesTools.java)、[SQL技能](../../../backend/src/main/java/com/flinkweb/service/ai/support/AiSqlGenerationSkill.java)、[审阅页面](../../../frontend/src/modules/ai/components/AiApiReview.vue)、[真实HTTP安全测试](../../../backend/src/test/java/com/flinkweb/AiPlatformApiTest.java)。
+
 2026-11-05 入口统一与上下文优化：作业列表的AI助手/AI分析统一进入`/ai?job=<id>`，复用当前账号对应作业的Harness诊断会话，否则幂等创建；打开不调用模型，失败提供原目标重试，旧侧栏组件/API和历史数据保留。任务模板已移入输入框内模型选择旁，删除日志勾选。只读Pod/事件/日志不再单独确认，MCP不要求X-Flink-Log-Consent；旧logs交互可点击继续，模型新发起的logs交互直接返回可读提示。角色、归属、脱敏、分页预算及保存/发布/启停和SQL真实执行确认继续生效。
 
 共用目录50个工具，新增job_pods_read、job_events_read、flink_job_plan、flink_vertex_backpressure、flink_vertex_metrics、tools_search、harness_session_list、harness_turn_read；1个静态资源、10类URI模板、9份提示模板。Flink REST只允许固定代理路径，逐次核验UID/spec/JobID；背压接口可能触发Flink按需采样，不改作业配置。任务先提供计划/场景相关基础工具，tools_search按角色发现并于下一步开放扩展。会话/历史只能本人回读，SQL/作业生命周期再次校验，不开放任意URL或Shell。

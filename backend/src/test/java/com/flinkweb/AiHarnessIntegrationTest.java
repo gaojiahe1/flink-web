@@ -67,6 +67,13 @@ class AiHarnessIntegrationTest {
   ObjectNode live;
   String modelId;
 
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean AiApiTransport apiTransport;
+  @Autowired AiPlatformApiCatalog platformApis;
+  /** LLM只能提出具体业务请求，必须由用户确认后才调用冻结提案的执行器。 */
+  @Test void platformWriteWaitsForUserApproval()throws Exception{
+    var op=platformApis.operations().values().stream().filter(o->o.method().equals("PUT")&&o.path().equals("/api/catalog/{type}/{id}")).findFirst().orElseThrow();var count=new AtomicInteger();doAnswer(inv->{var plan=planning(inv);if(plan!=null)return plan;int n=count.getAndIncrement();if(n==0)return call("tools_search",mapper.createObjectNode().put("query",op.name()));if(n==1){var args=mapper.createObjectNode();args.putObject("path").put("type","configs").put("id","test-approval");args.putObject("body").put("kind","plain").put("value","x").put("revision",0);return call(op.name(),args);}return answer();}).when(model).stream(any(),anyString(),any(),any(),any());
+    var session=session();var turn=harness.start(session.path("id").asText(),input(session));var waiting=completed(session.path("id").asText(),turn.path("id").asText());assertThat(waiting.at("/interaction/kind").asText()).isEqualTo("api");verify(apiTransport,never()).execute(anyString(),anyBoolean());var response=mapper.createObjectNode().put("requestId",UUID.randomUUID().toString()).put("interactionId",waiting.at("/interaction/id").asText()).put("decision","submit");response.putObject("answers");assertThatThrownBy(()->harness.respond(session.path("id").asText(),turn.path("id").asText(),response)).hasMessageContaining("交互");doReturn(mapper.createObjectNode().put("state","COMPLETED")).when(apiTransport).execute(anyString(),eq(true));response.put("confirmedApi",true);var resumed=harness.respond(session.path("id").asText(),turn.path("id").asText(),response);completed(session.path("id").asText(),resumed.path("id").asText());verify(apiTransport,times(1)).execute(eq(waiting.at("/interaction/proposalId").asText()),eq(true));
+  }
   /** 合成测试凭据仅作用于独立临时数据库。 */
   @DynamicPropertySource
   static void properties(DynamicPropertyRegistry properties){
@@ -450,6 +457,7 @@ class AiHarnessIntegrationTest {
   void capabilitiesRecheckRoleAndPrivateLogOwner(){
     var auth=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
     try{
+      if(records.find("users","operator")==null)records.save("users","operator",mapper.createObjectNode().put("username","operator").put("passwordHash","test-only").put("enabled",true).put("role","OPERATOR"),0);
       org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("operator","",List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_OPERATOR"))));
       assertThat(capabilities.tools().toString()).doesNotContain("catalog_metadata");assertThatThrownBy(()->capabilities.call("catalog_metadata",mapper.createObjectNode().put("catalogId","c"),"",false,"")).hasMessageContaining("角色");
       var preference=preferences.get();assertThat(preference.path("values").isEmpty()).isTrue();

@@ -35,6 +35,7 @@ function submit(decision: 'submit' | 'cancel') {
       decision,
       answers: { ...answers.value },
       confirmedVerification: props.card.kind === 'verification',
+      confirmedApi: props.card.kind === 'api' && decision === 'submit',
       confirmedPreferences: props.card.kind === 'preferences' && decision === 'submit',
     }
   emit('respond', pending.value)
@@ -48,7 +49,8 @@ function submit(decision: 'submit' | 'cancel') {
     :aria-busy="working"
   >
     <strong>{{ card.title }}</strong>
-    <p v-if="card.scope">
+    <pre v-if="card.kind === 'api'" class="harness-api-request">{{ card.scope }}</pre>
+    <p v-else-if="card.scope">
       {{ card.scope }} <span v-if="card.model">当前模型：{{ card.model }}。</span>
     </p>
     <template v-if="card.kind === 'preferences'">
@@ -85,7 +87,9 @@ function submit(decision: 'submit' | 'cancel') {
             <input v-model="answers.choice" type="radio" :value="option" />{{ option }}
           </label>
         </fieldset>
-        <label v-if="card.kind !== 'preferences'" class="harness-interaction-field"
+        <label
+          v-if="card.kind !== 'preferences' && card.kind !== 'api'"
+          class="harness-interaction-field"
           >补充说明
           <textarea
             v-model="answers.note"
@@ -110,7 +114,9 @@ function submit(decision: 'submit' | 'cancel') {
                       ? card.action === 'clear'
                         ? '确认清空'
                         : '确认保存'
-                      : '提交并继续'
+                      : card.kind === 'api'
+                        ? '确认执行此请求'
+                        : '提交并继续'
             }}
           </button>
           <button type="button" :disabled="working || !!pending" @click="submit('cancel')">
@@ -168,3 +174,13 @@ function submit(decision: 'submit' | 'cancel') {
     </template>
   </section>
 </template>
+
+<style scoped>
+.harness-api-request {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+  font-size: 12px;
+}
+</style>

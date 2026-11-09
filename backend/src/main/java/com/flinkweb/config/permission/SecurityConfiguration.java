@@ -34,9 +34,11 @@ public class SecurityConfiguration {
   /** 组装认证、授权、CSRF 和会话失效过滤器，配置 JSON 登录及错误响应。 */
   @Bean
   SecurityFilterChain security(
-      HttpSecurity http, ObjectMapper mapper, UserService users, SecretTransportService transport)
+      HttpSecurity http, ObjectMapper mapper, UserService users, SecretTransportService transport, com.flinkweb.service.ai.support.AiApiTransport apiTransport)
       throws Exception {
-    http.authorizeHttpRequests(
+    http.addFilterBefore(apiTransport.filter(), org.springframework.security.web.csrf.CsrfFilter.class)
+        .csrf(csrf -> csrf.ignoringRequestMatchers(req -> Boolean.TRUE.equals(req.getAttribute(com.flinkweb.service.ai.support.AiApiTransport.ATTRIBUTE))))
+        .authorizeHttpRequests(
             auth ->
                 auth.requestMatchers(
                         "/api/auth/csrf",

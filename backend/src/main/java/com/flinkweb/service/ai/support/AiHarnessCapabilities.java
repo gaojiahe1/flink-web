@@ -35,9 +35,12 @@ public class AiHarnessCapabilities {
   private final RecordRepository records;
   private final AiContentGuard guard;
   private final AiHarnessPreferences preferences;
+  @org.springframework.beans.factory.annotation.Autowired private AiPlatformApiCatalog platformApis;
+  @org.springframework.beans.factory.annotation.Autowired private AiApiTransport apiTransport;
+  @org.springframework.beans.factory.annotation.Autowired private AiKubernetesTools kubernetesTools;
   private final LinkedHashMap<String,ObjectNode> definitions=new LinkedHashMap<>();
   private static final Map<String,String> PROMPTS=Map.of(
-      "develop_sql","先读取实际Catalog和表结构，再根据业务目标生成SQL候选；检查实际版本，必要缺口一次补齐；保存和运行需审阅。",
+      "develop_sql","先读取sql_generation_guide及真实Catalog/schema/函数和登记版本；生成候选、静态检查、按错误修正后登记sql_propose；保存和运行需审阅。",
       "diagnose_job","根据当前运行身份读取状态、异常及相关证据，区分事实、假设和未知；按当前账号权限直接读取脱敏日志，无需重复对话授权。",
       "diagnose_checkpoint_failure","先读取Checkpoint概览及配置，再下钻失败或未完成的Checkpoint、算子和子任务，关联同一时间的JM/TM日志；区分背压、存储、超时与任务失败。",
       "diagnose_restart","读取Pod事件、退出状态和current/previous日志，核对重启次数及实例身份；137不能单独证明OOM。",
@@ -53,6 +56,10 @@ public class AiHarnessCapabilities {
       AiFlinkEvidenceClient flink,AiJobEvidenceCollector evidence,AiHarnessObservation observation,RecordRepository records,AiContentGuard guard,AiHarnessPreferences preferences) {
     this.mapper=mapper;this.access=access;this.jobs=jobs;this.sql=sql;this.executions=executions;this.catalogs=catalogs;this.sessions=sessions;this.diagnostics=diagnostics;
     this.snapshots=snapshots;this.operations=operations;this.flink=flink;this.evidence=evidence;this.observation=observation;this.records=records;this.guard=guard;this.preferences=preferences;
+    define("k8s_list","管理员按需列出本namespace资源安全投影，不读取Secret或RBAC。","kind","offset?:integer");
+    define("k8s_get","管理员读取本namespace指定资源的安全投影。","kind","name");
+    define("sql_generation_guide","按实际Flink版本读取SQL开发技能、检查清单及示例，不能替代Planner/真实执行验证。","flinkVersion?","topic?");
+    define("sql_validate_candidate","对候选Flink SQL复用平台静态检查并返回实际级别，不保存或执行SQL。","sql","imageId?");
     define("job_search","查找已登记作业，不查询集群。","query?","offset?:integer");
     define("sql_search","查找SQL草稿。","query?","offset?:integer");
     define("job_config_read","读取当前作业草稿配置，不代表集群配置。","jobId?");
@@ -112,18 +119,24 @@ public class AiHarnessCapabilities {
     item.putObject("outputSchema").put("type","object");item.putObject("annotations").put("readOnlyHint",!name.equals("logs_release")).put("destructiveHint",false).put("openWorldHint",false);definitions.put(name,item);
   }
   /** 发现列表按当前账号过滤，调用时仍再次验证。 */
-  public ArrayNode tools(){var out=mapper.createArrayNode();definitions.forEach((name,item)->{if(allowed(name))out.add(item.deepCopy());});return out;}
+  public ArrayNode tools(){var out=mapper.createArrayNode();definitions.forEach((name,item)->{if(allowed(name))out.add(item.deepCopy());});out.addAll(platformApis.tools());return out;}
   /** 场景变化不授予角色；目录与SQL浏览沿用开发角色约束。 */
-  private boolean allowed(String name){return access.allowed("",Set.of("sql_search","sql_draft_read","sql_versions_read","sql_runtime_preview","sql_diff","sql_verification_status","catalog_list","catalog_metadata","catalog_functions","catalog_snippet").contains(name)?"edit":"read");}
+  private boolean allowed(String name){if(name.startsWith("k8s_"))return access.admin();if(name.startsWith("sql_generation")||name.equals("sql_validate_candidate"))return access.allowed("","edit");return access.allowed("",Set.of("sql_search","sql_draft_read","sql_versions_read","sql_runtime_preview","sql_diff","sql_verification_status","catalog_list","catalog_metadata","catalog_functions","catalog_snippet").contains(name)?"edit":"read");}
+  /** 业务提案绑定真实轮次，取消或新轮次后不能通过旧链接执行。 */
+  public ObjectNode platformCall(String name,ObjectNode args,String session,String turn){return apiTransport.call(name,args,session,turn);}
   /** 严格校验参数、权限和输出预算，模型不能指定网络路径。 */
   public ObjectNode call(String name,ObjectNode args,String defaultJob,boolean allowLogs,String sessionId){
+    if(name.startsWith("api_"))return apiTransport.call(name,args,sessionId,"");
     var spec=definitions.get(name);if(spec==null)fail("HARNESS_TOOL_UNSUPPORTED","未登记该工具");
     if(!allowed(name))throw new BusinessException(HttpStatus.FORBIDDEN,"HARNESS_TOOL_DENIED","当前角色不能使用该工具");
-    var props=spec.at("/inputSchema/properties");args.fields().forEachRemaining(f->{var type=props.path(f.getKey()).path("type").asText();if(type.isEmpty()||type.equals("string")&&(!f.getValue().isTextual()||f.getValue().asText().length()>2000)||type.equals("integer")&&(!f.getValue().isIntegralNumber()||!f.getValue().canConvertToLong()||type.equals("integer")&&!f.getKey().equals("checkpointId")&&!f.getValue().canConvertToInt())||type.equals("boolean")&&!f.getValue().isBoolean())fail("HARNESS_INVALID_TOOL","工具参数类型或字段无效");});
+    var props=spec.at("/inputSchema/properties");args.fields().forEachRemaining(f->{var type=props.path(f.getKey()).path("type").asText();if(type.isEmpty()||type.equals("string")&&(!f.getValue().isTextual()||f.getValue().asText().length()>(f.getKey().equals("sql")?32768:2000))||type.equals("integer")&&(!f.getValue().isIntegralNumber()||!f.getValue().canConvertToLong()||type.equals("integer")&&!f.getKey().equals("checkpointId")&&!f.getValue().canConvertToInt())||type.equals("boolean")&&!f.getValue().isBoolean())fail("HARNESS_INVALID_TOOL","工具参数类型或字段无效");});
     for(var required:spec.at("/inputSchema/required"))if(!args.has(required.asText())||args.path(required.asText()).isTextual()&&args.path(required.asText()).asText().isBlank())fail("HARNESS_INVALID_TOOL","缺少工具必填参数");
     guard.requireSafe(args.toString());
     String jobId=args.path("jobId").asText(defaultJob);ObjectNode out;
     switch(name){
+      case "k8s_list","k8s_get" -> out=kubernetesTools.read(name,args);
+      case "sql_generation_guide" -> out=AiSqlGenerationSkill.guide(mapper,args.path("flinkVersion").asText(),args.path("topic").asText());
+      case "sql_validate_candidate" -> {out=mapper.createObjectNode();out.set("check",mapper.valueToTree(sql.check(args.path("sql").asText(),mapper.createObjectNode().put("imageId",args.path("imageId").asText()))));}
       case "job_search" -> {var rows=mapper.createArrayNode();for(var job:jobs.list())if(job.name().contains(args.path("query").asText()))rows.addObject().put("id",job.id()).put("name",job.name()).put("revision",job.revision());out=page(rows,args);}
       case "sql_search" -> out=page(summaries(sql.list(),args.path("query").asText()),args);
       case "job_config_read" -> {access.require(jobId,"read");out=evidence.current(jobs.get(jobId));}
@@ -168,7 +181,7 @@ public class AiHarnessCapabilities {
   }
   /** 搜索不扩大权限，模型下一步才能使用按需发现的扩展工具。 */
   private ObjectNode searchTools(String query){
-    if(query.isBlank())fail("HARNESS_INVALID_TOOL","请提供工具关键词");String expanded=query.toLowerCase(Locale.ROOT).replace("日志","logs log").replace("检查点","checkpoint").replace("背压","backpressure").replace("指标","metrics").replace("事件","events").replace("容器","pod").replace("历史","history turn");
+    if(query.isBlank())fail("HARNESS_INVALID_TOOL","请提供工具关键词");String expanded=query.toLowerCase(Locale.ROOT).replace("日志","logs log").replace("检查点","checkpoint").replace("背压","backpressure").replace("指标","metrics").replace("事件","events").replace("容器","pod").replace("历史","history turn").replace("系统","system").replace("模板","templates").replace("制品","artifacts").replace("下载器","downloader").replace("镜像","images").replace("目录","catalog").replace("作业","jobs").replace("会话","sessions").replace("接口","api_");
     var out=mapper.createObjectNode();var items=out.putArray("tools");var names=out.putArray("discoveredTools");
     for(var spec:tools()){String hay=(spec.path("name").asText()+" "+spec.path("description").asText()).toLowerCase(Locale.ROOT);boolean match=false;for(String term:expanded.split("[\\s,，、]+"))if(!term.isBlank()&&hay.contains(term))match=true;if(match){items.add(spec);names.add(spec.path("name").asText());}}
     out.put("total",items.size());return out;

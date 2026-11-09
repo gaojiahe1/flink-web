@@ -18,6 +18,7 @@ import {
   type HarnessSession,
   type HarnessTurn,
 } from '../api/harness'
+import AiApiReview from '../components/AiApiReview.vue'
 import AiHarnessTurn from '../components/AiHarnessTurn.vue'
 import { currentUser } from '../../permission/stores/auth'
 import { request } from '../../../shared/api/http'
@@ -449,6 +450,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <AiApiReview :id="String(route.query.operation || '')" />
   <div class="harness-workspace" :class="{ 'history-collapsed': collapsed }">
     <aside v-if="!collapsed" class="harness-history" aria-label="私有会话">
       <div class="harness-history-heading">

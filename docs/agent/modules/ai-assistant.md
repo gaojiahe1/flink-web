@@ -1,5 +1,7 @@
 # AI 助手与模型服务
 
+2026-11-09：工作台新增与实际页面路由同源的MCP业务工具、逐次核权、私有具体请求审阅与确认；Spring AI模型调用和Langfuse direct/collector观测配置保持。SQL增强为按需开发技能/真实元数据/静态检查/修正/原候选审批，参考Apache Flink Agents工具编排，不引入其流式运行时。详见[Harness](agent-harness.md)。
+
 2026-11-05：作业列表AI助手/AI分析已统一进入[Harness工作台](agent-harness.md)，以`/ai?job=<id>`恢复本人该作业诊断会话或幂等新建；模型、工具、计划、交互、修复审阅和上下文策略与工作台一致，打开不自动调用模型。只读日志/Pod/事件无需额外对话授权，权限/脱敏及写操作批准保留。原AiJobAnalysis侧栏和旧作业AI接口保留兼容，旧私有历史不迁移、不删除；SQL编辑器原助手保持原流程。历史段落所述侧栏/逐轮日志授权不代表当前作业列表行为。
 
 2026-11-05正文观测：用户要求Langfuse显示Input/Output，补齐AiTelemetry输入/输出接口及统一脱敏策略，覆盖模型、工具、Harness/旧任务与交互event。FLINK_WEB_AI_TELEMETRY_CAPTURE_CONTENT默认true，总观测仍默认关闭；结构化JSON及内嵌参数脱敏、内部推理排除、单项32768限长标记，错误只记分类，策略失败不影响业务。直连/Collector真实Langfuse三层正文入库已验证，[正文SDK/HTTP回归](../../../backend/src/test/java/com/flinkweb/AiTelemetryContentTest.java)覆盖开关、脱敏、预算和异常隔离；字段与开关见[接入说明](../../../deploy/observability/README.md)和[ADR-009](../decisions/ADR-009-spring-ai-telemetry.md)。

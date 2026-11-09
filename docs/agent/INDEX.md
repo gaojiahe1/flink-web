@@ -1,12 +1,12 @@
 # 项目知识索引
 
-整体回归、测试入口、镜像内容核验：先读[回归指南](../testing.md)，本轮结果见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)，最新镜像摘要见[部署](../deployment.md#harness入口统一与上下文优化2026-11-05)。
+整体回归、测试入口、镜像内容核验：先读[回归指南](../testing.md)，本轮结果见[验收](validation.md#整体回归结构优化与0010发布2026-11-04)，最新镜像摘要见[部署](../deployment.md#mcp业务接口与sql技能2026-11-09)。
 
 Spring AI、Langfuse、Input/Output正文、OpenTelemetry/Collector、模型调用迁移与观测配置：先读[AI模块](modules/ai-assistant.md)和[ADR-009](decisions/ADR-009-spring-ai-telemetry.md)，部署见[双模式说明](../../deploy/observability/README.md)。
 
-作业列表AI统一入口、按需工具/上下文压缩、Harness、MCP、工具/资源/提示模板、用户偏好/对话确认保存、对话交互卡片、日志与Checkpoint下钻、原生工具、SSE流式对话、执行计划、六层能力、会话删除与批准实施：先读 [Flink AI Harness](modules/agent-harness.md) 及 [ADR-008](decisions/ADR-008-agent-harness.md)，关联 REQ-003。
+页面业务API注册/逐次核权/K8s资源/SQL技能、作业列表AI统一入口、按需工具/上下文压缩、Harness、MCP、工具/资源/提示模板、用户偏好/对话确认保存、对话交互卡片、日志与Checkpoint下钻、原生工具、SSE流式对话、执行计划、六层能力、会话删除与批准实施：先读 [Flink AI Harness](modules/agent-harness.md) 及 [ADR-008](decisions/ADR-008-agent-harness.md)，关联 REQ-003。
 
-更新：2026-11-05。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
+更新：2026-11-09。按下表关键词选一行，再核对模块列出的代码与测试；不默认读取所有行。详细业务规则仍以 [功能说明](../features.md) 为入口，环境参数、镜像摘要和维护步骤查 [部署指南](../deployment.md)。
 
 | 关键词/任务 | 需求 | 模块与代码导航 | 长期决策 |
 | --- | --- | --- | --- |

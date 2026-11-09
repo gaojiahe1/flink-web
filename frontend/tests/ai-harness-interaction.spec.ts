@@ -266,3 +266,57 @@ test('三主题及窄屏下对话偏好可读，不存在手动填写表单', as
     path: 'test-results/conversation-preferences-mobile.png',
   })
 })
+
+test('业务接口只在具体确认后提交且不接受补充冒充批准', async ({ page }) => {
+  const f = await setup(page, 'api')
+  await expect(page.getByPlaceholder('可补充条件、修改范围或填写其他答案')).toHaveCount(0)
+  expect(f.responses).toHaveLength(0)
+  await page.getByRole('button', { name: '确认执行此请求', exact: true }).click()
+  await expect(page.getByText('已根据补充继续分析')).toBeVisible()
+  expect(f.responses[0].confirmedApi).toBe(true)
+  expect(f.responses[0].answers).toEqual({})
+})
+
+test('外部MCP审阅链接显示冻结请求并确认后只提交一次', async ({ page }) => {
+  await setup(page)
+  const calls: any[] = []
+  await page.route('**/api/ai/api-proposals/**', async (route) => {
+    const req = route.request()
+    if (req.method() === 'POST') calls.push(req.postDataJSON())
+    await route.fulfill({
+      json: {
+        data: {
+          id: 'p1',
+          state: req.method() === 'POST' ? 'COMPLETED' : 'PENDING',
+          method: 'PUT',
+          uri: '/api/catalog/configs/example',
+          arguments: { body: { kind: 'plain', value: '42', revision: 2 } },
+        },
+      },
+    })
+  })
+  await expect(page.getByRole('textbox', { name: '输入需求', exact: true })).toBeVisible()
+  await page.goto('/#/ai?operation=p1')
+  const panel = page.getByRole('region', { name: '业务接口请求审阅' })
+  await expect(panel).toContainText('/api/catalog/configs/example')
+  expect(calls).toHaveLength(0)
+  await panel.getByRole('button', { name: '确认执行此请求', exact: true }).click()
+  await expect(panel).toContainText('接口返回成功')
+  await expect(panel.getByRole('button')).toHaveCount(0)
+  expect(calls).toEqual([{ confirmed: true }])
+})
+
+test('外部MCP审阅链接不能显示其他用户的请求', async ({ page }) => {
+  await setup(page)
+  await page.route('**/api/ai/api-proposals/**', (route) =>
+    route.fulfill({
+      status: 403,
+      json: { error: { code: 'FORBIDDEN', message: '无权读取该提案' } },
+    }),
+  )
+  await expect(page.getByRole('textbox', { name: '输入需求', exact: true })).toBeVisible()
+  await page.goto('/#/ai?operation=other')
+  const panel = page.getByRole('region', { name: '业务接口请求审阅' })
+  await expect(panel.getByRole('alert')).toContainText('无权读取该提案')
+  await expect(panel.getByRole('button')).toHaveCount(0)
+})

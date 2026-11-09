@@ -126,7 +126,7 @@ public class AiHarnessTools {
   private boolean defaultExtension(String name,ObjectNode session,ObjectNode turn){
     if(Set.of("tools_search","harness_turn_read").contains(name))return true;
     if(session.path("kind").asText().equals("evaluation"))return false;
-    if(session.path("kind").asText().equals("sql")&&turn.at("/context/jobId").asText().isBlank())return Set.of("catalog_list","catalog_metadata","runtime_image_list","session_list","sql_draft_read").contains(name);
+    if(session.path("kind").asText().equals("sql")&&turn.at("/context/jobId").asText().isBlank())return Set.of("catalog_list","catalog_metadata","runtime_image_list","session_list","sql_draft_read","sql_generation_guide").contains(name);
     return Set.of("job_pods_read","job_events_read","log_sources_list","logs_read","logs_page","flink_exceptions_read","checkpoint_overview").contains(name);
   }
 
@@ -148,7 +148,7 @@ public class AiHarnessTools {
       return new Outcome(mapper.createObjectNode().set("interaction",card),null,null,null);
     }
     boolean extension=false;for(var spec:capabilities.tools())if(name.equals(spec.path("name").asText()))extension=true;
-    if(extension)return new Outcome(capabilities.call(name,args,targetJob(session,turn),turn.path("includeLogs").asBoolean(),session.path("id").asText()),null,null,null);
+    if(extension){var output=name.startsWith("api_")?capabilities.platformCall(name,args,session.path("id").asText(),turn.path("id").asText()):capabilities.call(name,args,targetJob(session,turn),true,session.path("id").asText());if(output.path("status").asText().equals("REVIEW_REQUIRED")){var card=mapper.createObjectNode().put("id",UUID.randomUUID().toString()).put("kind","api").put("state","PENDING").put("title","审阅业务接口请求").put("proposalId",output.path("proposalId").asText()).put("scope",mapper.createObjectNode().put("method",output.at("/review/method").asText()).put("target",output.at("/review/uri").asText()).set("arguments",output.at("/review/arguments")).toPrettyString()).put("expiresAt",output.at("/review/expiresAt").asText());card.putArray("questions");card.putArray("options");output.set("interaction",card);}return new Outcome(output,null,null,null);}
     var parameters=found.at("/function/parameters/properties");
     for(var names=args.fieldNames();names.hasNext();)if(!parameters.has(names.next()))bad("工具包含未允许参数");
     for(var fields=parameters.fields();fields.hasNext();){var field=fields.next();var value=args.path(field.getKey());String type=field.getValue().path("type").asText();if(Set.of("imageId","intent","section").contains(field.getKey())&&value.isMissingNode())continue;
