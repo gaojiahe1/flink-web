@@ -1,5 +1,7 @@
 # Flink Web 部署指南
 
+功能提交 `4926d27` 已在回归、最终镜像发布及逐层核验后，由codex/mcp-platform-expansion快进合并本地master；合并前干净，无冲突或新增代码差异，两分支内容一致。源码Git未推送。
+
 ## MCP业务接口与SQL技能（2026-11-09）
 
 本节为app/web:0.0.10当前发布，覆盖此前同标签内容。正式Dockerfile、干净Kylin底座、已验证JAR/dist及未改Parser/Runner/Nginx构建；linux/amd64、UID/GID10001:10001，只读根验证通过。经原localhost:15000映射推送，再从192.168.68.1:5000逐层核对manifest响应/正文、config、全部层大小/压缩SHA-256与解压diff_id，等于最终验证镜像。
